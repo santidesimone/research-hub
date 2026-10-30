@@ -4,18 +4,27 @@ const neo4j = require('neo4j-driver');
 const { run, writeTx } = require('./db');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let http = (url, opts) => fetch(url, opts); // replaceable so tests never touch the network
+const setHttp = (fn) => { http = fn; };
+const workUrl = (doi) => { const email = process.env.OPENALEX_EMAIL; return `https://api.openalex.org/works/https://doi.org/${encodeURI(doi)}${email ? '?mailto=' + encodeURIComponent(email) : ''}`; };
+
+// One work by DOI -> the OpenAlex record, or null when OpenAlex does not know it. Throws on network or server errors.
+async function lookupWork(doi) {
+  const res = await http(workUrl(doi), { signal: AbortSignal.timeout(15000) });
+  if (res.status === 404) return null;
+  if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
 
 async function enrich({ limit = 100, offset = 0, delayMs = 150 } = {}) {
   const papers = await run(
     'MATCH (p:Paper) WHERE p.doi IS NOT NULL RETURN p.key AS key, p.doi AS doi ORDER BY p.key SKIP $offset LIMIT $limit',
     { offset: neo4j.int(offset), limit: neo4j.int(limit) });
-  const email = process.env.OPENALEX_EMAIL;
   const refs = new Map();
   const errors = [];
   for (const p of papers) {
     try {
-      const url = `https://api.openalex.org/works/https://doi.org/${encodeURI(p.doi)}${email ? '?mailto=' + encodeURIComponent(email) : ''}`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      const res = await http(workUrl(p.doi), { signal: AbortSignal.timeout(15000) });
       if (res.status !== 200) { errors.push(`${p.doi}: HTTP ${res.status}`); }
       else {
         const w = await res.json();
@@ -36,4 +45,4 @@ async function enrich({ limit = 100, offset = 0, delayMs = 150 } = {}) {
   return { processed: papers.length, matched: refs.size, cites_edges: edges, errors, next_offset: papers.length === limit ? offset + limit : null };
 }
 
-module.exports = { enrich };
+module.exports = { enrich, lookupWork, setHttp };

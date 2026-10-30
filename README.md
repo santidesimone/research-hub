@@ -224,6 +224,35 @@ curl -H "$H" -H "Content-Type: application/json" -X PUT http://127.0.0.1:3000/ap
 - **Papers:** POST through `/api/items` uses the paper writer (DOI lookup, authors, `file_url`). PATCH cannot change a paper's `doi`, `authors` or `venue`. `/api/papers`, `/api/artifacts`, import and export are unchanged.
 - Your reading status is not an item field; set it with `/api/personal`.
 
+## Claude's analysis and the audit
+
+Claude analyses a paper, method, use case or case study and saves the whole result in **one call, with no approval step** (MCP `save_analysis`, or `POST /api/analysis`). In Claude: call `get_schema` for the collection, then `save_analysis` once.
+
+```bash
+curl -H "$H" -H "Content-Type: application/json" -X POST http://127.0.0.1:3000/api/analysis -d '{
+  "collection": "paper", "doi": "10.3390/fi13050130", "model": "claude-opus-5-5",
+  "fields": { "contribution_type": "methodological", "research_problem": "...",
+              "key_findings": [{ "text": "...", "location": "s. 4" }], "evidence": { "type": "design", "n": 1 } },
+  "confidence": { "research_problem": "high" },
+  "links": [{ "rel": "ABOUT", "target": "digital currency", "kind": "Domain" },
+            { "rel": "BUILDS_ON", "target": "doi:10.1007/978-1-4757-0602-4_18", "evidence": "\"we extend Chaum's scheme\"", "location": "s. 2" }] }'
+# 201 {key, url, created, filled, skipped, links, links_skipped, empty_core_standard, warnings, flagged}
+```
+
+- **Identifying the item:** use `key`, or a paper's `doi` or `url`, or a new item's `fields.title`. An existing item is re-analysed: only its empty fields are filled.
+- **Papers:**
+  - Source facts come from Crossref and OpenAlex, server-side: title, authors (Person nodes), year, venue (a Venue node), abstract, citation count, open access, language.
+  - Claude cannot write them; the schema's `by` decides who may fill what.
+  - Set `OPENALEX_EMAIL` to use the polite pools.
+- **Claude's fields** record `by: claude`, the model and a confidence (default medium). They never overwrite your edits or reviewed values; `force` replaces only Claude's own.
+- **Empty beats wrong:**
+  - Vocabulary names are matched (or created, flagged `by: claude`).
+  - Other items are linked only by key or exact title, never created from a name.
+  - Interpretive links (builds_on, critiques, contradicts, supports, replicates) need the justifying passage as `evidence`.
+- **Every finding needs a location.** Findings without one are saved but come back in `flagged` and appear in the audit.
+- **The audit** (`GET /api/audit`): counts and lists of low-confidence fields and links, empty Core and Standard fields, ungrounded findings, items below their type's `schema_version`, vocabulary Claude created, and unreviewed items. `POST /api/audit/accept` (`{key, fields?, links?}` or `{vocab}`) marks values reviewed, which protects them from re-runs like your own edits.
+- **Single-object fields** (`evidence`, `period`, `threats_to_validity` ...) also keep each part as a plain property for Cypher: `MATCH (p:Paper) WHERE p.evidence__n > 100`.
+
 ## Vocabulary and name matching
 
 People, concepts, topics, domains, venues, organisations and datasets are shared nodes, not strings. Callers pass names; `web/core/vocab.js` `resolve(kind, name, { create, aliases, by, model })` finds the node that name means or creates one (flagged `by: claude` by default) and returns `{ key, name, created, match }`. A match is one of:

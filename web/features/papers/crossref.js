@@ -5,9 +5,13 @@ const TYPES = { 'journal-article': 'journalArticle', 'proceedings-article': 'con
   book: 'book', 'posted-content': 'preprint', report: 'report', dissertation: 'thesis' };
 const dateOf = (parts) => parts.filter((x) => x != null).map((x, i) => (i ? String(x).padStart(2, '0') : String(x))).join('-') || undefined;
 
+let http = (url, opts) => fetch(url, opts); // replaceable so tests never touch the network
+const setHttp = (fn) => { http = fn; };
+
 async function resolveDoi(doi) {
-  const res = await fetch('https://api.crossref.org/works/' + encodeURIComponent(cleanDoi(doi)), {
-    headers: { 'User-Agent': `research-hub/0.4 (mailto:${process.env.OPENALEX_EMAIL || 'unknown@example.com'})` },
+  const res = await http('https://api.crossref.org/works/' + encodeURIComponent(cleanDoi(doi)), {
+    headers: { 'User-Agent': `research-hub/0.7 (mailto:${process.env.OPENALEX_EMAIL || 'unknown@example.com'})` },
+    signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) return null;
   const m = (await res.json()).message;
@@ -21,4 +25,4 @@ async function resolveDoi(doi) {
     abstractNote: m.abstract ? String(m.abstract).replace(/<[^>]+>/g, '').trim() : undefined,
   };
 }
-module.exports = { resolveDoi };
+module.exports = { resolveDoi, setHttp };

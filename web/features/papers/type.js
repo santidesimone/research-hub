@@ -1,5 +1,6 @@
 // The "paper" artifact type: how API input becomes a Paper node. (Loaded by core/types.js.)
 const { normalizeItem, nodeFields } = require('./item');
+const vocab = require('../../core/vocab');
 const { resolveDoi } = require('./crossref');
 const files = require('./files');
 const links = require('../../core/links');
@@ -19,12 +20,19 @@ module.exports = {
   // identity and source facts the items API does not edit: the DOI is the key, authors and venue come from the source
   locked: ['doi', 'authors', 'venue'],
 
-  // DOI alone: look the rest up.
+  // DOI alone: look the rest up. Authors are matched to existing Person nodes by name (vocab.resolve), so "José García"
+  // and "Garcia, Jose" are one person whichever way they arrive.
   async prepare(body) {
-    if (body.title || !body.DOI) return body;
-    const found = await resolveDoi(body.DOI);
-    if (!found || !found.title) throw new HttpError(422, 'Could not look up that DOI. Send the title and other fields yourself.');
-    return { ...found, ...Object.fromEntries(Object.entries(body).filter(([, v]) => v != null)) };
+    let input = body;
+    if (!body.title && body.DOI) {
+      const found = await resolveDoi(body.DOI);
+      if (!found || !found.title) throw new HttpError(422, 'Could not look up that DOI. Send the title and other fields yourself.');
+      input = { ...found, ...Object.fromEntries(Object.entries(body).filter(([, v]) => v != null)) };
+    }
+    const people = nodeFields(normalizeItem(input)).people;
+    const personKeys = {};
+    for (const p of people) personKeys[p.name] = (await vocab.resolve('Person', p.name, { by: 'source' })).key;
+    return { ...input, _person_keys: personKeys };
   },
 
   parse(input) {
@@ -39,7 +47,7 @@ module.exports = {
         item_type: f.item_type, authors: f.authors, author_lasts: f.author_lasts, visibility: f.visibility,
       },
       links: [
-        ...f.people.map((p) => ({ rel: 'AUTHORED_BY', merge: { label: 'Person', key: p.key, props: { name: p.name } } })),
+        ...f.people.map((p) => ({ rel: 'AUTHORED_BY', merge: { label: 'Person', key: (input._person_keys || {})[p.name] || p.key, props: { name: p.name } } })),
         ...f.topics.map((t) => ({ rel: 'ABOUT', merge: { label: 'Concept', key: t.key, props: { name: t.name } } })),
       ],
     };

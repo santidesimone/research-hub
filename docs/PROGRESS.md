@@ -8,7 +8,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | 1 Schema model v3 | done (2026-10-30) | See "Task 1" below. |
 | 2 Vocabulary nodes and matcher | done (2026-10-30) | See "Task 2" below. |
 | 3 Generic items API | done (2026-10-30) | See "Task 3" below. |
-| 4 Claude analysis, single-call save, audit | not started | |
+| 4 Claude analysis, single-call save, audit | done (2026-10-30) | See "Task 4" below. |
 | 5 Library UI: Collections, forms, audit | not started | |
 | 6 CLI, API docs, CI, docs | not started | |
 | 7 Hardening | not started | |
@@ -162,3 +162,49 @@ Update at the end of every task. For each: what changed, what was tested for rea
 - Paper create is two transactions (the paper writer, then the extra fields). A failure in the second leaves the paper without those fields; re-send them with PATCH.
 - Filters match link edges only: older text values (`domain: research`) are not found by a domain filter until edited.
 - Not run against your own database. Migrations 007 and 008 run on the next start; they copy before removing, but take a `hub backup` first.
+
+## Task 4. Claude analysis: single-call save, audit
+
+**Changed**
+- `web/core/analysis.js` (new), `POST /api/analysis` and MCP `save_analysis`: one call finds or creates the item, fills a paper's source facts from Crossref and OpenAlex, saves Claude's fields with provenance through `items.write`, and writes typed links. It returns `{key, url, created, filled, skipped, links, links_skipped, empty_core_standard, warnings, flagged}` (201 when created, 200 for a re-analysis).
+  - **Identity:** `key`, a paper `doi` or `url`, or a new item's title.
+  - **Source facts:** title, authors (Person nodes through the matcher), year, venue (a Venue node, with the text kept for the CSL export), abstract, citation count and its date, open access, language and `openalex_id`, all written `by: source`.
+  - **Claude's fields:** model and confidence (one level or per field, default medium). The schema's `by` keeps Claude off source-only fields.
+  - **Links:** vocabulary by name; items by key or exact title only. Interpretive links without evidence are skipped; links you made are never touched.
+  - **Flags:** findings without a location, and interpretive links without one.
+  - Crossref and OpenAlex failures become warnings. A new DOI with no lookup and no title is a 422.
+- `web/core/audit.js` (new):
+  - `GET /api/audit`: counts and lists of low-confidence fields and links, empty Core and Standard fields, ungrounded findings, outdated `schema_version`, vocabulary created by Claude, and unreviewed items.
+  - `POST /api/audit/accept`: fields, links or a vocabulary node become reviewed, and an item becomes `reviewed` once nothing `auto` remains. Accepted values are protected from re-runs.
+- MCP:
+  - New tools `get_schema` (fillable fields, enums, tiers, relations, rules, and the fields the hub fills), `save_analysis`, `search_items` and `get_item`.
+  - New instructions; the version is read from `package.json` (now 0.7.0); the `describe_graph` notes are updated.
+- `web/core/items.js`: per-field confidence; the creating writer owns the fields it sets; `locked` applies to owner edits only; link fields keep their text property in sync. Single-object fields also store `<field>__<part>` properties (migration `009`), so competency question 1 (sample size over N) is plain Cypher.
+- The paper writer resolves authors through `vocab.resolve` on every path (closes the Task 2 author-duplicate gap). `crossref.js` and `openalex.js` get replaceable HTTP, and `openalex.lookupWork` is new.
+- **Found and fixed:** `/mcp` failed every request on Node 18 ("crypto is not defined") because the MCP SDK needs the Web Crypto global, which Node only provides by default from version 20. `package.json` allows Node 18 and local runs use it; the Docker image (Node 20) was not affected. The global is now provided when missing.
+- openapi (`/api/analysis`, `/api/audit`, `/api/audit/accept`, version 0.7.0), README ("Claude's analysis and the audit"), `_env.example` (`OPENALEX_EMAIL` is used for the analysis too), `schema/CHANGELOG.md`.
+
+**Tested for real**
+- Offline: about 110 new assertions over the in-memory graph with fake Crossref and OpenAlex:
+  - source facts and provenance; Claude refused source and owner-only fields;
+  - per-field confidence; flags;
+  - links: ambiguous or unknown targets, interpretive links without evidence, owner links, endpoints;
+  - idempotency: the same request twice changes nothing; the deep tier;
+  - sources down; papers by URL; other collections;
+  - every validation error; the audit lists, caps and accept;
+  - all routes owner-only over real HTTP;
+  - the MCP tools through a real MCP client against an in-process server.
+  - Mutation checks: analysis, audit and MCP 55/55; items (re-run) 53/53; the object parts 3/3.
+- Integration on a throwaway Neo4j 5 (fake Crossref and OpenAlex, so it is hermetic): three analysed papers, then **competency question 1** in Cypher returns exactly the empirical, quasi-experimental paper with a sample over 100. Use cases with and without a method and case study, then **competency question 4** returns exactly the orphan. Also covered: idempotency, the owner's edit surviving `force`, and the audit with accept. 10 of 10 runs passed.
+- **Live Crossref and OpenAlex** (first time, from Task 0's unverified list), through `POST /api/analysis` on the real server:
+  - DOI 10.1007/978-1-4757-0602-4_18: book_chapter, 1983, David Chaum, Venue "Advances in Cryptology", 3317 citations, closed, en, W1601001795.
+  - DOI 10.3390/fi13050130: journal_article, 2021, three authors, Venue "Future Internet", 31 citations, gold, abstract filled, W3119626329.
+  - Per-field provenance was correct.
+- **Live MCP** with a real client against the running server on Node 18: all tools listed and version 0.7.0. `get_schema`, `save_analysis` (Domain "cryptography" matched to the seeded node; an unknown use case skipped, not created), `get_item`, `search_items` and `describe_graph` all work.
+
+**Not tested / open**
+- No UI for the audit or the analysis yet (Task 5).
+- `describe_graph` lists the hub's own infrastructure labels (`VocabLock`, `SchemaMeta`, `Personal`) with the rest. That is harmless, but it is noise for Claude.
+- Claude cannot write `doi` or `arxiv_id` for papers (source fields). A preprint known only by URL keeps those empty until a source fills them.
+- Paper creation stays two steps (paper writer, then fields). A failure between them leaves a paper without Claude's fields; re-running the analysis fills them.
+- Not run against your own database: migration 009 runs on the next start (additive). Take a `hub backup` first.

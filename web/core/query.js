@@ -64,12 +64,15 @@ async function overview() {
       "Keys: papers 'doi:<lowercase doi>' or 'paper:<hash>'; methods 'method:<slug>', use cases 'usecase:<slug>', case studies 'case:<slug>', notes 'note:<slug>', projects 'project:<slug>'; vocabulary '<prefix>:<slug>' (person, concept, topic, domain, venue, org, dataset). Fields per type: schema/schema.json.",
       "Your personal layer (status such as to-read/reading/read/canonical/critique-target) is NOT on the paper: it is (:Personal {key:'personal:<artifact key>', status})-[:FOR]->(:Artifact).",
       'Papers have: title, year, doi, venue, url, abstract, authors[], author_lasts[], item_type, visibility, file_url (link to the PDF, usually Google Drive), drive_file_id (set only when the hub uploaded the file), openalex_id, cited_by_count. Relationships: AUTHORED_BY, ABOUT, CITES, ANNOTATES, USES, EXTENDS, SUPPORTS, CONTRADICTS, CRITIQUES, INSPIRED.',
+      'Collection items store objects as JSON text in <field>_json and per-field provenance in provenance_json ({field: {by: owner|claude|source, at, model, confidence, status: auto|reviewed}}). Link fields are edges with r.field. Typed links Claude saved carry r.evidence, r.location, r.confidence, r.by, r.status.',
+      'Vocabulary nodes have name, aliases and derived matching fields (norm, letters); n.by is claude for nodes Claude created. Use get_item / search_items for collections rather than Cypher where you can.',
       'Queries are read-only, return at most 500 rows, and must be a single statement without procedure calls.',
     ],
     examples: [
       'MATCH (p:Paper)-[:AUTHORED_BY]->(x:Person) RETURN x.name, count(p) AS papers ORDER BY papers DESC',
       "MATCH (s:Personal {status:'to-read'})-[:FOR]->(p:Paper) RETURN p.title, p.year ORDER BY p.year DESC",
       'MATCH (p1:Paper)-[:ABOUT]->(c:Concept)<-[:ABOUT]-(p2:Paper) WHERE p1.key < p2.key RETURN p1.title, p2.title, collect(c.name) AS shared',
+      'MATCH (u:UseCase) WHERE NOT (:Method)-[:ADDRESSES]->(u) AND NOT (:CaseStudy)-[:INSTANCE_OF]->(u) RETURN u.key, u.title',
     ],
   };
 }

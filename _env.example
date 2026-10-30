@@ -37,5 +37,5 @@ GOOGLE_REFRESH_TOKEN=
 # NEO4J_POOL_SIZE=20
 # LOG_FORMAT=pretty               json in production, pretty locally
 
-# ---- Optional: identifies you to OpenAlex (polite pool) for `hub enrich`
+# ---- Optional: identifies you to OpenAlex and Crossref (polite pools) for `hub enrich` and Claude's analysis (/api/analysis)
 OPENALEX_EMAIL=

@@ -12,6 +12,10 @@ const publicExport = require('../core/public-export');
 const files = require('../features/papers/files');
 const vocab = require('../core/vocab');
 const items = require('../core/items');
+const analysis = require('../core/analysis');
+const audit = require('../core/audit');
+const crossref = require('../features/papers/crossref');
+const openalex = require('../core/openalex');
 
 // This test prunes Markdown-sourced notes and restores a backup, so it must never run against a database that holds your real library.
 if (process.env.HUB_INTEGRATION !== '1') {
@@ -26,7 +30,7 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
   await db.exec('RETURN 1 AS ok');
   const ran = await migrate.run();
   console.log('migrations applied this run:', ran.join(', ') || '(none, already up to date)');
-  assert.ok((await migrate.applied()).includes('007_items_json_fields'));
+  assert.ok((await migrate.applied()).includes('009_object_parts'));
   await db.exec('CALL db.awaitIndexes(60)');
 
   // paper with a Drive share link: stored canonically, nothing downloaded
@@ -132,6 +136,59 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
   for (const k of [ip.key, im.key, iu.key, ic.key, ...want]) await items.remove(k);
   await assert.rejects(() => items.get(im.key), (e) => e.status === 404);
   await db.exec('MATCH (n) WHERE (n:Topic OR n:Organisation) AND n.norm ENDS WITH $tag DETACH DELETE n', { tag });
+
+  // Claude's analysis end to end (Crossref and OpenAlex answered by fakes, so this stays hermetic), then the design's
+  // competency questions 1 and 4 in plain Cypher over what was saved
+  const DOIS = { a: `10.7777/a-${tag}`, b: `10.7777/b-${tag}`, c: `10.7777/c-${tag}` };
+  const R = (obj, status = 200) => ({ ok: status < 300, status, json: async () => obj });
+  crossref.setHttp(async (url) => {
+    const k = Object.keys(DOIS).find((x) => url.endsWith(encodeURIComponent(DOIS[x])));
+    return k ? R({ message: { type: 'journal-article', title: [T(`CBDC adoption study ${k}`)], DOI: DOIS[k], author: [{ given: 'Grace', family: 'Hopper' }], issued: { 'date-parts': [[2022]] }, 'container-title': [T('Journal of Money')] } }) : R({}, 404);
+  });
+  openalex.setHttp(async () => R({ id: 'https://openalex.org/W1', cited_by_count: 3, open_access: { oa_status: 'gold' }, language: 'en' }));
+  const cbdcTopic = T('CBDC adoption');
+  const analyse = (k, design, n) => analysis.save({
+    collection: 'paper', doi: DOIS[k], model: 'it-model',
+    fields: { contribution_type: 'empirical', research_design: design, evidence: { type: 'survey', n }, key_findings: [{ text: 'uptake rises', location: 's. 5' }], tldr: 'short' },
+    links: [{ rel: 'ABOUT', target: cbdcTopic, kind: 'Topic' }],
+  });
+  const ra = await analyse('a', 'quasi_experiment', 1200);
+  await analyse('b', 'quasi_experiment', 40);
+  await analyse('c', 'experiment', 5000);
+  assert.equal(ra.created, true); assert.deepEqual(ra.flagged, []);
+  const pa = await items.get(ra.key);
+  assert.deepEqual([pa.fields.title, pa.fields.venue.name, pa.fields.citation_count, pa.fields.open_access, pa.provenance.title.by, pa.provenance.research_design.by], [T('CBDC adoption study a'), T('Journal of Money'), 3, 'gold', 'source', 'claude']);
+  const topicKey = (await vocab.resolve('Topic', cbdcTopic, { create: false })).key;
+  const q1 = await query.readOnly(
+    `MATCH (p:Paper)-[:ABOUT]->(t:Topic {key: $topic})
+     WHERE p.contribution_type = 'empirical' AND p.research_design = 'quasi_experiment' AND p.evidence__n > $n
+     RETURN p.key AS key`, { topic: topicKey, n: 100 });
+  assert.deepEqual(q1.rows.map((r) => r.key), [ra.key], 'competency question 1');
+  // idempotent; the owner's edit survives a forced re-run
+  const again = await analyse('a', 'quasi_experiment', 1200);
+  assert.deepEqual([again.created, again.filled, again.links], [false, [], []]);
+  await items.update(ra.key, { research_design: 'observational' });
+  const forced = await analysis.save({ collection: 'paper', key: ra.key, model: 'it-model', force: true, fields: { research_design: 'quasi_experiment' } });
+  assert.deepEqual(forced.skipped, [{ field: 'research_design', reason: 'owner value' }]);
+
+  const m4 = await analysis.save({ collection: 'method', model: 'it-model', fields: { title: T('Q4 method'), kind: 'technique', purpose: 'p' } });
+  const cs4 = await analysis.save({ collection: 'case_study', model: 'it-model', fields: { title: T('Q4 case'), case_type: 'pilot' } });
+  const u = {};
+  for (const n of ['addressed', 'instanced', 'orphan']) u[n] = (await analysis.save({ collection: 'use_case', model: 'it-model', fields: { title: T(`Q4 ${n}`), goal: 'g' } })).key;
+  await analysis.save({ collection: 'method', key: m4.key, model: 'it-model', links: [{ rel: 'ADDRESSES', target: u.addressed }] });
+  await analysis.save({ collection: 'case_study', key: cs4.key, model: 'it-model', links: [{ rel: 'INSTANCE_OF', target: u.instanced }] });
+  const q4 = await query.readOnly(
+    `MATCH (u:UseCase) WHERE u.title ENDS WITH $tag AND NOT (:Method)-[:ADDRESSES]->(u) AND NOT (:CaseStudy)-[:INSTANCE_OF]->(u) RETURN u.key AS key`, { tag });
+  assert.deepEqual(q4.rows.map((r) => r.key), [u.orphan], 'competency question 4');
+  // the audit sees Claude's vocabulary; accepting removes it
+  const au = await audit.report({ limit: 1000 });
+  assert.ok(au.vocab_by_claude.some((v) => v.key === topicKey) && au.unreviewed_items.some((x) => x.key === u.orphan));
+  await audit.accept({ vocab: topicKey }); await audit.accept({ key: u.orphan });
+  const au2 = await audit.report({ limit: 1000 });
+  assert.ok(!au2.vocab_by_claude.some((v) => v.key === topicKey) && !au2.unreviewed_items.some((x) => x.key === u.orphan));
+  for (const k of [ra.key, `doi:${DOIS.b}`, `doi:${DOIS.c}`, m4.key, cs4.key, ...Object.values(u)]) await items.remove(k);
+  await db.exec('MATCH (n) WHERE (n:Topic OR n:Venue) AND n.norm ENDS WITH $tag DETACH DELETE n', { tag });
+  crossref.setHttp((url, o) => fetch(url, o)); openalex.setHttp((url, o) => fetch(url, o));
 
   // notes sync: upsert, edges to the paper and a concept, prune; methods are skipped and never pruned
   const entries = [

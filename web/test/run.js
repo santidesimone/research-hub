@@ -66,7 +66,7 @@ const seed = require('../../data/seed_papers.json');
 
   // migrations are discoverable and ordered
   const migrate = require('../core/migrate');
-  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', 'personal_001_layer']);
+  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', 'personal_001_layer']);
   // personal layer: separate node, driven by hooks, core untouched
   calls.length = 0;
   require('../features/personal').mount({ get() {}, put() {}, delete() {}, post() {} });
@@ -602,7 +602,7 @@ const seed = require('../../data/seed_papers.json');
     const mk = q.match(/MATCH \(t:(\w+) \{key:x.key\}\)\s+MERGE \(n\)-\[r:(\w+)\]->\(t\)/);
     if (mk) {
       const n = G.get(p.key); const ok = [];
-      for (const x of p.rows) { if (!G.has(x.key) || !G.get(x.key).labels.includes(mk[1])) continue; n.out = n.out.filter((e) => !(e.rel === mk[2] && e.to === x.key)); n.out.push({ rel: mk[2], to: x.key, r: { field: p.field, position: x.position, source: 'items', by: p.by, at: p.at } }); ok.push({ key: x.key }); }
+      for (const x of p.rows) { if (!G.has(x.key) || !G.get(x.key).labels.includes(mk[1])) continue; n.out = n.out.filter((e) => !(e.rel === mk[2] && e.to === x.key)); n.out.push({ rel: mk[2], to: x.key, r: { field: p.field, position: x.position, source: 'items', by: p.by, at: p.at } }); ok.push({ key: x.key, name: G.get(x.key).props.name ?? G.get(x.key).props.title }); }
       return gRecs(ok);
     }
     if (q.startsWith('MATCH (n:Artifact {key:$key}) SET n += $sets')) { const n = G.get(p.key); for (const [k, v] of Object.entries(p.sets)) { if (v == null) delete n.props[k]; else n.props[k] = v; } n.props.provenance_json = p.prov; return gRecs([]); }
@@ -838,6 +838,267 @@ const seed = require('../../data/seed_papers.json');
   const p8 = m8.find(([q]) => q.startsWith('UNWIND $rows AS r MATCH (n:Topic'))[1].rows[0].props;
   assert.deepEqual([p8.letters, p8.letters_plain, p8.aliases_letters], ['zerokproofx', 'zkpx', ['zkpx', 'zpx']]);
   assert.ok(m8.find(([q]) => q.startsWith('MATCH (n:Topic) RETURN'))[0].includes('ORDER BY n.key SKIP 0 LIMIT 500'), 'stable paging over every node');
+
+  /* ------------------------------------------------------------ analysis: one call, against the in-memory graph */
+  const analysis = require('../core/analysis');
+  const audit = require('../core/audit');
+  const crossref = require('../features/papers/crossref');
+  const openalex = require('../core/openalex');
+  const srcNet = [];
+  let crossrefDown = false, openalexDown = false;
+  const JR = (obj, status = 200) => ({ ok: status < 300, status, json: async () => obj });
+  crossref.setHttp(async (url) => {
+    srcNet.push(url);
+    if (crossrefDown) return JR({}, 500);
+    if (url.endsWith(encodeURIComponent('10.5555/abc'))) return JR({ message: { type: 'journal-article', title: ['Private Payments at Scale'], DOI: '10.5555/ABC', URL: 'https://doi.org/10.5555/abc',
+      author: [{ given: 'José', family: 'García' }, { given: 'Ada', family: 'Lovelace' }], issued: { 'date-parts': [[2023, 4]] }, 'container-title': ['Journal of Payments'], abstract: '<p>An abstract.</p>' } });
+    return JR({}, 404);
+  });
+  openalex.setHttp(async (url) => {
+    srcNet.push(url);
+    if (openalexDown) return JR({}, 500);
+    if (url.includes('10.9/hybrid')) return JR({ id: 'https://openalex.org/W9', cited_by_count: 1, open_access: { oa_status: 'hybrid' } });
+    if (url.includes('10.5555/abc')) return JR({ id: 'https://openalex.org/W123', cited_by_count: 12, open_access: { oa_status: 'green' }, language: 'en', primary_location: { source: { display_name: 'J. Payments' } } });
+    return JR({}, 404);
+  });
+  const aRun = async (q, p) => {
+    if (q.startsWith('MATCH (p:Paper {url:$url})')) return [...G.values()].filter((n) => n.labels.includes('Paper') && n.props.url === p.url).map((n) => ({ key: n.props.key }));
+    if (q.startsWith('MATCH (n {key:$k}) RETURN n.key AS key')) return G.has(p.k) ? [{ key: p.k }] : [];
+    if (q.includes('toLower(n.title) = toLower($name)')) return [...G.values()].filter((n) => n.labels.some((l) => p.labels.includes(l)) && String(n.props.title).toLowerCase() === p.name.toLowerCase()).map((n) => ({ key: n.props.key }));
+    const old = q.match(/^MATCH \(:Artifact \{key:\$key\}\)-\[r:(\w+)\]->\(\{key:\$t\}\) RETURN properties\(r\)/);
+    if (old) { const e = (G.get(p.key) || { out: [] }).out.find((x) => x.rel === old[1] && x.to === p.t); return e ? [{ r: { ...e.r } }] : []; }
+    if (q.includes('WHERE n.collection IS NOT NULL')) return [...G.values()].filter((n) => n.props.collection).map((n) => ({ ...gRow(n.props.key), inc: [] }));
+    if (q.includes("v.by = 'claude'")) return [...G.values()].filter((n) => n.labels.some((l) => p.labels.includes(l)) && n.props.by === 'claude' && (n.props.record_status || 'auto') === 'auto').map((n) => ({ key: n.props.key, name: n.props.name, label: n.labels[0], model: n.props.model || null, uses: 1 }));
+    return gRun(q, p);
+  };
+  const aTx = async (q, p) => {
+    const lw = q.match(/^MATCH \(n:Artifact \{key:\$key\}\), \(t \{key:\$t\}\) MERGE \(n\)-\[r:(\w+)\]->\(t\) SET r \+= \$props/);
+    if (lw) { calls.push([q, p]); const n = G.get(p.key); const e = n.out.find((x) => x.rel === lw[1] && x.to === p.t); if (e) Object.assign(e.r, p.props); else n.out.push({ rel: lw[1], to: p.t, r: { ...p.props } }); return gRecs([]); }
+    if (q.includes('SET p.openalex_id = $id')) { const n = G.get(p.key); if (!q.includes('openalex_id IS NULL') || n.props.openalex_id == null) n.props.openalex_id = p.id; return gRecs([]); }
+    if (q.startsWith('MATCH (n:Artifact {key:$key}) RETURN n.provenance_json AS p')) return gRecs([{ p: G.get(p.key).props.provenance_json }]);
+    if (q.startsWith('MATCH (n:Artifact {key:$key}) SET n.provenance_json = $prov')) { const n = G.get(p.key); n.props.provenance_json = p.prov; if (q.includes("record_status = 'reviewed'")) n.props.record_status = 'reviewed'; return gRecs([]); }
+    const acc = q.match(/^MATCH \(:Artifact \{key:\$key\}\)-\[x:(\w+)\]->\(\{key:\$t\}\) SET x.status = 'reviewed'/);
+    if (acc) { const es = G.get(p.key).out.filter((x) => x.rel === acc[1] && x.to === p.t); es.forEach((e) => { e.r.status = 'reviewed'; }); return gRecs([{ c: es.length }]); }
+    if (q.startsWith('MATCH (v {key:$key}) WHERE any(l IN labels(v)')) { const v = G.get(p.key); if (!v || !v.labels.some((l) => p.labels.includes(l))) return gRecs([]); v.props.record_status = 'reviewed'; return gRecs([{ key: p.key }]); }
+    return gTx(q, p);
+  };
+  runImpl = aRun; txImpl = aTx;
+  const stubResolve = async (kind, name, opts = {}) => {
+    const label = vocab.labelOf(kind);
+    resolved.push([label, name, opts]);
+    const key = schema.entities[label].key_prefix + vocab.analyse(schema.entities[label].match, name).norm.replace(/ /g, '-');
+    if (opts.create === false) return { key: G.has(key) ? key : null, created: false, match: G.has(key) ? 'exact' : null };
+    if (!G.has(key)) G.set(key, { labels: [label], props: { key, name, by: opts.by, ...(opts.model ? { model: opts.model } : {}) }, out: [] });
+    return { key, name, created: true, match: 'new' };
+  };
+  vocab.resolve = stubResolve;
+  G.set('doi:10.1/other', { labels: ['Artifact', 'Paper'], props: { key: 'doi:10.1/other', title: 'The Other Paper', collection: 'paper', schema_version: 1 }, out: [] });
+
+  const A1 = {
+    collection: 'paper', doi: 'https://doi.org/10.5555/ABC', model: 'claude-test',
+    fields: { title: 'Claude title', authors: ['Someone'], abstract: 'claude abstract', relevance: 5, contribution_type: 'empirical', research_problem: 'rp',
+      key_findings: [{ text: 'f1', location: 'p. 3' }, { text: 'f2' }], doi: '10.5555/abc', evidence: { type: 'survey', n: 1200, period: '2020-2022' } },
+    confidence: { research_problem: 'low' },
+    links: [
+      { rel: 'INTRODUCES', target: 'Brand new method', kind: 'Method' },
+      { rel: 'about', target: 'Zero-knowledge proofs', kind: 'Topic' },
+      { rel: 'CRITIQUES', target: 'doi:10.1/other' },
+      { rel: 'CRITIQUES', target: 'The Other Paper', evidence: '"we disagree with X" (s. 4)', confidence: 'low' },
+      { rel: 'ADDRESSES', target: 'usecase:offline-payments' },
+    ],
+  };
+  srcNet.length = 0; resolved.length = 0;
+  const r1 = await analysis.save(A1);
+  const P = G.get('doi:10.5555/abc');
+  assert.deepEqual([r1.key, r1.created], ['doi:10.5555/abc', true]);
+  assert.ok(r1.url.endsWith('/library?key=doi%3A10.5555%2Fabc'));
+  assert.deepEqual([P.props.title, P.props.year, P.props.abstract, P.props.item_type], ['Private Payments at Scale', 2023, 'An abstract.', 'journalArticle'], 'source facts come from Crossref');
+  assert.deepEqual([P.props.citation_count, P.props.open_access, P.props.language, P.props.openalex_id], [12, 'green', 'en', 'W123'], 'and OpenAlex');
+  assert.equal(P.props.citation_count_at, new Date().toISOString().slice(0, 10));
+  assert.deepEqual(P.out.filter((e) => e.rel === 'AUTHORED_BY').map((e) => e.to).sort(), ['person:ada-lovelace', 'person:jose-garcia'], 'authors through the name matcher');
+  assert.ok(resolved.some(([l, n, o]) => l === 'Person' && n === 'José García' && o.by === 'source'));
+  const venueEdge = P.out.find((e) => e.rel === 'PUBLISHED_IN');
+  assert.equal(venueEdge.to, 'venue:journal-of-payments'); assert.equal(P.props.venue, 'Journal of Payments', 'the venue text stays for the CSL export');
+  const prov1 = JSON.parse(P.props.provenance_json);
+  assert.deepEqual([prov1.title.by, prov1.authors.by, prov1.citation_count.by, prov1.contribution_type.by, prov1.contribution_type.model, prov1.contribution_type.confidence, prov1.research_problem.confidence],
+    ['source', 'source', 'source', 'claude', 'claude-test', 'medium', 'low']);
+  assert.ok(!('visibility' in prov1));
+  const sk1 = Object.fromEntries(r1.skipped.map((x) => [x.field, x.reason]));
+  assert.deepEqual([sk1.authors, sk1.abstract, sk1.relevance, sk1.title], ['not a claude field', 'not a claude field', 'not a claude field', 'already filled'], 'Claude never writes source facts or the owner\'s appraisal');
+  assert.ok(!('doi' in sk1), 'the identity is not a field write');
+  assert.deepEqual(r1.filled.sort(), ['contribution_type', 'evidence', 'key_findings', 'research_problem']);
+  // a single object keeps its parts as queryable properties, hidden from the item's fields
+  assert.deepEqual([P.props.evidence__n, P.props.evidence__type, P.props.evidence__source, P.props.evidence__period], [1200, 'survey', null, '2020-2022'].map((x, i) => (i === 2 ? undefined : x)));
+  const pe = await items.get('doi:10.5555/abc');
+  assert.deepEqual(pe.fields.evidence, { type: 'survey', n: 1200, period: '2020-2022' }); assert.ok(!Object.keys(pe.extra).some((k) => k.startsWith('evidence__')));
+  assert.ok((await items.update('doi:10.5555/abc', { evidence__n: 5 })).warnings.includes('ignored (reserved or not a valid field name): evidence__n'), 'parts are not written directly');
+  assert.ok(!('evidence__n' in items.partValues('key_findings', S.fieldsOf('paper').key_findings, {})) && items.partNames('key_findings', S.fieldsOf('paper').key_findings).length === 0, 'lists of objects have no parts');
+  assert.deepEqual(r1.flagged.map((f) => f.reason), ['ungrounded: no location', 'ungrounded: interpretive link without a location']);
+  assert.deepEqual([r1.flagged[0].index, r1.flagged[0].text], [1, 'f2']);
+  assert.deepEqual(r1.links, [{ rel: 'ABOUT', target: 'topic:zero-knowledge-proof' }, { rel: 'CRITIQUES', target: 'doi:10.1/other' }]);
+  const lsk = r1.links_skipped.map((x) => x.reason);
+  assert.ok(/no Method titled "Brand new method"/.test(lsk[0]), 'items are never created from a name');
+  assert.ok(/CRITIQUES is interpretive: it needs the justifying passage/.test(lsk[1]));
+  assert.ok(/ADDRESSES does not start at a Paper/.test(lsk[2]));
+  assert.equal(G.get('topic:zero-knowledge-proof').props.by, 'claude'); assert.equal(G.get('topic:zero-knowledge-proof').props.model, 'claude-test');
+  const crit = P.out.find((e) => e.rel === 'CRITIQUES');
+  assert.deepEqual([crit.r.by, crit.r.model, crit.r.confidence, crit.r.status, crit.r.source, crit.r.evidence], ['claude', 'claude-test', 'low', 'auto', 'analysis', '"we disagree with X" (s. 4)']);
+  assert.ok(r1.empty_core_standard.includes('tldr') && r1.empty_core_standard.includes('arxiv_id') && !r1.empty_core_standard.includes('contribution_type') && !r1.empty_core_standard.includes('rigor'), 'standard tier: Core and Standard only');
+  assert.ok(!r1.empty_core_standard.includes('schema_version') && !r1.empty_core_standard.includes('record_status'));
+
+  // the same request again: nothing changes
+  const edges1 = P.out.length;
+  const r2 = await analysis.save(A1);
+  assert.equal(r2.created, false); assert.deepEqual(r2.filled, []); assert.deepEqual(r2.links, []);
+  assert.ok(r2.links_skipped.filter((x) => x.reason === 'already linked').length === 2); assert.equal(P.out.length, edges1, 'no duplicate links');
+  assert.deepEqual(r2.flagged, [], 'nothing new to flag');
+  assert.ok((await analysis.save({ ...A1, tier: 'deep' })).empty_core_standard.includes('rigor'), 'deep tier lists Deep fields too');
+
+  // owner edits win; force only replaces Claude's own values; reviewed Claude values are protected
+  await items.update('doi:10.5555/abc', { contribution_type: 'theoretical' });
+  const r3 = await analysis.save({ collection: 'paper', key: 'doi:10.5555/abc', model: 'claude-test', force: true, fields: { contribution_type: 'empirical', research_problem: 'rp v2' } });
+  assert.deepEqual(r3.skipped, [{ field: 'contribution_type', reason: 'owner value' }]); assert.deepEqual(r3.filled, ['research_problem']);
+  assert.equal(P.props.contribution_type, 'theoretical');
+  await items.link('method:snowball-sampling', { rel: 'ADDRESSES', target: 'usecase:offline-payments' });
+  const r4 = await analysis.save({ collection: 'method', key: 'method:snowball-sampling', model: 'm', force: true, links: [{ rel: 'ADDRESSES', target: 'usecase:offline-payments', confidence: 'high' }] });
+  assert.equal(r4.links_skipped[0].reason, 'owner link'); assert.equal(G.get('method:snowball-sampling').out.find((e) => e.rel === 'ADDRESSES').r.by, 'owner');
+
+  // sources down: the save goes on with warnings; a new DOI with no lookup and no title is a 422
+  openalexDown = true;
+  const r5 = await analysis.save({ collection: 'paper', key: 'doi:10.5555/abc', model: 'm', fields: {} });
+  assert.ok(r5.warnings.includes('OpenAlex: HTTP 500')); openalexDown = false;
+  crossrefDown = true;
+  srcNet.length = 0;
+  await assert.rejects(() => analysis.save({ collection: 'paper', doi: '10.9/none', model: 'm', fields: {} }), (e) => e.status === 422);
+  assert.equal(srcNet.filter((u) => u.includes('crossref')).length, 1, 'Crossref is asked once');
+  const r6 = await analysis.save({ collection: 'paper', doi: '10.9/none', model: 'm', fields: { title: 'Known only by title', tldr: 't' } });
+  assert.ok(r6.created && r6.warnings.includes('Crossref did not return this DOI; created from the title given') && r6.warnings.includes('OpenAlex does not know this DOI'));
+  assert.equal(JSON.parse(G.get('doi:10.9/none').props.provenance_json).title.by, 'source'); crossrefDown = false;
+  const rh = await analysis.save({ collection: 'paper', doi: '10.9/hybrid', model: 'm', fields: { title: 'Hybrid OA' } });
+  assert.equal(G.get(rh.key).props.open_access, undefined, 'an OpenAlex status with no equivalent is left empty'); assert.equal(G.get(rh.key).props.citation_count, 1);
+  G.get('doi:10.5555/abc').props.openalex_id = 'Wkept';
+  await analysis.save({ collection: 'paper', key: 'doi:10.5555/abc', model: 'm', fields: {} });
+  assert.equal(G.get('doi:10.5555/abc').props.openalex_id, 'Wkept', 'an existing OpenAlex id is kept');
+  G.set('doi:10.1/twin1', { labels: ['Artifact', 'Paper'], props: { key: 'doi:10.1/twin1', title: 'Twin', collection: 'paper' }, out: [] });
+  G.set('doi:10.1/twin2', { labels: ['Artifact', 'Paper'], props: { key: 'doi:10.1/twin2', title: 'twin', collection: 'paper' }, out: [] });
+  const rt = await analysis.save({ collection: 'paper', key: 'doi:10.5555/abc', model: 'm', links: [{ rel: 'BUILDS_ON', target: 'Twin', evidence: 'extends it' }, { rel: 'BUILDS_ON', target: 'The Other Paper', evidence: 'extends it', confidence: 'medium' }] });
+  assert.ok(/matches more than one item; pass its key/.test(rt.links_skipped[0].reason), 'an ambiguous title is not guessed');
+  // papers by URL
+  await assert.rejects(() => analysis.save({ collection: 'paper', url: 'https://ex.org/p.pdf', model: 'm', fields: {} }), (e) => e.status === 400 && /needs a title/.test(e.message));
+  const r7 = await analysis.save({ collection: 'paper', url: 'https://ex.org/p.pdf', model: 'm', fields: { title: 'A web paper' } });
+  assert.equal((await analysis.save({ collection: 'paper', url: 'https://ex.org/p.pdf', model: 'm', fields: {} })).key, r7.key, 'found again by URL');
+
+  // other collections: created by Claude from the title, re-analysis fills the gaps
+  const r8 = await analysis.save({ collection: 'use_case', model: 'claude-test', fields: { title: 'Cross-border payments', goal: 'cheap transfers', status: 'idea', domain: ['payments'] },
+    links: [{ rel: 'SUPPORTS', target: 'case:lisbon' }] });
+  assert.deepEqual([r8.key, r8.created], ['usecase:cross-border-payments', true]);
+  assert.deepEqual(r8.filled, ['title', 'goal', 'domain'], 'a new item is written once, by its creating write');
+  const prov8 = JSON.parse(G.get('usecase:cross-border-payments').props.provenance_json);
+  assert.deepEqual([prov8.title.by, prov8.goal.by], ['claude', 'claude'], 'on create Claude owns the fields it wrote');
+  assert.equal(r8.skipped.find((x) => x.field === 'status').reason, 'not a claude field', 'status is the owner\'s');
+  assert.equal(G.get('usecase:cross-border-payments').props.record_status, 'auto');
+  assert.ok(/SUPPORTS does not start at a UseCase/.test(r8.links_skipped[0].reason));
+  const r9 = await analysis.save({ collection: 'use_case', model: 'claude-test', fields: { title: 'Cross-border payments', goal: 'other', problem_context: 'fees' } });
+  assert.deepEqual([r9.created, r9.filled, r9.skipped], [false, ['problem_context'], [{ field: 'title', reason: 'already filled' }, { field: 'goal', reason: 'already filled' }]]);
+  const r10 = await analysis.save({ collection: 'case_study', key: 'case:lisbon', model: 'm', links: [{ rel: 'SUPPORTS', target: 'usecase:cross-border-payments', evidence: 'pilot results', location: 'p. 9' }, { rel: 'ABOUT', target: 'payments' }] });
+  assert.deepEqual(r10.links, [{ rel: 'SUPPORTS', target: 'usecase:cross-border-payments' }]); assert.deepEqual(r10.flagged, []);
+  assert.ok(/pass kind: one of Topic, Concept, Domain/.test(r10.links_skipped[0].reason), 'an ambiguous vocabulary target is not guessed');
+  for (const [bad, re] of [[{ collection: 'paper', model: 'm' }, /needs key, doi or url/], [{ collection: 'use_case', model: 'm', fields: {} }, /needs a title/], [{ collection: 'note', model: 'm' }, /collection must be/],
+    [{ collection: 'paper', doi: '10.5555/abc' }, /model is required/], [{ collection: 'paper', doi: '10.5555/abc', model: 'm', tier: 'max' }, /tier/], [{ collection: 'use_case', key: 'case:lisbon', model: 'm' }, /is a case_study, not a use_case/],
+    [{ collection: 'paper', doi: '10.5555/abc', model: 'm', confidence: 'sure' }, /confidence/], [{ collection: 'paper', doi: '10.5555/abc', model: 'm', links: {} }, /links must be a list/]]) {
+    await assert.rejects(() => analysis.save(bad), (e) => e.status === 400 && re.test(e.message), JSON.stringify(bad));
+  }
+
+  /* ------------------------------------------------------------ audit */
+  G.get('case:lisbon').props.schema_version = 0;
+  const au = await audit.report();
+  assert.ok(au.low_confidence.some((x) => x.key === 'doi:10.5555/abc' && x.field === 'research_problem' && x.model === 'claude-test') === false, 'research_problem was re-written by force without low confidence');
+  assert.ok(au.ungrounded.some((x) => x.key === 'doi:10.5555/abc' && x.index === 1 && x.text === 'f2'));
+  assert.ok(au.low_confidence_links.some((x) => x.rel === 'CRITIQUES' && x.target === 'doi:10.1/other'));
+  assert.ok(!au.low_confidence_links.some((x) => x.rel === 'SUPPORTS'), 'a located, medium-confidence link is fine');
+  assert.ok(au.low_confidence_links.some((x) => x.rel === 'BUILDS_ON' && x.confidence === 'medium' && x.location === null), 'an interpretive link without a location is listed');
+  const au1 = await audit.report({ limit: 1 });
+  assert.ok(au1.counts.empty_fields > 1 && au1.empty_fields.length === 1 && au1.truncated === true, 'lists are capped, counts are not');
+  assert.ok(au.vocab_by_claude.some((x) => x.key === 'topic:zero-knowledge-proof'));
+  assert.ok(au.outdated.some((x) => x.key === 'case:lisbon' && x.current === 1));
+  assert.ok(au.empty_fields.find((x) => x.key === 'doi:10.5555/abc').fields.some((f) => f.field === 'tldr' && f.tier === 'core'));
+  assert.ok(au.unreviewed_items.some((x) => x.key === 'usecase:cross-border-payments'));
+  for (const [k, v] of Object.entries(au.counts)) assert.equal(v, au[k].length, k);
+  await analysis.save({ collection: 'paper', key: 'doi:10.5555/abc', model: 'claude-test', confidence: 'low', fields: { paradigm: 'quantitative' } });
+  assert.ok((await audit.report()).low_confidence.some((x) => x.field === 'paradigm'));
+  assert.equal((await audit.report({ limit: 1 })).low_confidence.length, 1);
+  // accept: reviewed values are protected like the owner's
+  const ac = await audit.accept({ key: 'doi:10.5555/abc', fields: ['paradigm', 'nope'], links: [{ rel: 'CRITIQUES', target: 'doi:10.1/other' }] });
+  assert.deepEqual([ac.accepted, ac.not_found, ac.links, ac.record_status], [['paradigm'], ['nope'], 1, 'auto']);
+  assert.equal((await analysis.save({ collection: 'paper', key: 'doi:10.5555/abc', model: 'm', force: true, fields: { paradigm: 'mixed' } })).skipped[0].reason, 'owner value');
+  assert.ok(!(await audit.report()).low_confidence.some((x) => x.field === 'paradigm'), 'an accepted low-confidence field leaves the audit');
+  assert.ok(!(await audit.report()).low_confidence_links.some((x) => x.rel === 'CRITIQUES'), 'an accepted link leaves the audit');
+  const acAll = await audit.accept({ key: 'usecase:cross-border-payments' });
+  assert.equal(acAll.record_status, 'reviewed'); assert.equal(G.get('usecase:cross-border-payments').props.record_status, 'reviewed');
+  assert.ok(!(await audit.report()).unreviewed_items.some((x) => x.key === 'usecase:cross-border-payments'));
+  assert.deepEqual(await audit.accept({ vocab: 'topic:zero-knowledge-proof' }), { vocab: 'topic:zero-knowledge-proof', record_status: 'reviewed' });
+  assert.ok(!(await audit.report()).vocab_by_claude.some((x) => x.key === 'topic:zero-knowledge-proof'));
+  await assert.rejects(() => audit.accept({}), (e) => e.status === 400);
+  await assert.rejects(() => audit.accept({ vocab: 'method:snowball-sampling' }), (e) => e.status === 404);
+  await assert.rejects(() => audit.accept({ key: 'doi:10.5555/abc', fields: 'all' }), (e) => e.status === 400);
+
+  /* ------------------------------------------------------------ analysis and audit over HTTP, and through MCP */
+  const appA = require('express')();
+  appA.use(require('express').json());
+  require('../features/analysis').mount(appA); require('../features/mcp').mount(appA);
+  appA.use((err, _req, res, _next) => res.status(err.status || 500).json({ error: err.message }));
+  const srvA = await new Promise((ok) => { const x = appA.listen(0, '127.0.0.1', () => ok(x)); });
+  const aBase = `http://127.0.0.1:${srvA.address().port}`;
+  try {
+    for (const [m, u] of [['POST', '/api/analysis'], ['GET', '/api/audit'], ['POST', '/api/audit/accept'], ['POST', '/mcp']]) {
+      assert.equal((await fetch(aBase + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'GET' ? undefined : '{}' })).status, 401, `${m} ${u} is owner only`);
+    }
+    const h1 = await fetch(aBase + '/api/analysis', { method: 'POST', headers: H, body: JSON.stringify({ collection: 'method', model: 'm', fields: { title: 'Via HTTP method', purpose: 'p' } }) });
+    assert.equal(h1.status, 201);
+    const h2 = await fetch(aBase + '/api/analysis', { method: 'POST', headers: H, body: JSON.stringify({ collection: 'method', model: 'm', fields: { title: 'Via HTTP method', purpose: 'p' } }) });
+    assert.equal(h2.status, 200, 're-analysis is 200');
+    assert.ok((await (await fetch(aBase + '/api/audit', { headers: H })).json()).counts);
+    assert.equal((await (await fetch(aBase + '/api/audit/accept', { method: 'POST', headers: H, body: JSON.stringify({ key: 'method:via-http-method' }) })).json()).record_status, 'reviewed');
+
+    const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+    const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
+    const client = new Client({ name: 'test', version: '1' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(aBase + '/mcp'), { requestInit: { headers: { Authorization: 'Bearer abc' } } }));
+    const toolNames = (await client.listTools()).tools.map((t) => t.name);
+    for (const t of ['get_schema', 'save_analysis', 'search_items', 'get_item', 'describe_graph']) assert.ok(toolNames.includes(t), t);
+    assert.equal(client.getServerVersion().version, require('../package.json').version);
+    assert.match(client.getInstructions(), /call get_schema for its collection, then save_analysis once/);
+    const call = async (name, args) => { const r = await client.callTool({ name, arguments: args }); assert.ok(!r.isError, `${name}: ${r.content[0].text}`); return JSON.parse(r.content[0].text); };
+    const gs = await call('get_schema', { collection: 'paper' });
+    assert.ok(gs.fields.contribution_type.enum.includes('empirical') && gs.fields.key_findings.props.location === 'text');
+    assert.ok(!gs.fields.authors && !gs.fields.relevance && gs.filled_by_the_hub.includes('authors') && gs.filled_by_the_hub.includes('abstract'), 'only fields Claude may fill; source fields listed apart');
+    assert.ok(gs.rules.some((x) => /empty beats wrong/.test(x)) && gs.rules.some((x) => /location/.test(x)));
+    assert.ok(gs.relations.some((r) => r.rel === 'CRITIQUES' && r.interpretive) && gs.relations.some((r) => r.rel === 'INTRODUCES' && !r.interpretive));
+    const sv = await call('save_analysis', { collection: 'case_study', model: 'claude-mcp', fields: { title: 'MCP case', case_type: 'pilot' }, confidence: { case_type: 'high' } });
+    assert.deepEqual([sv.key, sv.created], ['case:mcp-case', true]);
+    const gi = await call('get_item', { key: 'case:mcp-case' });
+    assert.deepEqual([gi.fields.case_type, gi.provenance.case_type.by, gi.provenance.case_type.model, gi.provenance.case_type.confidence], ['pilot', 'claude', 'claude-mcp', 'high']);
+    let mcpListParams = null;
+    runImpl = async (q, p) => (q.includes('ORDER BY s') ? (mcpListParams = p, [{ key: 'case:mcp-case', s: 'x', labels: ['Artifact', 'CaseStudy'], props: { key: 'case:mcp-case', title: 'MCP case', case_type: 'pilot' } }]) : q.includes('count(n)') ? [{ total: 1 }] : aRun(q, p));
+    const si = await call('search_items', { collection: 'case_study', filters: { case_type: 'pilot' }, limit: 5 });
+    assert.deepEqual(si.items.map((x) => x.key), ['case:mcp-case']);
+    assert.deepEqual([mcpListParams.f_case_type, mcpListParams.limit.toNumber()], [['pilot'], 6], 'filters and limit reach the query');
+    const bad = await client.callTool({ name: 'save_analysis', arguments: { collection: 'paper', model: 'm', fields: {} } });
+    assert.ok(bad.isError && /needs key, doi or url/.test(bad.content[0].text), 'errors come back as tool errors');
+    runImpl = aRun;
+    await client.close();
+  } finally { srvA.close(); }
+  vocab.resolve = realResolve; runImpl = async () => []; txImpl = null;
+  crossref.setHttp((url, opts) => fetch(url, opts)); openalex.setHttp((url, opts) => fetch(url, opts));
+
+  /* ------------------------------------------------------------ migration 009: object parts */
+  const m009 = require('../migrations/009_object_parts');
+  const m9 = [];
+  await m009.up({ run: async (q, p) => { m9.push([q, p]); return q.includes('n.`period_json` IS NOT NULL') ? [{ key: 'case:x', json: '{"from":"2023-01","to":"2024"}' }] : q.includes('n.`evidence_json` IS NOT NULL') ? [{ key: 'p:1', json: 'not json' }] : []; } });
+  const m9p = m9.find(([q]) => q.startsWith('UNWIND') && q.includes('CaseStudy'))[1].rows[0];
+  assert.deepEqual(m9p, { key: 'case:x', props: { period__from: '2023-01', period__to: '2024' } });
+  assert.deepEqual(m9.find(([q]) => q.startsWith('UNWIND') && q.includes('Paper'))[1].rows[0].props, { evidence__type: null, evidence__source: null, evidence__n: null, evidence__period: null }, 'broken JSON clears the parts');
+  assert.ok(!m9.some(([q]) => q.includes('`key_findings_json`') || q.includes('`provenance_json`')), 'lists of objects and hub fields are skipped');
 
   /* ------------------------------------------------------------ items: schema checks, migration 007 */
   assert.match(broken((c) => { c.types.method.fields.topics2 = { ...c.common_fields.topics }; }), /types\.method: topics and topics2 both link ABOUT->Topic/);

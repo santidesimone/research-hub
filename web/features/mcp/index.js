@@ -1,12 +1,14 @@
 // MCP server (Streamable HTTP, stateless) so Claude can use the hub: POST <base>/mcp with Authorization: Bearer <HUB_API_TOKEN>.
 // Tools call the same code as the REST API. Tools whose feature folder is missing are simply not offered.
 const express = require('express');
+// The MCP SDK uses the Web Crypto global, which Node only provides by default from version 20 (package.json allows 18).
+if (!globalThis.crypto) globalThis.crypto = require('crypto').webcrypto;
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 const { z } = require('zod');
 const { requireOwner } = require('../../core/auth');
 const { run } = require('../../core/db');
-const { schema } = require('../../core/schema');
+const { schema, fieldsOf } = require('../../core/schema');
 const artifacts = require('../../core/artifacts');
 const query = require('../../core/query');
 const links = require('../../core/links');
@@ -15,14 +17,44 @@ const config = require('../../core/config');
 const tryRequire = (p) => { try { return require(p); } catch { return null; } };
 const files = tryRequire('../papers/files');
 const personal = tryRequire('../personal');
+const items = tryRequire('../../core/items');
+const analysis = tryRequire('../../core/analysis');
+const pkg = require('../../package.json');
+
+const COLLECTIONS = Object.keys(schema.types).filter((t) => schema.types[t].collection);
+const ANALYSIS_RULES = [
+  'Fill only fields you are confident about. Leave a field empty rather than guess: empty beats wrong.',
+  'Every key finding needs a location (page or section). Findings without one are saved but flagged "ungrounded".',
+  'Interpretive paper-to-paper links (builds_on, critiques, contradicts, supports, replicates) need the justifying passage as evidence, or they are not saved.',
+  'Do not send source facts for papers (authors, year, venue, abstract, DOI metadata): the hub fills them from Crossref and OpenAlex.',
+  'Pass vocabulary (topics, domains, organisations) as names; the hub matches them to existing nodes. Link other items by key.',
+  'Saving fills empty fields only. It never overwrites the owner\'s edits or reviewed values; force replaces only values you wrote earlier.',
+];
+
+// The fields of a collection as Claude needs them: what it may fill, enums, tiers, and what the hub fills itself.
+function schemaFor(collection) {
+  const t = schema.types[collection];
+  const fields = {};
+  const sourceOnly = [];
+  for (const [name, f] of Object.entries(fieldsOf(collection))) {
+    if (f.by.length === 1 && f.by[0] === 'Sys') continue;
+    if (!f.by.includes('C')) { if (f.by.includes('S')) sourceOnly.push(name); continue; }
+    fields[name] = Object.fromEntries(Object.entries({ type: f.type, list: f.list || undefined, enum: f.enum, ref: f.ref, props: f.props, min: f.min, max: f.max, tier: f.tier, label: f.label, help: f.help }).filter(([, v]) => v !== undefined));
+  }
+  const relations = Object.entries(schema.relation_types).filter(([, r]) => r.from.includes(t.label))
+    .map(([rel, r]) => ({ rel, to: r.to, interpretive: Boolean(r.interpretive) }));
+  return { collection, schema_version: t.schema_version, rules: ANALYSIS_RULES, fields, filled_by_the_hub: sourceOnly, relations };
+}
 
 const text = (obj) => ({ content: [{ type: 'text', text: typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2).slice(0, 100000) }] });
 const fail = (e) => ({ isError: true, content: [{ type: 'text', text: e.message || String(e) }] });
 const safe = (fn) => async (args) => { try { return text(await fn(args)); } catch (e) { return fail(e); } };
 
 function buildServer() {
-  const s = new McpServer({ name: 'research-hub', version: '0.6.0' }, {
-    instructions: 'Tools for the owner\'s research hub: a Neo4j knowledge graph of papers, methods, notes and projects. Call describe_graph before writing Cypher.',
+  const s = new McpServer({ name: 'research-hub', version: pkg.version }, {
+    instructions: 'Tools for the owner\'s research hub: a Neo4j knowledge graph with four collections (papers, methods, use cases, case studies) plus notes and projects. '
+      + 'To analyse something, call get_schema for its collection, then save_analysis once with every field you are confident about: it saves directly. '
+      + 'Use search_items and get_item to read collections; call describe_graph before writing Cypher.',
   });
 
   s.registerTool('describe_graph', { description: 'Describe the graph: labels, relationship types, properties, patterns, conventions and example queries. Call this before run_cypher.', inputSchema: {} },
@@ -75,6 +107,47 @@ function buildServer() {
       overwrite: z.boolean().optional(),
     },
   }, safe(({ type, relations, overwrite, ...rest }) => artifacts.add(type, { ...rest, ...(relations || {}) }, { overwrite: Boolean(overwrite) })));
+
+  if (items && analysis) {
+    const confidence = z.enum(['low', 'medium', 'high']);
+    s.registerTool('get_schema', {
+      description: 'The fields of a collection that you may fill (types, enums, tiers), the relations it can have, and the rules for saving an analysis. Call this before save_analysis.',
+      inputSchema: { collection: z.enum(COLLECTIONS) },
+    }, safe(async ({ collection }) => schemaFor(collection)));
+
+    s.registerTool('save_analysis', {
+      description: 'Save your analysis of a paper, method, use case or case study in ONE call. It is saved immediately (no approval step) with provenance (you, the model, a confidence) and can be audited later. '
+        + 'Identify the item by key, or a paper by doi or url, or a new method/use case/case study by fields.title. For papers the hub fills the source facts itself (Crossref, OpenAlex). '
+        + 'Only empty fields are filled; the owner\'s values are never overwritten. Leave a field out rather than guess. Every key finding needs a location. Returns what was filled, skipped, still empty and flagged.',
+      inputSchema: {
+        collection: z.enum(COLLECTIONS), key: z.string().optional(), doi: z.string().optional(), url: z.string().optional(),
+        fields: z.record(z.any()).describe('Field name -> value, from get_schema. Objects as JSON objects; vocabulary as names.'),
+        links: z.array(z.object({
+          rel: z.string().describe('e.g. INTRODUCES, USES, ADDRESSES, BUILDS_ON, CRITIQUES, ABOUT'), target: z.string().describe('a key, or a name'),
+          kind: z.string().optional().describe('when target is a name: Topic, Concept, Domain, Method, Paper ...'),
+          evidence: z.string().optional().describe('the justifying passage (required for interpretive links)'), location: z.string().optional().describe('page or section'),
+          confidence: confidence.optional(),
+        })).optional(),
+        model: z.string().describe('your model id'), tier: z.enum(['standard', 'deep']).optional(),
+        confidence: z.union([confidence, z.record(confidence)]).optional().describe('one level for all fields, or {field: level}; default medium'),
+        force: z.boolean().optional().describe('replace values you (Claude) wrote earlier; never touches the owner\'s'),
+        file_url: z.string().optional(), copy_to_drive: z.boolean().optional(),
+      },
+    }, safe((args) => analysis.save(args)));
+
+    s.registerTool('search_items', {
+      description: 'List a collection: full-text query, filters (the collection\'s filters from get_schema, e.g. {"kind": "technique", "domain": "payments"}), sort, cursor paging.',
+      inputSchema: {
+        collection: z.enum(COLLECTIONS), q: z.string().optional(), filters: z.record(z.string()).optional(),
+        sort: z.string().optional(), limit: z.number().int().min(1).max(100).optional(), cursor: z.string().optional(),
+      },
+    }, safe(({ filters, limit, ...rest }) => items.list({ ...rest, ...(filters || {}), ...(limit ? { limit: String(limit) } : {}) })));
+
+    s.registerTool('get_item', {
+      description: 'One collection item by key: every field, per-field provenance (who wrote it, model, confidence, reviewed or not) and its links.',
+      inputSchema: { key: z.string() },
+    }, safe(({ key }) => items.get(key)));
+  }
 
   if (files) {
     s.registerTool('set_file_link', {

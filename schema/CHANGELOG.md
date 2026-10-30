@@ -2,6 +2,14 @@
 
 Every change to `schema/schema.json`, with the reason. The spec is `docs/SCHEMA_DESIGN.md`. A per-type `schema_version` is raised when that type's fields change. Items below the current version form the audit worklist, so a change is never silently applied to old items.
 
+## v3, analysis (2026-10-30)
+
+Why: Claude's single-call analysis (Task 4), and the design's competency question 1 (sample size), which must be answerable in plain Cypher.
+
+- Single-object fields also store each declared part as `<field>__<part>` (for example `evidence__n`, `period__from`). Migration `009` backfills them from `<field>_json`. They are not fields and cannot be written directly.
+- Links saved by an analysis carry `evidence`, `location`, `confidence`, `by`, `model`, `at`, `status` and `source: 'analysis'`. `status: reviewed` (set by the audit) protects them like owner links.
+- Vocabulary nodes and items gain `reviewed_at` when accepted in the audit.
+
 ## v3, items storage (2026-10-30)
 
 Why: the collections API (Task 3) needs one storage convention and per-field provenance.

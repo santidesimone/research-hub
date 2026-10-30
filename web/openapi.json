@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Research Hub API",
-    "version": "0.6.0",
+    "version": "0.7.0",
     "description": "The self-hosted research hub's API, for scripts, the CLI and AI agents. Neo4j holds metadata, note text and your personal layer; files are LINKS (`file_url`: Google Drive, arXiv, a publisher). Uploading a PDF sends it to the owner's Google Drive; the hub stores only the link. The library can be exported/imported as CSL JSON, and the whole graph backed up and restored as one JSON file. All private endpoints need the owner token (`Authorization: Bearer ...`) or a signed-in session. When served under a path (BASE_PATH), prefix every path."
   },
   "servers": [
@@ -474,6 +474,175 @@
               "medium",
               "high"
             ]
+          }
+        }
+      },
+      "AnalysisInput": {
+        "type": "object",
+        "required": [
+          "collection",
+          "model"
+        ],
+        "properties": {
+          "collection": {
+            "type": "string",
+            "enum": [
+              "paper",
+              "method",
+              "use_case",
+              "case_study"
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "doi": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "model": {
+            "type": "string"
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "deep"
+            ],
+            "default": "standard"
+          },
+          "confidence": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high"
+                  ]
+                }
+              }
+            ],
+            "description": "one level, or per field (default medium)"
+          },
+          "force": {
+            "type": "boolean",
+            "description": "replace Claude's own earlier values"
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "rel",
+                "target"
+              ],
+              "properties": {
+                "rel": {
+                  "type": "string"
+                },
+                "target": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "string"
+                },
+                "location": {
+                  "type": "string"
+                },
+                "confidence": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high"
+                  ]
+                }
+              }
+            }
+          },
+          "file_url": {
+            "type": "string"
+          },
+          "copy_to_drive": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AnalysisResult": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "filled": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "links_skipped": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "empty_core_standard": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "fields of the requested tier still empty"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "flagged": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "ungrounded findings and interpretive links without a location"
           }
         }
       }
@@ -1738,6 +1907,156 @@
           },
           "404": {
             "description": "No such item (or not a collection item)"
+          }
+        }
+      }
+    },
+    "/api/analysis": {
+      "post": {
+        "operationId": "saveAnalysis",
+        "summary": "Save Claude's analysis of an item in one call (no approval step)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Finds the item (key, or a paper by doi or url, or a new method/use case/case study by fields.title) or creates it. For papers, source facts come from Crossref and OpenAlex server-side (authors as Person nodes, venue as a Venue node, citation count, open access, language). Claude's fields are saved with provenance (by=claude, model, confidence, status=auto) and fill empty fields only: the owner's values and reviewed values are never overwritten, and force replaces only Claude's own. Links: vocabulary targets by name, items by key or exact title (never created from a name); interpretive links need evidence. Key findings without a location are saved but flagged ungrounded.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalysisInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Existing item re-analysed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisResult"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Owner only"
+          },
+          "404": {
+            "description": "key not found"
+          },
+          "422": {
+            "description": "DOI not found at Crossref and no title given"
+          }
+        }
+      }
+    },
+    "/api/audit": {
+      "get": {
+        "operationId": "audit",
+        "summary": "What is worth reviewing: low-confidence fields and links, empty Core/Standard fields, ungrounded findings, outdated schema versions, vocabulary created by Claude, unreviewed items",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 200,
+              "maximum": 1000
+            },
+            "description": "per list; counts are always complete"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{counts, low_confidence, low_confidence_links, empty_fields, ungrounded, outdated, vocab_by_claude, unreviewed_items, truncated}"
+          },
+          "401": {
+            "description": "Owner only"
+          }
+        }
+      }
+    },
+    "/api/audit/accept": {
+      "post": {
+        "operationId": "auditAccept",
+        "summary": "Mark values reviewed (they are then protected from re-runs like owner edits)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "description": "an item"
+                  },
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "default: every field still auto"
+                  },
+                  "links": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "rel": {
+                          "type": "string"
+                        },
+                        "target": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "vocab": {
+                    "type": "string",
+                    "description": "or: a vocabulary node key"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{key, accepted, not_found, links, record_status} or {vocab, record_status}"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "404": {
+            "description": "Not found"
           }
         }
       }

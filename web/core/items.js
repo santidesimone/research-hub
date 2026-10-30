@@ -3,7 +3,8 @@
 //
 // Storage, per field type in schema/schema.json:
 //   scalars and lists of scalars  node properties (`year`, `procedure`)
-//   object / list of objects      JSON text in `<field>_json`, parsed on read
+//   object / list of objects      JSON text in `<field>_json`, parsed on read; a single object also keeps each declared
+//                                 part as a plain property `<field>__<part>` so Cypher can query it (p.evidence__n > 100)
 //   ref                           edges (field's rel) to vocabulary nodes, resolved from names by vocab.resolve, or to
 //                                 items by key; each edge records `field`, `position` and `source: 'items'`
 //   provenance                    `provenance_json`: field -> {by, at, model, confidence, status}
@@ -34,6 +35,15 @@ const MAX_LIMIT = 100;
 const isSys = (f) => f.by.length === 1 && f.by[0] === 'Sys';
 const kindOf = (f) => (f.type === 'ref' ? 'edge' : f.type === 'object' ? 'json' : 'prop');
 const empty = (v) => v == null || v === '' || (Array.isArray(v) && v.length === 0);
+// The queryable copies of a single object's parts: `<field>__<part>` for each part the schema declares.
+const partNames = (f, spec) => (kindOf(spec) === 'json' && !spec.list ? Object.keys(spec.props || {}).map((k) => `${f}__${k}`) : []);
+function partValues(f, spec, v) {
+  const obj = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  return Object.fromEntries(Object.keys(spec.props || {}).map((k) => {
+    const x = obj[k];
+    return [`${f}__${k}`, x == null || typeof x === 'object' ? null : x];
+  }));
+}
 const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 const typeDef = (c) => schema.types[c];
 const codec = (c, f) => (types.get(c).codec || {})[f];
@@ -47,7 +57,7 @@ function specs(c) { return Object.fromEntries(Object.entries(fieldsOf(c)).filter
 // Names that may not be stored as "unknown" fields on this collection.
 function reserved(c) {
   const out = new Set(SYSTEM);
-  for (const [f, spec] of Object.entries(fieldsOf(c))) if (kindOf(spec) === 'json') out.add(`${f}_json`);
+  for (const [f, spec] of Object.entries(fieldsOf(c))) if (kindOf(spec) === 'json') { out.add(`${f}_json`); partNames(f, spec).forEach((n) => out.add(n)); }
   if (!fieldsOf(c).status) out.add('status'); // your reading status lives in the personal layer (/api/personal)
   return out;
 }
@@ -93,7 +103,7 @@ function toItem(row) {
   const all = fieldsOf(c);
   const fields = {};
   for (const [f, spec] of Object.entries(all)) if (!isSys(spec) && f !== 'record_status') fields[f] = fieldValue(row, c, f, spec); // record_status is top-level
-  const known = new Set([...Object.keys(all), ...Object.keys(all).map((f) => `${f}_json`), ...(typeDef(c).props || [])]);
+  const known = new Set([...Object.keys(all), ...Object.keys(all).map((f) => `${f}_json`), ...Object.entries(all).flatMap(([f, spec]) => partNames(f, spec)), ...(typeDef(c).props || [])]);
   const p = row.props;
   const extra = Object.fromEntries(Object.entries(p).filter(([k]) => !known.has(k) && !SYSTEM.has(k)));
   const link = (e) => ({ rel: e.rel, key: e.key, name: e.name, labels: e.labels.filter((l) => l !== 'Artifact'), ...pick(e.r, ['field', 'evidence', 'location', 'confidence', 'by', 'at', 'model', 'status', 'source']) });
@@ -164,13 +174,16 @@ const rowOf = (rec) => ({ labels: rec.get('labels'), props: db.plain(rec.get('pr
 async function write(key, input, opts = {}) {
   const by = opts.by || 'owner';
   if (!BY_CODE[by]) throw new HttpError(400, `by must be one of ${Object.keys(BY_CODE).join(', ')}`);
-  if (opts.confidence != null && !CONFIDENCE.includes(opts.confidence)) throw new HttpError(400, `confidence must be one of ${CONFIDENCE.join(', ')}`);
+  // confidence: one level for every field, or {field: level}
+  const confs = opts.confidence == null ? [] : typeof opts.confidence === 'object' ? Object.values(opts.confidence) : [opts.confidence];
+  if (confs.some((x) => !CONFIDENCE.includes(x))) throw new HttpError(400, `confidence must be one of ${CONFIDENCE.join(', ')}`);
+  const confidenceOf = (f) => (opts.confidence && typeof opts.confidence === 'object' ? opts.confidence[f] : opts.confidence) || null;
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'fields must be an object');
   const pre = opts.create ? null : (await db.run(READ, { key }))[0];
   if (!opts.create && !pre) throw new HttpError(404, 'No such item');
   const c = opts.create ? collectionCheck(opts.create.collection) : collectionOfLabels(pre.labels);
   if (!c) throw new HttpError(400, `${key} is not a collection item`);
-  const locked = opts.create ? [] : (types.get(c).locked || []).filter((f) => f in input);
+  const locked = opts.create || by !== 'owner' ? [] : (types.get(c).locked || []).filter((f) => f in input); // sources still fill them
   if (locked.length) throw new HttpError(400, `${locked.join(', ')} cannot be edited on a ${c}`);
   const fields = specs(c);
   const checked = validate(c, input, { partial: !opts.create });
@@ -213,15 +226,16 @@ async function write(key, input, opts = {}) {
         unknown.push(f);
         continue;
       }
-      const why = blocked(spec, by, v, currentValue(state, f, spec), prov[f], opts.force);
+      // on create the node holds only what this write put there, so the writer owns those fields
+      const why = blocked(spec, by, v, opts.create ? null : currentValue(state, f, spec), opts.create ? undefined : prov[f], opts.force);
       if (why) { skipped.push({ field: f, reason: why }); continue; }
       const kind = kindOf(spec);
       if (kind === 'edge' && !empty(v) && !refs[f]) { skipped.push({ field: f, reason: 'changed while saving, try again' }); continue; }
       if (kind === 'prop') { const cd = codec(c, f); sets[f] = empty(v) ? null : cd ? cd.write(v) : scalar(v); }
-      if (kind === 'json') { sets[`${f}_json`] = empty(v) ? null : JSON.stringify(v); sets[f] = null; }
+      if (kind === 'json') { sets[`${f}_json`] = empty(v) ? null : JSON.stringify(v); sets[f] = null; if (!spec.list) Object.assign(sets, partValues(f, spec, v)); }
       if (kind === 'edge') { edgeWrites.push([f, spec, refs[f] || []]); sets[f] = null; }
       prov[f] = by === 'owner' ? { by: 'owner', at, status: 'reviewed' }
-        : { by, at, ...(opts.model ? { model: opts.model } : {}), ...(opts.confidence ? { confidence: opts.confidence } : {}), status: 'auto' };
+        : { by, at, ...(opts.model ? { model: opts.model } : {}), ...(confidenceOf(f) ? { confidence: confidenceOf(f) } : {}), status: 'auto' };
       filled.push(f);
     }
     for (const f of unknown.slice(0, MAX_UNKNOWN)) { sets[f] = scalar(input[f]); filled.push(f); }
@@ -238,9 +252,12 @@ async function write(key, input, opts = {}) {
       const made = await tx.run(
         `UNWIND $rows AS x MATCH (n:Artifact {key:$key}) MATCH (t:${L} {key:x.key})
          MERGE (n)-[r:${rel}]->(t) SET r.field = $field, r.position = x.position, r.source = 'items', r.by = $by, r.at = $at
-         RETURN t.key AS key`, { key, rows, field: f, by, at });
-      const found = new Set(made.records.map((r) => r.get('key')));
-      for (const t of rows) if (!found.has(t.key)) warnings.push(`${f}: ${t.key} not found, skipped`);
+         RETURN t.key AS key, coalesce(t.name, t.title) AS name`, { key, rows, field: f, by, at });
+      const names = new Map(made.records.map((r) => [r.get('key'), r.get('name')]));
+      for (const t of rows) if (!names.has(t.key)) warnings.push(`${f}: ${t.key} not found, skipped`);
+      // the text property mirrors the links (the CSL export and older readers use a paper's venue text)
+      const mirror = rows.filter((t) => names.has(t.key)).map((t) => names.get(t.key));
+      sets[f] = !mirror.length ? null : spec.list ? mirror : mirror[0];
     }
     await tx.run('MATCH (n:Artifact {key:$key}) SET n += $sets, n.provenance_json = $prov, n.updated_at = datetime()', { key, sets, prov: JSON.stringify(prov) });
     return { created, filled, skipped };
@@ -452,4 +469,4 @@ async function list(query = {}) {
   return { collection: c, items, total, next_cursor: more && last ? encodeCursor([last.s, last.key]) : null };
 }
 
-module.exports = { COLLECTIONS, get, list, create, update, write, remove, link, unlink, toItem, blocked, reserved, encodeCursor, decodeCursor };
+module.exports = { partNames, partValues, COLLECTIONS, READ, get, list, create, update, write, remove, link, unlink, toItem, blocked, reserved, relName, kindOf, isSys, empty, encodeCursor, decodeCursor };
