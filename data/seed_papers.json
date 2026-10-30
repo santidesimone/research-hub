@@ -1,0 +1,202 @@
+[
+  {
+    "itemType": "bookSection",
+    "title": "Blind Signatures for Untraceable Payments",
+    "creators": [
+      {"creatorType": "author", "firstName": "David", "lastName": "Chaum"},
+      {"creatorType": "editor", "firstName": "David", "lastName": "Chaum"},
+      {"creatorType": "editor", "firstName": "Ronald L.", "lastName": "Rivest"},
+      {"creatorType": "editor", "firstName": "Alan T.", "lastName": "Sherman"}
+    ],
+    "bookTitle": "Advances in Cryptology: Proceedings of Crypto 82",
+    "publisher": "Springer US",
+    "place": "Boston, MA",
+    "date": "1983",
+    "pages": "199-203",
+    "DOI": "10.1007/978-1-4757-0602-4_18",
+    "url": "https://doi.org/10.1007/978-1-4757-0602-4_18",
+    "abstractNote": "Summary (paraphrase, not the original abstract): introduces blind signatures, which let a bank sign a message without seeing it, as the basis for untraceable electronic payments.",
+    "tags": [{"tag": "status:canonical"}, {"tag": "topic:digital-cash"}, {"tag": "topic:cryptography"}, {"tag": "topic:privacy"}, {"tag": "public"}]
+  },
+  {
+    "itemType": "journalArticle",
+    "title": "A Digital Currency Architecture for Privacy and Owner-Custodianship",
+    "creators": [
+      {"creatorType": "author", "firstName": "Geoffrey", "lastName": "Goodell"},
+      {"creatorType": "author", "firstName": "Hazem Danny", "lastName": "Al-Nakib"},
+      {"creatorType": "author", "firstName": "Paolo", "lastName": "Tasca"}
+    ],
+    "publicationTitle": "Future Internet",
+    "volume": "13",
+    "issue": "5",
+    "pages": "130",
+    "date": "2021-05-14",
+    "DOI": "10.3390/fi13050130",
+    "url": "https://doi.org/10.3390/fi13050130",
+    "abstractNote": "Summary (paraphrase, not the original abstract): proposes a privately operated, government-backed digital currency in which users hold funds in wallets that hide their payment counterparties, aiming for cash-like privacy and personal control while keeping a regulatory role for banks.",
+    "extra": "arXiv: 2101.05259",
+    "tags": [{"tag": "status:canonical"}, {"tag": "topic:central-bank-digital-currency"}, {"tag": "topic:digital-cash"}, {"tag": "topic:privacy"}, {"tag": "public"}],
+    "pdf_url": "https://arxiv.org/pdf/2101.05259"
+  },
+  {
+    "itemType": "journalArticle",
+    "title": "Can Cryptocurrencies Preserve Privacy and Comply with Regulations?",
+    "creators": [
+      {"creatorType": "author", "firstName": "Geoffrey", "lastName": "Goodell"},
+      {"creatorType": "author", "firstName": "Tomaso", "lastName": "Aste"}
+    ],
+    "publicationTitle": "Frontiers in Blockchain",
+    "volume": "2",
+    "pages": "4",
+    "date": "2019",
+    "DOI": "10.3389/fbloc.2019.00004",
+    "url": "https://doi.org/10.3389/fbloc.2019.00004",
+    "abstractNote": "Summary (paraphrase, not the original abstract): argues that cryptocurrencies fall short of cash-like anonymity, rejects a choice between total surveillance and unregulated secrecy, and proposes two compromise approaches that give regulators auditability while protecting users.",
+    "extra": "arXiv: 1811.12240",
+    "tags": [{"tag": "status:to-read"}, {"tag": "topic:privacy"}, {"tag": "topic:regulation"}],
+    "pdf_url": "https://arxiv.org/pdf/1811.12240"
+  },
+  {
+    "itemType": "journalArticle",
+    "title": "A Decentralised Digital Identity Architecture",
+    "creators": [
+      {"creatorType": "author", "firstName": "Geoffrey", "lastName": "Goodell"},
+      {"creatorType": "author", "firstName": "Tomaso", "lastName": "Aste"}
+    ],
+    "publicationTitle": "Frontiers in Blockchain",
+    "volume": "2",
+    "pages": "17",
+    "date": "2019",
+    "DOI": "10.3389/fbloc.2019.00017",
+    "url": "https://doi.org/10.3389/fbloc.2019.00017",
+    "abstractNote": "Summary (paraphrase, not the original abstract): argues that digital identity systems should protect human rights by letting people keep several unlinked identities, and proposes a decentralised, standards-based design built on distributed ledger technology.",
+    "tags": [{"tag": "status:to-read"}, {"tag": "topic:digital-identity"}, {"tag": "topic:privacy"}]
+  },
+  {
+    "itemType": "preprint",
+    "title": "Privacy by Design in Value-Exchange Systems",
+    "creators": [
+      {"creatorType": "author", "firstName": "Geoffrey", "lastName": "Goodell"}
+    ],
+    "repository": "arXiv",
+    "archiveID": "arXiv:2006.05892",
+    "date": "2020-06",
+    "DOI": "10.48550/arXiv.2006.05892",
+    "url": "https://arxiv.org/abs/2006.05892",
+    "abstractNote": "Summary (paraphrase, not the original abstract): examines the most disputed privacy issues in electronic payment systems, especially proposals for central bank digital currency.",
+    "tags": [{"tag": "status:reading"}, {"tag": "topic:central-bank-digital-currency"}, {"tag": "topic:privacy"}],
+    "pdf_url": "https://arxiv.org/pdf/2006.05892"
+  },
+  {
+    "itemType": "preprint",
+    "title": "Decentralised Trust for the Digital Economy",
+    "creators": [
+      {"creatorType": "author", "firstName": "Geoffrey", "lastName": "Goodell"}
+    ],
+    "repository": "arXiv",
+    "archiveID": "arXiv:2108.04960",
+    "date": "2021-08",
+    "DOI": "10.48550/arXiv.2108.04960",
+    "url": "https://arxiv.org/abs/2108.04960",
+    "abstractNote": "Summary (paraphrase, not the original abstract): a research proposal arguing that activity records on platforms enable surveillance and discrimination, and calling for systems that let individuals build trust and communicate on their own terms.",
+    "tags": [{"tag": "status:to-read"}, {"tag": "topic:digital-identity"}, {"tag": "topic:privacy"}],
+    "pdf_url": "https://arxiv.org/pdf/2108.04960"
+  },
+  {
+    "itemType": "preprint",
+    "title": "The Development of Central Bank Digital Currency in China: An Analysis",
+    "creators": [
+      {"creatorType": "author", "firstName": "Geoffrey", "lastName": "Goodell"},
+      {"creatorType": "author", "firstName": "Hazem Danny", "lastName": "Al-Nakib"}
+    ],
+    "repository": "arXiv",
+    "archiveID": "arXiv:2108.05946",
+    "date": "2021-08",
+    "DOI": "10.48550/arXiv.2108.05946",
+    "url": "https://arxiv.org/abs/2108.05946",
+    "abstractNote": "Summary (paraphrase, not the original abstract): finds the People's Bank of China digital currency plan broadly sound and the most advanced globally, but argues it overlooks issues such as treating wallets as accounts, and recommends privacy-preserving, non-custodial wallets.",
+    "tags": [{"tag": "status:to-read"}, {"tag": "topic:central-bank-digital-currency"}],
+    "pdf_url": "https://arxiv.org/pdf/2108.05946"
+  },
+  {
+    "itemType": "journalArticle",
+    "title": "The Right Place at the Right Time",
+    "creators": [
+      {"creatorType": "author", "firstName": "Geoffrey", "lastName": "Goodell"},
+      {"creatorType": "author", "firstName": "Paul", "lastName": "Syverson"}
+    ],
+    "publicationTitle": "Communications of the ACM",
+    "volume": "50",
+    "issue": "5",
+    "pages": "113-117",
+    "date": "2007-05",
+    "DOI": "10.1145/1230819.1241689",
+    "url": "https://doi.org/10.1145/1230819.1241689",
+    "abstractNote": "Summary (paraphrase, not the original abstract): examines the use of network location in authentication and abuse prevention.",
+    "tags": [{"tag": "status:to-read"}, {"tag": "topic:anonymity"}, {"tag": "topic:authentication"}]
+  },
+  {
+    "itemType": "preprint",
+    "title": "Response to \"The digital pound: a new form of money for households and businesses?\"",
+    "creators": [
+      {"creatorType": "author", "firstName": "Geoffrey", "lastName": "Goodell"}
+    ],
+    "repository": "arXiv",
+    "archiveID": "arXiv:2305.09059",
+    "date": "2023-05",
+    "DOI": "10.48550/arXiv.2305.09059",
+    "url": "https://arxiv.org/abs/2305.09059",
+    "abstractNote": "Summary (paraphrase, not the original abstract): a consultation response arguing the proposed digital pound lacks a clear motivation and falls short on privacy, custody, identity and ledger design, and calling for a privacy-by-design, decentralised alternative.",
+    "tags": [{"tag": "status:critique-target"}, {"tag": "topic:central-bank-digital-currency"}, {"tag": "topic:regulation"}],
+    "pdf_url": "https://arxiv.org/pdf/2305.09059"
+  },
+  {
+    "itemType": "preprint",
+    "title": "Private Electronic Payments with Self-Custody and Zero-Knowledge Verified Reissuance",
+    "creators": [
+      {"creatorType": "author", "firstName": "Daniele", "lastName": "Friolo"},
+      {"creatorType": "author", "firstName": "Geoffrey", "lastName": "Goodell"},
+      {"creatorType": "author", "firstName": "Dann", "lastName": "Toliver"},
+      {"creatorType": "author", "firstName": "Hazem Danny", "lastName": "Al-Nakib"}
+    ],
+    "repository": "arXiv",
+    "archiveID": "arXiv:2409.01958",
+    "date": "2024-09-03",
+    "DOI": "10.1007/978-3-032-00495-6_6",
+    "url": "https://arxiv.org/abs/2409.01958",
+    "abstractNote": "Summary (paraphrase, not the original abstract): extends a privacy-focused digital payment protocol so reissued money can be verified as created only by the original issuer, using an audit log and zero-knowledge proofs that protect payer anonymity.",
+    "extra": "Published version DOI: 10.1007/978-3-032-00495-6_6",
+    "tags": [{"tag": "status:reading"}, {"tag": "topic:digital-cash"}, {"tag": "topic:cryptography"}, {"tag": "topic:privacy"}],
+    "pdf_url": "https://arxiv.org/pdf/2409.01958"
+  },
+  {
+    "itemType": "preprint",
+    "title": "Protocol-Embedded Compliance for Privacy-Preserving, Non-Custodial Digital Payments",
+    "creators": [
+      {"creatorType": "author", "firstName": "Santiago", "lastName": "De Simone"},
+      {"creatorType": "author", "firstName": "Geoffrey", "lastName": "Goodell"},
+      {"creatorType": "author", "firstName": "Georgios", "lastName": "Samakovitis"}
+    ],
+    "repository": "arXiv",
+    "archiveID": "arXiv:2608.17145",
+    "date": "2026-08",
+    "DOI": "10.48550/arXiv.2608.17145",
+    "url": "https://arxiv.org/abs/2608.17145",
+    "abstractNote": "Summary (paraphrase, not the original abstract): argues digital cash-like assets can meet compliance and audit needs without custodial intermediaries, by having independent entities sign compliance attestations that become part of each asset's own state.",
+    "tags": [{"tag": "status:canonical"}, {"tag": "topic:digital-cash"}, {"tag": "topic:regulation"}, {"tag": "topic:privacy"}, {"tag": "public"}],
+    "pdf_url": "https://arxiv.org/pdf/2608.17145"
+  },
+  {
+    "itemType": "presentation",
+    "title": "Designing Partitioned Digital Asset Infrastructure",
+    "creators": [
+      {"creatorType": "presenter", "firstName": "Geoffrey", "lastName": "Goodell"}
+    ],
+    "meetingName": "11th Fintech Conference, Luxembourg",
+    "date": "2025-10-08",
+    "url": "https://discovery.ucl.ac.uk/id/eprint/10216228/1/goodell-fintech-2025-10-08.pdf",
+    "abstractNote": "Summary (paraphrase, not the original abstract): argues digital payments need not rely on third-party custodians, and that privacy-preserving e-cash tokens held outside accounts could separate payment services from banking.",
+    "tags": [{"tag": "status:to-read"}, {"tag": "topic:digital-cash"}, {"tag": "topic:privacy"}],
+    "pdf_url": "https://discovery.ucl.ac.uk/id/eprint/10216228/1/goodell-fintech-2025-10-08.pdf"
+  }
+]

@@ -1,0 +1,26 @@
+# Optional: deploy on every push to main with a Cloud Build trigger.
+#   gcloud builds triggers create github --repo-name=<repo> --repo-owner=<you> --branch-pattern='^main$' \
+#     --build-config=deploy/cloudbuild.yaml
+# Run ./deploy/deploy.sh once first: it creates the service (env vars, secrets, VPC) and the Artifact Registry repository.
+# After that this file only builds a new image and rolls it out; the service keeps its existing configuration.
+substitutions:
+  _REGION: us-central1
+  _SERVICE: research-hub
+steps:
+  - id: test
+    name: node:20
+    dir: web
+    entrypoint: bash
+    args: ['-c', 'npm ci && npm test']
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args: ['build', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/${_SERVICE}:$SHORT_SHA', '.']
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/${_SERVICE}:$SHORT_SHA']
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args: ['run', 'deploy', '${_SERVICE}', '--image', '${_REGION}-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/${_SERVICE}:$SHORT_SHA', '--region', '${_REGION}']
+options:
+  logging: CLOUD_LOGGING_ONLY

@@ -1,0 +1,1149 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Research Hub API",
+    "version": "0.6.0",
+    "description": "The self-hosted research hub's API, for scripts, the CLI and AI agents. Neo4j holds metadata, note text and your personal layer; files are LINKS (`file_url`: Google Drive, arXiv, a publisher). Uploading a PDF sends it to the owner's Google Drive; the hub stores only the link. The library can be exported/imported as CSL JSON, and the whole graph backed up and restored as one JSON file. All private endpoints need the owner token (`Authorization: Bearer ...`) or a signed-in session. When served under a path (BASE_PATH), prefix every path."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Value of HUB_API_TOKEN on the server."
+      }
+    },
+    "schemas": {
+      "Creator": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "\"First Last\""
+          },
+          {
+            "type": "object",
+            "properties": {
+              "creatorType": {
+                "type": "string",
+                "examples": [
+                  "author",
+                  "editor",
+                  "presenter"
+                ]
+              },
+              "firstName": {
+                "type": "string"
+              },
+              "lastName": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string",
+                "description": "Single-field name (use instead of first/last)."
+              }
+            }
+          }
+        ]
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "paper_key": {
+            "type": "string"
+          }
+        }
+      },
+      "PaperItem": {
+        "type": "object",
+        "required": [],
+        "description": "A reference-manager style item. Send a full item, or just {\"DOI\": \"...\"} and the hub looks the metadata up on Crossref. Unknown fields are ignored.",
+        "properties": {
+          "itemType": {
+            "type": "string",
+            "enum": [
+              "journalArticle",
+              "conferencePaper",
+              "preprint",
+              "book",
+              "bookSection",
+              "report",
+              "thesis",
+              "webpage",
+              "document",
+              "presentation"
+            ],
+            "default": "journalArticle"
+          },
+          "title": {
+            "type": "string",
+            "description": "Required unless DOI is given."
+          },
+          "creators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Creator"
+            }
+          },
+          "DOI": {
+            "type": "string",
+            "description": "Used as the paper identity (doi:<lowercase>) and for duplicate detection."
+          },
+          "date": {
+            "type": "string",
+            "examples": [
+              "2021-05-14",
+              "2019"
+            ]
+          },
+          "abstractNote": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "description": "Strings or {tag}. Conventions: topic:<name>, public. A status:<value> tag is forwarded to the personal layer (not stored on the paper).",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "tag": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "tag"
+                  ]
+                }
+              ]
+            }
+          },
+          "file_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Optional. https link to the PDF (Google Drive share link, arXiv, a publisher). Stored as given (Drive links are normalised); nothing is downloaded."
+          },
+          "pdf_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Older name for file_url."
+          },
+          "copy_to_drive": {
+            "type": "boolean",
+            "description": "With file_url: download the PDF (host must be in PDF_FETCH_ALLOWED_HOSTS, default arxiv.org, export.arxiv.org, discovery.ucl.ac.uk) and upload it to the owner's Google Drive. Falls back to keeping the original link and reports file_error."
+          }
+        }
+      },
+      "Artifact": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "description": "Fields of a note, method, project or any type added to schema/schema.json. Relation fields take artifact keys (e.g. \"doi:10.1/x\", \"method:tdd\").",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string",
+            "description": "Markdown"
+          },
+          "status": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "private"
+            ]
+          },
+          "about": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "uses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "extends": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "supports": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "contradicts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "critiques": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "annotates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "inspired": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "concepts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "paths": {
+    "/api/papers": {
+      "get": {
+        "operationId": "listPapers",
+        "summary": "List papers in the graph",
+        "responses": {
+          "200": {
+            "description": "Papers with properties and topics"
+          }
+        }
+      },
+      "post": {
+        "operationId": "addPaper",
+        "summary": "Add a paper (and optionally store its PDF)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "overwrite",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "Replace metadata of an existing paper instead of returning 409."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaperItem"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "paper_key": {
+                      "type": "string",
+                      "description": "Key used in notes, e.g. doi:10.1000/xyz"
+                    },
+                    "file_url": {
+                      "type": "string",
+                      "description": "Stored file link"
+                    },
+                    "drive_file_id": {
+                      "type": "string",
+                      "description": "Set only when the hub uploaded the file to Drive"
+                    },
+                    "file_error": {
+                      "type": "string",
+                      "description": "Why the link/upload step failed (the paper itself was still added)"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          },
+          "409": {
+            "description": "Paper already in the library (paper_key returned)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "DOI could not be looked up"
+          },
+          "503": {
+            "description": "Writes disabled (no HUB_API_TOKEN)"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deletePaper",
+        "summary": "Remove a paper from the graph",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Paper key, e.g. doi:10.1000/xyz"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "No such paper"
+          }
+        }
+      }
+    },
+    "/api/export": {
+      "get": {
+        "operationId": "exportLibrary",
+        "summary": "Whole library as CSL JSON (backup; importable into reference managers)",
+        "responses": {
+          "200": {
+            "description": "CSL JSON array"
+          }
+        }
+      }
+    },
+    "/api/import": {
+      "post": {
+        "operationId": "importLibrary",
+        "summary": "Import a CSL JSON array (e.g. exported from a reference manager); existing papers are skipped",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "{created, skipped, failed[]}"
+          }
+        }
+      }
+    },
+    "/api/sync": {
+      "post": {
+        "operationId": "sync",
+        "summary": "Rebuild the public preview now (it also refreshes after every write)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{ok, public: {nodes, edges}}"
+          }
+        }
+      }
+    },
+    "/api/schema": {
+      "get": {
+        "operationId": "getSchema",
+        "summary": "Artifact types, colours and applied graph migrations",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/artifacts/{type}": {
+      "post": {
+        "operationId": "addArtifact",
+        "summary": "Add an artifact of any type in schema.json (paper, method, note, project, ...)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "overwrite",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Artifact"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "{key, created, warnings[]}; warnings list relation targets that were not found"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "404": {
+            "description": "Unknown type"
+          },
+          "409": {
+            "description": "Key already exists"
+          }
+        }
+      }
+    },
+    "/api/artifacts": {
+      "get": {
+        "operationId": "listArtifacts",
+        "summary": "List artifacts of one type",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteArtifact",
+        "summary": "Delete any artifact by key",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "No such artifact"
+          }
+        }
+      }
+    },
+    "/api/personal": {
+      "get": {
+        "operationId": "getPersonal",
+        "summary": "Personal layer: your status per artifact (never part of the public export)",
+        "responses": {
+          "200": {
+            "description": "{fields, items:{<key>:{status}}}"
+          }
+        }
+      },
+      "put": {
+        "operationId": "setPersonal",
+        "summary": "Set or clear personal fields for an artifact (null removes a field)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 40,
+                    "examples": [
+                      "to-read",
+                      "reading",
+                      "read",
+                      "canonical",
+                      "critique-target"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "404": {
+            "description": "No such artifact"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "clearPersonal",
+        "summary": "Remove all personal state for an artifact",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cleared"
+          }
+        }
+      }
+    },
+    "/api/query": {
+      "post": {
+        "operationId": "runCypher",
+        "summary": "Run one read-only Cypher statement (max 500 rows, 15 s, no procedure calls)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "cypher"
+                ],
+                "properties": {
+                  "cypher": {
+                    "type": "string"
+                  },
+                  "params": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{columns, rows, count, truncated}"
+          },
+          "400": {
+            "description": "Rejected or failed query"
+          },
+          "401": {
+            "description": "Not signed in"
+          }
+        }
+      }
+    },
+    "/api/query/schema": {
+      "get": {
+        "operationId": "describeGraph",
+        "summary": "Labels, relationship types, properties, conventions and example queries",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/login": {
+      "post": {
+        "operationId": "login",
+        "summary": "Sign in (sets the __session cookie)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{owner:true}"
+          },
+          "401": {
+            "description": "Wrong token"
+          },
+          "429": {
+            "description": "Too many attempts"
+          }
+        }
+      }
+    },
+    "/api/me": {
+      "get": {
+        "operationId": "whoAmI",
+        "summary": "Is the caller the signed-in owner?",
+        "responses": {
+          "200": {
+            "description": "{owner, writes}"
+          }
+        }
+      }
+    },
+    "/api/public": {
+      "get": {
+        "operationId": "getPublic",
+        "summary": "The public preview export (no authentication)",
+        "responses": {
+          "200": {
+            "description": "nodes and edges marked public"
+          }
+        }
+      }
+    },
+    "/mcp": {
+      "post": {
+        "operationId": "mcp",
+        "summary": "MCP endpoint (Streamable HTTP, JSON-RPC). Tools: describe_graph, run_cypher, search_papers, get_artifact, add_paper, add_artifact, set_file_link, copy_pdf_to_drive, remove_file_link, set_status",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "JSON-RPC / SSE response"
+          }
+        }
+      }
+    },
+    "/api/papers/file": {
+      "put": {
+        "operationId": "setFileLink",
+        "summary": "Set a paper's file link (any https URL)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Paper key, e.g. doi:10.1000/xyz"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file_url"
+                ],
+                "properties": {
+                  "file_url": {
+                    "type": "string",
+                    "format": "uri"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored. A Drive file the hub uploaded earlier is moved to the Drive trash."
+          },
+          "400": {
+            "description": "Not an https link"
+          },
+          "404": {
+            "description": "Paper not found"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "removeFileLink",
+        "summary": "Remove the file link (a Drive file the hub uploaded is trashed)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Paper key, e.g. doi:10.1000/xyz"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Removed"
+          },
+          "404": {
+            "description": "Paper not found"
+          }
+        }
+      },
+      "post": {
+        "operationId": "uploadPdfToDrive",
+        "summary": "Upload a PDF to the owner's Google Drive and link it",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Paper key, e.g. doi:10.1000/xyz"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/pdf": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "pdf_url"
+                ],
+                "properties": {
+                  "pdf_url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Allow-listed host only"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Uploaded. Returns file_url and drive_file_id. The file is shared as 'anyone with the link'."
+          },
+          "400": {
+            "description": "Not a PDF, or URL host not allowed"
+          },
+          "404": {
+            "description": "Paper not found"
+          },
+          "413": {
+            "description": "Larger than MAX_UPLOAD_MB (default 30; Cloud Run allows 32 MB)"
+          },
+          "503": {
+            "description": "Google Drive is not configured on the server"
+          }
+        }
+      }
+    },
+    "/api/drive": {
+      "get": {
+        "operationId": "driveStatus",
+        "summary": "Is Google Drive configured?",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{configured: boolean}"
+          }
+        }
+      }
+    },
+    "/api/drive/check": {
+      "post": {
+        "operationId": "driveCheck",
+        "summary": "Prove the Drive login works and return the hub's folder",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{folder_id, folder_url}"
+          },
+          "503": {
+            "description": "Not configured or the login was rejected"
+          }
+        }
+      }
+    },
+    "/api/notes/sync": {
+      "put": {
+        "operationId": "syncNotes",
+        "summary": "Push Markdown notes, methods and projects (what `hub sync-notes` calls)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "prune",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": true
+            },
+            "description": "Remove Markdown-sourced notes that are no longer sent"
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "allow_empty",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "Needed to prune when no files are sent"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "items"
+                ],
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "path"
+                      ],
+                      "properties": {
+                        "path": {
+                          "type": "string",
+                          "description": "e.g. notes/my-note.md; the folder (notes, methods, projects) or meta.kind picks the type"
+                        },
+                        "meta": {
+                          "type": "object",
+                          "description": "Front matter: title, summary, visibility, concepts, relation fields (uses, annotates, ...), type fields"
+                        },
+                        "body": {
+                          "type": "string",
+                          "description": "Markdown text, stored on the node"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{upserted, created, updated, removed[], edges, skipped[], warnings[]}"
+          },
+          "400": {
+            "description": "Refusing to prune an empty set (pass allow_empty=true)"
+          }
+        }
+      }
+    },
+    "/api/enrich": {
+      "post": {
+        "operationId": "enrich",
+        "summary": "Add citation edges from OpenAlex (batched)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{processed, matched, cites_edges, errors[], next_offset}"
+          }
+        }
+      }
+    },
+    "/api/backup": {
+      "get": {
+        "operationId": "backup",
+        "summary": "Download everything (artifacts, people, concepts, personal layer) as one JSON file",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "research-hub-backup v1"
+          }
+        }
+      }
+    },
+    "/api/restore": {
+      "post": {
+        "operationId": "restore",
+        "summary": "Merge a backup into the graph by key (never deletes). nodes and rels may be sent in separate requests.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "format",
+                  "version"
+                ],
+                "properties": {
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "research-hub-backup"
+                    ]
+                  },
+                  "version": {
+                    "type": "integer",
+                    "enum": [
+                      1
+                    ]
+                  },
+                  "nodes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "rels": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{nodes, rels_requested, rels_restored, rels_skipped}"
+          },
+          "400": {
+            "description": "Not a backup, or a label/relationship type that is not allowed"
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "readyz",
+        "summary": "Readiness: the process is up and Neo4j answers (503 otherwise)",
+        "responses": {
+          "200": {
+            "description": "{ok:true}"
+          },
+          "503": {
+            "description": "Database unreachable"
+          }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "healthz",
+        "summary": "Liveness: the process is up",
+        "responses": {
+          "200": {
+            "description": "{ok:true}"
+          }
+        }
+      }
+    }
+  }
+}

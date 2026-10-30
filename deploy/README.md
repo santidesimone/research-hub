@@ -1,0 +1,153 @@
+# Deploying to Google Cloud (Cloud Run + a Neo4j VM)
+
+Result: the hub runs at `https://santidesimone.com/research-hub/...`. The path stays in the address bar (a proxy, not a redirect),
+and every page works as a direct link: `/research-hub/library?key=doi:...`, `/research-hub/console`, `/research-hub/mcp`.
+
+The same code runs on your laptop and here; only environment variables differ (`_env.example` lists them). There is **no bucket**:
+files are links (your Google Drive, arXiv, publishers) and Neo4j holds only metadata, note text and your personal layer.
+
+Costs, roughly: Cloud Run is a few dollars a month with one warm instance (or free at zero); the Neo4j VM (e2-medium) is about $25-30/month; snapshots are cents.
+
+## 0. One time
+
+```bash
+export PROJECT=your-gcp-project-id REGION=us-central1 ZONE=us-central1-a
+gcloud config set project $PROJECT
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com compute.googleapis.com secretmanager.googleapis.com artifactregistry.googleapis.com drive.googleapis.com
+SA=$(gcloud projects describe $PROJECT --format='get(projectNumber)')-compute@developer.gserviceaccount.com   # the account Cloud Run runs as
+```
+
+## 1. Secrets (never put these in files)
+
+`HUB_API_TOKEN` is the key to everything private (UI sign-in, API, CLI, Claude). In production the server **refuses to start** with a token shorter than 24 characters or with the default database password.
+
+```bash
+openssl rand -hex 32 | tr -d '\n' | gcloud secrets create hub-api-token --data-file=-
+openssl rand -hex 16 | tr -d '\n' | gcloud secrets create neo4j-password --data-file=-
+for s in hub-api-token neo4j-password; do gcloud secrets add-iam-policy-binding $s --member=serviceAccount:$SA --role=roles/secretmanager.secretAccessor; done
+gcloud secrets versions access latest --secret hub-api-token      # copy this somewhere safe: it is what you type to sign in
+```
+
+## 2. Neo4j
+
+Cloud Run cannot host a database (no persistent disk), so Neo4j runs on a small VM reachable only inside your network:
+
+```bash
+NEO4J_PASSWORD=$(gcloud secrets versions access latest --secret neo4j-password) ./deploy/neo4j-vm.sh
+```
+
+It prints `bolt://10.x.x.x:7687` and turns on **nightly disk snapshots (kept 14 days)**. Neo4j is the only copy of your library, so keep that on, and also run `hub backup` now and then (step 7).
+Alternative: Neo4j AuraDB (managed, with its own backups). Skip this step and use its `neo4j+s://...` address, user and password as `NEO4J_URI` / the `neo4j-password` secret.
+
+## 3. Google Drive for PDF uploads (optional)
+
+Skip this if you only store links: adding papers, linking Drive/arXiv URLs and reading all work without it. You need it for `hub pdf`, the "Upload PDF" button and `copy_pdf_to_drive`, which put a PDF into **your own Drive** (folder "Research Hub PDFs", created by the hub, files shared as "anyone with the link").
+
+A service account cannot do this (it has no Drive storage of its own, and personal accounts have no Shared Drives), so the hub uses your own Google login, authorised once:
+
+1. **Consent screen.** In the Cloud console open *APIs & Services > OAuth consent screen* (menus are being renamed "Google Auth Platform"). User type **External**, app name "Research Hub", your email. Add the scope `https://www.googleapis.com/auth/drive.file` (it only lets the hub touch files it created) and add yourself as a test user.
+2. **Publish it.** Set the publishing status to **In production**. If you leave it in *Testing*, Google expires the refresh token after 7 days and uploads silently stop. `drive.file` needs no Google review for personal use; you will see an "unverified app" screen once, click *Advanced* and continue.
+3. **Credentials.** *APIs & Services > Credentials > Create credentials > OAuth client ID*, application type **Desktop app**. Copy the client ID and secret.
+4. **Log in once, on your computer:**
+   ```bash
+   GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... node bin/drive-auth
+   ```
+   Open the link it prints, allow access, and it prints three lines. (If it says no refresh token came back, remove the app at https://myaccount.google.com/permissions and run it again.)
+5. **Store them as secrets:**
+   ```bash
+   printf %s "<client id>"     | gcloud secrets create google-client-id --data-file=-
+   printf %s "<client secret>" | gcloud secrets create google-client-secret --data-file=-
+   printf %s "<refresh token>" | gcloud secrets create google-refresh-token --data-file=-
+   for s in google-client-id google-client-secret google-refresh-token; do gcloud secrets add-iam-policy-binding $s --member=serviceAccount:$SA --role=roles/secretmanager.secretAccessor; done
+   ```
+   `deploy.sh` enables uploads automatically when `google-refresh-token` exists. For local use put the same three lines in `.env`.
+
+Public links are the trade-off you chose: anyone who has a file's URL can open it, even if the paper is private in the hub. If the refresh token is ever revoked or expires, uploads fail with a clear message; run `bin/drive-auth` again and add a new secret version.
+
+## 4. Deploy the app
+
+```bash
+NEO4J_URI=bolt://10.x.x.x:7687 ./deploy/deploy.sh
+```
+
+Open the printed URL (`.../research-hub/`). First start applies the graph migrations. `.../research-hub/healthz` says the process is up; `.../research-hub/readyz` also checks the database.
+Sign in with the token, then load data from your computer: `hub add 10.1007/978-1-4757-0602-4_18 --file https://arxiv.org/pdf/...`, or `python scripts/seed.py` with `HUB_URL` set to the deployed address.
+`MIN_INSTANCES=0` in front of the command lets it scale to zero (cheaper, slower first request). Check Drive with `hub drive`.
+
+Your Markdown notes are not in the image. Keep them in a folder (ideally a git repo) and push them with `hub sync-notes ./content`.
+
+## 5. Make santidesimone.com/research-hub reach it (transparent proxy)
+
+A **redirect** (301/302) would change the address bar to the run.app URL, so use a **proxy / rewrite**: the request path is forwarded unchanged
+(the app is mounted at `/research-hub`) and the response is returned as if it came from santidesimone.com. Pick the recipe that matches how santidesimone.com is hosted:
+
+**Firebase Hosting** (`firebase.json` of the santidesimone.com project; Firebase only forwards the `__session` cookie, which is the name this app uses):
+```json
+{ "hosting": { "rewrites": [
+  { "source": "/research-hub",    "run": { "serviceId": "research-hub", "region": "us-central1" } },
+  { "source": "/research-hub/**", "run": { "serviceId": "research-hub", "region": "us-central1" } }
+] } }
+```
+
+**Vercel** (`vercel.json`):
+```json
+{ "rewrites": [{ "source": "/research-hub/:path*", "destination": "https://YOUR-RUN-APP-URL/research-hub/:path*" }] }
+```
+
+**Netlify** (`_redirects`, the `200` makes it a proxy):
+```
+/research-hub/*  https://YOUR-RUN-APP-URL/research-hub/:splat  200
+```
+
+**A Node/Express site** (`npm i http-proxy-middleware`):
+```js
+const { createProxyMiddleware } = require('http-proxy-middleware');
+app.use(createProxyMiddleware({ target: 'https://YOUR-RUN-APP-URL', changeOrigin: true, xfwd: true, pathFilter: '/research-hub' }));
+```
+
+**nginx / Caddy**: `location /research-hub/ { proxy_pass https://YOUR-RUN-APP-URL; proxy_set_header Host YOUR-RUN-HOST; proxy_set_header X-Forwarded-Proto https; }` (no trailing path on `proxy_pass`, so the path is kept).
+
+**Google Cloud load balancer** (if the site is also on GCP behind one): add a path matcher `/research-hub/*` to a backend service whose backend is a serverless NEG for the `research-hub` Cloud Run service. No path rewrite.
+
+Test: `curl -I https://santidesimone.com/research-hub/healthz` should be `200`.
+
+## 6. Use it from your terminal
+
+```bash
+./bin/hub config --url https://santidesimone.com/research-hub --token <your token>
+./bin/hub query "MATCH (p:Paper) RETURN p.title, p.year ORDER BY p.year DESC LIMIT 5"
+./bin/hub add 10.1007/978-1-4757-0602-4_18 --file https://arxiv.org/pdf/... --status reading
+./bin/hub pdf <paper key> ./paper.pdf        # uploads to your Drive and links it
+./bin/hub sync-notes ./content               # Markdown notes, methods, projects
+```
+
+## 7. Back up (Neo4j is the only copy)
+
+```bash
+./bin/hub backup                  # one JSON file: papers, notes, links, your personal statuses
+./bin/hub restore backup.json     # merges it back in by key; never deletes, safe to run twice
+```
+Run `hub backup` weekly (cron or a Cloud Scheduler job calling `GET /api/backup` with the token) and keep the file outside Google Cloud as well. Disk snapshots are the fast path; the JSON backup is the portable one. The files themselves live in Drive and are not part of the backup, only their links.
+
+## 8. Use it from Claude
+
+The MCP endpoint is `https://santidesimone.com/research-hub/mcp` (Streamable HTTP, `Authorization: Bearer <token>`).
+- **Claude Code**: `claude mcp add --transport http research-hub https://santidesimone.com/research-hub/mcp --header "Authorization: Bearer <token>"`
+- **Claude chat window (custom connector)**: add the URL in Connectors. The chat app signs in with OAuth or an admin-entered fixed header, depending on your plan; this server accepts the bearer token only (no OAuth server yet). If your plan only offers OAuth, that is the next piece to build.
+
+Tools offered: `describe_graph`, `run_cypher` (read-only), `search_papers`, `get_artifact`, `add_paper`, `add_artifact`, `set_file_link`, `copy_pdf_to_drive`, `remove_file_link`, `set_status`.
+Large PDFs cannot travel through chat. Give Claude a URL (`copy_pdf_to_drive` with an arXiv/UCL link), or upload with `hub pdf` from your computer.
+
+## CI/CD (optional)
+
+`.github/workflows/ci.yml` runs the offline tests and an integration test against a real Neo4j container on every push. `deploy/cloudbuild.yaml` builds and deploys on a Cloud Build trigger (see the comment at the top of that file).
+
+## Security checklist
+
+- The UI and API reject everything private without the token; anonymous visitors only get the public preview.
+- `/mcp` and `/api/*` need the token; sessions are a signed cookie (HttpOnly, SameSite=Lax, Secure over https); changes made with the cookie also need an `X-Hub` header.
+- Ten wrong sign-in attempts from one address blocks that address for ten minutes; every `/api` route is rate limited per address (`RATE_LIMIT_PER_MIN`).
+- The page is served with a Content-Security-Policy (per-request nonce) and the usual security headers; production refuses to start with a weak token.
+- Read-only Cypher is enforced three ways (text guard, query-plan check, read transaction), but Neo4j Community has no read-only user: treat the token as full access.
+- Google access is the narrow `drive.file` scope. Files the hub uploads are public by link (your choice); the hub trashes only files it uploaded.
+- Rotate the token: `echo -n NEWVALUE | gcloud secrets versions add hub-api-token --data-file=-`, then redeploy (or restart) the service.

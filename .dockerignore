@@ -1,0 +1,17 @@
+.git
+.github
+.env
+.venv
+node_modules
+web/node_modules
+web/test
+storage
+deploy
+content
+data
+bin
+scripts
+*.zip
+*.md
+.hub.pid
+.hub.log

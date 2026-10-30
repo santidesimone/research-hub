@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Research Hub</title>
+<script nonce="{{NONCE}}">window.HUB = {{HUB}};</script>
+<script nonce="{{NONCE}}">
+  try { var t = localStorage.getItem('hub-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+</script>
+{{FONTS}}
+<link rel="stylesheet" href="{{BASE}}/shell/base.css">
+<link rel="stylesheet" href="{{BASE}}/skins/{{SKIN}}/skin.css">
+</head>
+<body>
+<div id="shell"></div>
+<noscript>This app needs JavaScript.</noscript>
+<script type="module" src="{{BASE}}/shell/shell.js"></script>
+</body>
+</html>

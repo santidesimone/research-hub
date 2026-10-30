@@ -1,0 +1,1 @@
+{ "id": "library", "title": "Library", "description": "Papers, notes and methods, with a graph view of how they connect", "icon": "library", "auth": "public", "fill": true, "order": 10 }

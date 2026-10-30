@@ -1,0 +1,5 @@
+{
+  "name": "Slate",
+  "description": "Cool neutral, all sans-serif, blue accent. Here to show that changing the look is only a folder of tokens.",
+  "fonts": ["https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"]
+}

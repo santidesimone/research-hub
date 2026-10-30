@@ -1,0 +1,41 @@
+# Copy to .env in the project root. The web app, bin/drive-auth and scripts/seed.py read it.
+# The same variables are used locally and on Cloud Run (there they come from the service's env vars and Secret Manager).
+
+# ---- Neo4j (defaults match docker-compose.yml)
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=hubpassword
+
+# ---- Owner token: signs you in to the UI and authorises the API, CLI and Claude. Private pages and every write are disabled while empty.
+# Generate one with:  openssl rand -hex 32
+# In production (NODE_ENV=production, set by the Dockerfile) the server refuses to start with a token shorter than 24 characters.
+HUB_API_TOKEN=
+
+# ---- Files: the hub stores links, not files. Uploading a PDF sends it to YOUR Google Drive (optional; links work without this).
+# One-time setup: create an OAuth client of type "Desktop app", then run `node bin/drive-auth` and paste its three lines here.
+# Set all three or none. See deploy/README.md, step 3.
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REFRESH_TOKEN=
+# Hosts the server may download PDFs from when you ask it to copy one to Drive (comma separated)
+# PDF_FETCH_ALLOWED_HOSTS=arxiv.org,export.arxiv.org,discovery.ucl.ac.uk
+# Largest upload in MB (Cloud Run rejects request bodies over 32 MB)
+# MAX_UPLOAD_MB=30
+
+# ---- Web server
+# HOST=127.0.0.1        (the container sets 0.0.0.0)
+# PORT=3000
+# Serve everything under a path, e.g. when santidesimone.com proxies /research-hub to this app:
+# BASE_PATH=/research-hub
+# Look and feel: a folder name under web/skins/ (paper, slate, or your own)
+# HUB_SKIN=paper
+
+# ---- Tuning (defaults are fine)
+# RATE_LIMIT_PER_MIN=600          per IP, all /api
+# HEAVY_RATE_LIMIT_PER_MIN=120    per IP, /api/query and /mcp
+# PUBLIC_CACHE_SECONDS=60         how long the public preview is cached
+# NEO4J_POOL_SIZE=20
+# LOG_FORMAT=pretty               json in production, pretty locally
+
+# ---- Optional: identifies you to OpenAlex (polite pool) for `hub enrich`
+OPENALEX_EMAIL=

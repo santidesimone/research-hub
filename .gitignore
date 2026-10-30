@@ -1,0 +1,10 @@
+.env
+.venv/
+node_modules/
+storage/
+web/data/
+__pycache__/
+.hub.pid
+.hub.log
+.claude/settings.local.json
+.env

@@ -1,0 +1,1 @@
+{ "id": "home", "title": "Home", "description": "All apps in the hub", "icon": "home", "auth": "public", "default": true, "order": 0 }

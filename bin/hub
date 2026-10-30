@@ -1,0 +1,204 @@
+#!/usr/bin/env node
+// Command-line client for the research hub. No dependencies beyond Node 18+ (sync-notes uses gray-matter from web/node_modules).
+//   hub config --url https://santidesimone.com/research-hub --token <HUB_API_TOKEN>     (saved to ~/.config/research-hub.json)
+//   or set HUB_URL and HUB_API_TOKEN in the environment.
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const CONFIG = path.join(os.homedir(), '.config', 'research-hub.json');
+const read = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return {}; } };
+const cfg = { ...read(CONFIG) };
+const url = (process.env.HUB_URL || cfg.url || 'http://127.0.0.1:3000').replace(/\/+$/, '').replace(/^(https?:\/\/)localhost(?=[:\/]|$)/, '$1127.0.0.1'); // Node resolves localhost to ::1 first; the server listens on 127.0.0.1
+const token = process.env.HUB_API_TOKEN || cfg.token || '';
+
+const HELP = `hub: research hub client   (${url})
+
+  Query
+    hub query "<cypher>" | -f file.cypher        read-only Cypher; add --json or --csv
+    hub schema                                    labels, relationships, conventions
+    hub search <text>                             find papers
+    hub get <key>                                 one artifact with its links
+
+  Papers and files (files are links; nothing is stored in the database)
+    hub add <doi | file.json | ->  [--file <url>] [--copy] [--status <s>]
+                                                  add a paper (a DOI alone is looked up). --file stores a link;
+                                                  --copy also downloads that PDF (arXiv/UCL) and uploads it to your Drive
+    hub link <key> <url>                          set the file link (Drive share link, arXiv, publisher ...)
+    hub unlink <key>                              remove the file link (a Drive file the hub uploaded is trashed)
+    hub pdf <key> <file.pdf | https-url>          upload a PDF to your Google Drive and link it
+    hub status <key> <value|none>                 set your personal status
+    hub drive                                     check the Google Drive connection
+
+  Notes, citations, backup
+    hub sync-notes [dir=./content] [--dry-run] [--no-prune]   push Markdown notes/methods/projects to the hub
+    hub enrich                                    add citation edges from OpenAlex
+    hub backup [file]                             save the whole graph to one JSON file
+    hub restore <file>                            merge a backup back in (never deletes)
+    hub export > library.json                     papers as CSL JSON
+    hub sync                                      rebuild the public preview now
+
+  hub config --url <base url> --token <token>     save connection settings
+`;
+
+async function call(method, p, body, extra = {}) {
+  const headers = { Authorization: `Bearer ${token}`, ...(extra.headers || {}) };
+  let payload = extra.raw;
+  if (body !== undefined) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
+  let res;
+  try { res = await fetch(url + p, { method, headers, body: payload }); }
+  catch (e) { fail(`cannot reach ${url}: ${e.message}`); }
+  const textBody = await res.text();
+  let data; try { data = JSON.parse(textBody); } catch { data = textBody; }
+  if (!res.ok) fail(`${res.status} ${(data && data.error) || textBody.slice(0, 200)}`);
+  return data;
+}
+function fail(msg) { console.error('error: ' + msg); process.exit(1); }
+const show = (v) => console.log(JSON.stringify(v, null, 2));
+
+function cell(v) { return v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v); }
+function table(columns, rows) {
+  const w = columns.map((c) => Math.min(60, Math.max(c.length, ...rows.map((r) => cell(r[c]).length))));
+  const line = (vals) => vals.map((v, i) => (v.length > w[i] ? v.slice(0, w[i] - 1) + '…' : v).padEnd(w[i])).join('  ');
+  console.log(line(columns)); console.log(w.map((n) => '-'.repeat(n)).join('  '));
+  for (const r of rows) console.log(line(columns.map((c) => cell(r[c]))));
+}
+function printResult(r, flags) {
+  if (flags.json) return show(r);
+  if (flags.csv) {
+    const esc = (v) => { const s = cell(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    console.log(r.columns.join(',')); return r.rows.forEach((row) => console.log(r.columns.map((c) => esc(row[c])).join(',')));
+  }
+  table(r.columns, r.rows);
+  console.error(`\n${r.count} row${r.count === 1 ? '' : 's'}${r.truncated ? ' (truncated to ' + r.rows.length + ')' : ''}`);
+}
+
+const BOOL_FLAGS = new Set(['json', 'csv', 'copy', 'dry-run', 'no-prune', 'help']);
+function parse(argv) {
+  const flags = {}, rest = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith('--')) {
+      const k = a.slice(2);
+      if (BOOL_FLAGS.has(k)) flags[k] = true;
+      else { const next = argv[i + 1]; if (next === undefined || next.startsWith('--')) flags[k] = true; else { flags[k] = next; i++; } }
+    } else if (a === '-f') flags.f = argv[++i];
+    else rest.push(a);
+  }
+  return { flags, rest };
+}
+const stdin = () => new Promise((r) => { let s = ''; process.stdin.on('data', (d) => (s += d)); process.stdin.on('end', () => r(s)); });
+const enc = encodeURIComponent;
+
+// Markdown files -> [{ path, meta, body }] (the hub turns them into nodes; see web/core/notes.js).
+function readNotes(dir) {
+  let matter;
+  try { matter = require(require.resolve('gray-matter', { paths: [path.join(__dirname, '..', 'web')] })); }
+  catch { fail('gray-matter is missing: run `npm install` in the web/ folder first'); }
+  if (!fs.existsSync(dir)) fail(`folder not found: ${dir}`);
+  const out = [];
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = path.join(d, e.name);
+      if (e.isDirectory()) { if (!e.name.startsWith('.') && e.name !== 'node_modules') walk(full); }
+      else if (/\.md$/i.test(e.name)) {
+        try {
+          const post = matter(fs.readFileSync(full, 'utf8'));
+          out.push({ path: path.relative(dir, full).split(path.sep).join('/'), meta: post.data, body: post.content });
+        } catch (err) { console.error(`skip ${full}: ${err.message}`); }
+      }
+    }
+  };
+  walk(path.resolve(dir));
+  return out;
+}
+
+(async () => {
+  const { flags, rest } = parse(process.argv.slice(2));
+  const [cmd, ...args] = rest;
+  if (!cmd || cmd === 'help' || flags.help) return console.log(HELP);
+  if (cmd === 'config') {
+    if (!flags.url && !flags.token) fail('pass --url and/or --token');
+    fs.mkdirSync(path.dirname(CONFIG), { recursive: true });
+    fs.writeFileSync(CONFIG, JSON.stringify({ ...cfg, ...(flags.url ? { url: flags.url } : {}), ...(flags.token ? { token: flags.token } : {}) }, null, 2), { mode: 0o600 });
+    return console.log('saved ' + CONFIG);
+  }
+  if (!token) fail('no token: run `hub config --token ...` or set HUB_API_TOKEN');
+
+  if (cmd === 'query') {
+    const cypher = flags.f ? fs.readFileSync(flags.f, 'utf8') : args.join(' ') || (await stdin());
+    return printResult(await call('POST', '/api/query', { cypher }), flags);
+  }
+  if (cmd === 'schema') return show(await call('GET', '/api/query/schema'));
+  if (cmd === 'search') {
+    const r = await call('POST', '/api/query', { cypher: "MATCH (p:Paper) WHERE toLower(p.title + ' ' + coalesce(p.venue,'') + ' ' + reduce(s='', a IN p.authors | s + ' ' + a)) CONTAINS $q RETURN p.key AS key, p.year AS year, p.title AS title ORDER BY year DESC LIMIT 50", params: { q: args.join(' ').toLowerCase() } });
+    return printResult(r, flags);
+  }
+  if (cmd === 'get') return show(await call('GET', '/api/artifact?key=' + enc(args[0] || fail('usage: hub get <key>'))));
+  if (cmd === 'add') {
+    const src = args[0] || fail('usage: hub add <doi | file.json | ->');
+    let item;
+    if (src === '-') item = JSON.parse(await stdin());
+    else if (fs.existsSync(src)) item = JSON.parse(fs.readFileSync(src, 'utf8'));
+    else item = { DOI: src };
+    const file = flags.file || flags.pdf; // --pdf is the older name
+    if (file && file !== true) item.file_url = file;
+    if (flags.copy) item.copy_to_drive = true;
+    if (flags.status) item.tags = [...(item.tags || []), 'status:' + flags.status];
+    return show(await call('POST', '/api/papers', item));
+  }
+  if (cmd === 'link') {
+    const [key, u] = args; if (!key || !u) fail('usage: hub link <key> <url>');
+    return show(await call('PUT', '/api/papers/file?key=' + enc(key), { file_url: u }));
+  }
+  if (cmd === 'unlink') return show(await call('DELETE', '/api/papers/file?key=' + enc(args[0] || fail('usage: hub unlink <key>'))));
+  if (cmd === 'pdf') {
+    const [key, src] = args; if (!key || !src) fail('usage: hub pdf <key> <file.pdf | https-url>');
+    if (/^https:\/\//.test(src)) return show(await call('POST', '/api/papers/file?key=' + enc(key), { pdf_url: src }));
+    return show(await call('POST', '/api/papers/file?key=' + enc(key), undefined, { raw: fs.readFileSync(src), headers: { 'Content-Type': 'application/pdf' } }));
+  }
+  if (cmd === 'drive') return show(await call('POST', '/api/drive/check'));
+  if (cmd === 'status') {
+    const [key, value] = args; if (!key || value === undefined) fail('usage: hub status <key> <value|none>');
+    return show(await call('PUT', '/api/personal?key=' + enc(key), { status: value === 'none' ? null : value }));
+  }
+  if (cmd === 'sync-notes') {
+    const dir = args[0] || 'content';
+    const items = readNotes(dir);
+    const qs = new URLSearchParams();
+    if (flags['no-prune']) qs.set('prune', 'false');
+    if (flags['dry-run']) qs.set('dry_run', 'true');
+    console.error(`${items.length} Markdown file${items.length === 1 ? '' : 's'} in ${dir}`);
+    return show(await call('PUT', '/api/notes/sync?' + qs, { items }));
+  }
+  if (cmd === 'enrich') {
+    let offset = 0, total = { processed: 0, matched: 0, cites_edges: 0, errors: [] };
+    for (;;) {
+      const r = await call('POST', `/api/enrich?limit=50&offset=${offset}`);
+      total.processed += r.processed; total.matched += r.matched; total.cites_edges += r.cites_edges; total.errors.push(...r.errors);
+      console.error(`processed ${total.processed}`);
+      if (r.next_offset == null) break;
+      offset = r.next_offset;
+    }
+    return show(total);
+  }
+  if (cmd === 'backup') {
+    const data = await call('GET', '/api/backup');
+    const file = args[0] || `research-hub-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    fs.writeFileSync(file, JSON.stringify(data), { mode: 0o600 });
+    return console.log(`saved ${file}: ${data.nodes.length} nodes, ${data.rels.length} relationships`);
+  }
+  if (cmd === 'restore') {
+    const file = args[0] || fail('usage: hub restore <backup.json>');
+    const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const total = { nodes: 0, rels_restored: 0, rels_skipped: 0 };
+    const send = async (part) => { const r = await call('POST', '/api/restore', { format: doc.format, version: doc.version, ...part }); total.nodes += r.nodes; total.rels_restored += r.rels_restored; total.rels_skipped += r.rels_skipped; };
+    const STEP = 2000; // keeps each request well under Cloud Run's 32 MB limit
+    for (let i = 0; i < doc.nodes.length; i += STEP) await send({ nodes: doc.nodes.slice(i, i + STEP) });
+    for (let i = 0; i < doc.rels.length; i += STEP) await send({ rels: doc.rels.slice(i, i + STEP) });
+    return show(total);
+  }
+  if (cmd === 'export') return show(await call('GET', '/api/export'));
+  if (cmd === 'sync') return show(await call('POST', '/api/sync'));
+  fail(`unknown command "${cmd}" (try: hub help)`);
+})();

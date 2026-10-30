@@ -1,0 +1,53 @@
+/* Skin = design tokens (+ optional extra rules). The app only ever uses these variables, never raw colours. */
+:root, [data-theme="light"] {
+  --bg: #faf9f5;
+  --bg-sunken: #f4f2eb;
+  --surface: #ffffff;
+  --surface-2: #efede4;
+  --border: #e7e4d9;
+  --border-strong: #d6d2c3;
+  --text: #1f1e1d;
+  --text-muted: #6b6a62;
+  --text-faint: #9a988e;
+  --accent: #c96442;
+  --accent-hover: #b5563a;
+  --accent-ink: #ffffff;
+  --accent-soft: #f6e8e0;
+  --ok: #4d7a49;   --ok-soft: #e6efe1;
+  --warn: #a8731a; --warn-soft: #f7ebd0;
+  --info: #3a6c9f; --info-soft: #e2ecf6;
+  --danger: #b3402f; --danger-soft: #f8e3df;
+  --node-paper: #c96442; --node-method: #b8893b; --node-note: #5f8f6b; --node-project: #8a6bb5; --node-person: #9b9788; --node-concept: #4f8aa8;
+  --edge: #d6d2c3; --edge-hi: #c96442; --graph-bg: #fdfcf9;
+  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-heading: "Source Serif 4", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --radius-s: 8px; --radius-m: 12px; --radius-l: 18px;
+  --shadow-s: 0 1px 2px rgba(31,30,29,.06);
+  --shadow-m: 0 8px 28px rgba(31,30,29,.12);
+}
+[data-theme="dark"] {
+  --bg: #262624;
+  --bg-sunken: #1f1e1d;
+  --surface: #30302e;
+  --surface-2: #3b3a37;
+  --border: #42413d;
+  --border-strong: #56544f;
+  --text: #faf9f5;
+  --text-muted: #b5b3a9;
+  --text-faint: #86847b;
+  --accent: #d97757;
+  --accent-hover: #e48a6c;
+  --accent-ink: #1f1e1d;
+  --accent-soft: #46302a;
+  --ok: #8fbf86;   --ok-soft: #2f3b2c;
+  --warn: #e0b45f; --warn-soft: #3e3624;
+  --info: #7fb0e0; --info-soft: #28364a;
+  --danger: #e57f6e; --danger-soft: #45282a;
+  --node-paper: #d97757; --node-method: #d6a94f; --node-note: #7fb08a; --node-project: #a98fd1; --node-person: #8c8a80; --node-concept: #6fa8c4;
+  --edge: #4b4a45; --edge-hi: #d97757; --graph-bg: #232321;
+  --shadow-s: 0 1px 2px rgba(0,0,0,.3);
+  --shadow-m: 0 8px 28px rgba(0,0,0,.45);
+}
+/* optional skin-only rules */
+.doc h1, .page-title { letter-spacing: -0.01em; }

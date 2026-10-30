@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Hub server (debug)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/web/server.js",
+      "cwd": "${workspaceFolder}/web",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Unit tests (debug)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/web/test/run.js",
+      "cwd": "${workspaceFolder}/web",
+      "console": "integratedTerminal"
+    }
+  ]
+}

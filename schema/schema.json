@@ -1,0 +1,49 @@
+{
+  "version": 2,
+  "description": "Single source of truth for the graph model. Read by the web app (API, UI legend, migrations) and by ingest/ingest.py. To add an artifact type, add it under \"types\"; Markdown ingest and POST /api/artifacts/<type> then work without code changes.",
+  "types": {
+    "paper": {
+      "label": "Paper",
+      "color": "#6366f1",
+      "big": true,
+      "folder": null,
+      "props": []
+    },
+    "method": {
+      "label": "Method",
+      "color": "#f59e0b",
+      "big": true,
+      "folder": "methods",
+      "props": ["level", "domain"]
+    },
+    "note": {
+      "label": "Note",
+      "color": "#10b981",
+      "big": true,
+      "folder": "notes",
+      "props": ["note_kind"]
+    },
+    "project": {
+      "label": "Project",
+      "color": "#ec4899",
+      "big": true,
+      "folder": "projects",
+      "props": ["repo", "period"]
+    }
+  },
+  "entities": {
+    "Person": { "color": "#94a3b8", "key_prefix": "person:" },
+    "Concept": { "color": "#06b6d4", "key_prefix": "concept:" }
+  },
+  "relations": {
+    "about": "ABOUT",
+    "uses": "USES",
+    "extends": "EXTENDS",
+    "supports": "SUPPORTS",
+    "contradicts": "CONTRADICTS",
+    "critiques": "CRITIQUES",
+    "annotates": "ANNOTATES",
+    "inspired": "INSPIRED"
+  },
+  "public_props": ["key", "title", "name", "year", "doi", "summary", "level", "domain", "authors", "author_lasts", "venue", "url"]
+}

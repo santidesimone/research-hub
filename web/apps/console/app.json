@@ -1,0 +1,1 @@
+{ "id": "console", "title": "Query", "description": "Run read-only Cypher queries against the knowledge graph", "icon": "terminal", "auth": "owner", "order": 20 }

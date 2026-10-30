@@ -1,0 +1,80 @@
+#!/usr/bin/env node
+// One-time Google login for the hub's Drive access. Run it on your own computer (it opens a local page on 127.0.0.1).
+//   GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... node bin/drive-auth
+// It prints a refresh token. Put the three values in .env (local) or Secret Manager (Cloud Run); see deploy/README.md.
+// Scope: drive.file only, so the hub can see just the files it creates, never the rest of your Drive.
+const http = require('http');
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+
+const SCOPE = 'https://www.googleapis.com/auth/drive.file';
+
+function loadDotenv() {
+  try {
+    for (const line of fs.readFileSync(path.join(__dirname, '..', '.env'), 'utf8').split('\n')) {
+      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+      if (m && !line.trim().startsWith('#') && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+    }
+  } catch { /* no .env */ }
+}
+
+function authUrl({ clientId, redirectUri, state, challenge }) {
+  const q = new URLSearchParams({
+    client_id: clientId, redirect_uri: redirectUri, response_type: 'code', scope: SCOPE,
+    access_type: 'offline', prompt: 'consent', state, code_challenge: challenge, code_challenge_method: 'S256',
+  });
+  return 'https://accounts.google.com/o/oauth2/v2/auth?' + q;
+}
+
+async function exchange({ clientId, clientSecret, code, redirectUri, verifier }, fetchFn = fetch) {
+  const res = await fetchFn('https://oauth2.googleapis.com/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, code, redirect_uri: redirectUri, grant_type: 'authorization_code', code_verifier: verifier }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error_description || data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+async function main() {
+  loadDotenv();
+  const clientId = process.env.GOOGLE_CLIENT_ID, clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    console.error('Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET first (an OAuth client of type "Desktop app"; see deploy/README.md, step 3).');
+    process.exit(1);
+  }
+  const verifier = crypto.randomBytes(32).toString('base64url');
+  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  const state = crypto.randomBytes(16).toString('hex');
+
+  const server = http.createServer(async (req, res) => {
+    const u = new URL(req.url, 'http://127.0.0.1');
+    if (u.pathname !== '/') { res.writeHead(404).end(); return; }
+    const done = (code, msg) => { res.writeHead(code, { 'Content-Type': 'text/plain; charset=utf-8' }).end(msg); setTimeout(() => server.close(), 200); };
+    if (u.searchParams.get('error')) { done(400, 'Google said: ' + u.searchParams.get('error')); console.error('Google said: ' + u.searchParams.get('error')); process.exitCode = 1; return; }
+    if (u.searchParams.get('state') !== state) { done(400, 'State mismatch. Start again.'); process.exitCode = 1; return; }
+    try {
+      const redirectUri = `http://127.0.0.1:${server.address().port}`;
+      const t = await exchange({ clientId, clientSecret, code: u.searchParams.get('code'), redirectUri, verifier });
+      if (!t.refresh_token) {
+        done(200, 'Google did not return a refresh token. Remove the app at https://myaccount.google.com/permissions and run this again.');
+        console.error('\nNo refresh token returned. Remove the app at https://myaccount.google.com/permissions and run this again.'); process.exitCode = 1; return;
+      }
+      done(200, 'All set. You can close this tab and go back to the terminal.');
+      console.log('\nAdd these to .env (local) or Secret Manager (Cloud Run):\n');
+      console.log(`GOOGLE_CLIENT_ID=${clientId}\nGOOGLE_CLIENT_SECRET=${clientSecret}\nGOOGLE_REFRESH_TOKEN=${t.refresh_token}\n`);
+      console.log('Then restart the hub and run:  hub drive');
+    } catch (e) { done(500, 'Token exchange failed: ' + e.message); console.error('Token exchange failed: ' + e.message); process.exitCode = 1; }
+  });
+  server.listen(0, '127.0.0.1', () => {
+    const redirectUri = `http://127.0.0.1:${server.address().port}`;
+    console.log('Open this link in your browser, sign in, and allow access to the files this app creates:\n');
+    console.log(authUrl({ clientId, redirectUri, state, challenge }) + '\n');
+    console.log('Waiting for Google (5 minutes)...');
+  });
+  setTimeout(() => { console.error('Timed out.'); process.exit(1); }, 5 * 60 * 1000).unref();
+}
+
+if (require.main === module) main();
+module.exports = { authUrl, exchange, SCOPE };

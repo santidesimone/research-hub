@@ -1,0 +1,5 @@
+{
+  "name": "Paper",
+  "description": "Warm off-white paper, serif headings, terracotta accent. Inspired by Claude's interface style; no logos or marks.",
+  "fonts": ["https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap"]
+}

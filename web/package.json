@@ -1,0 +1,25 @@
+{
+  "name": "research-hub-web",
+  "version": "0.6.0",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node test/run.js",
+    "test:integration": "node test/integration.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "compression": "^1.8.2",
+    "express": "^4.19.2",
+    "gray-matter": "^4.0.3",
+    "marked": "^12.0.2",
+    "neo4j-driver": "^5.22.0",
+    "vis-network": "^9.1.9",
+    "zod": "^4.6.7"
+  }
+}

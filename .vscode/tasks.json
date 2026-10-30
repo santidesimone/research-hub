@@ -1,0 +1,10 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "Hub: start everything", "type": "shell", "command": "./scripts/local.sh", "problemMatcher": [] },
+    { "label": "Hub: stop app", "type": "shell", "command": "./scripts/local.sh stop", "problemMatcher": [] },
+    { "label": "Hub: app logs", "type": "shell", "command": "./scripts/local.sh logs", "isBackground": true, "problemMatcher": [] },
+    { "label": "Hub: unit tests", "type": "shell", "command": "npm test", "options": { "cwd": "${workspaceFolder}/web" }, "group": "test", "problemMatcher": [] },
+    { "label": "Hub: Neo4j up", "type": "shell", "command": "docker compose up -d", "problemMatcher": [] }
+  ]
+}
