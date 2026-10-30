@@ -6,6 +6,7 @@
 const { run, writeTx } = require('./db');
 const { schema, safeLabel, entityLabels, relationTypes } = require('./schema');
 const { HttpError } = require('./errors');
+const { derived } = require('./vocab');
 
 const FORMAT = 'research-hub-backup';
 const VERSION = 1;
@@ -52,7 +53,9 @@ async function restore(doc) {
     const extra = labels.filter((l) => l !== merge).sort();
     const id = [merge, ...extra].join(':');
     if (!groups.has(id)) groups.set(id, { merge, extra, rows: [] });
-    groups.get(id).rows.push({ key: n.props.key, props: n.props });
+    // backups made before name matching have no derived fields on vocabulary nodes: add them so lookups find these
+    const props = entityLabels.includes(merge) && n.props.norm == null && n.props.name ? { ...n.props, ...derived(merge, n.props.name, n.props.aliases || []) } : n.props;
+    groups.get(id).rows.push({ key: n.props.key, props });
   }
   for (const r of rels) {
     if (!ALLOWED_RELS.has(r.type) || !SAFE.test(r.type)) throw new HttpError(400, `relationship type not allowed in a backup: ${r.type}`);

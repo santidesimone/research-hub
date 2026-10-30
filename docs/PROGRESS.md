@@ -6,7 +6,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 |---|---|---|
 | 0 Baseline against real services | done (2026-10-30) | See "Task 0" below. |
 | 1 Schema model v3 | done (2026-10-30) | See "Task 1" below. |
-| 2 Vocabulary nodes and matcher | not started | |
+| 2 Vocabulary nodes and matcher | done (2026-10-30) | See "Task 2" below. |
 | 3 Generic items API | not started | |
 | 4 Claude analysis, single-call save, audit | not started | |
 | 5 Library UI: Collections, forms, audit | not started | |
@@ -74,3 +74,40 @@ Update at the end of every task. For each: what changed, what was tested for rea
 - Not run against your own database. `./scripts/local.sh` (the `/verify` step 2) was skipped because it kills the process on port 3000 and uses the persistent `research-hub-neo4j` volume. Migration 005 will run there on the next app start; take a `hub backup` first.
 - Papers do not go through the validator yet (reference-manager input; `item_type` values differ from the design's enum). `ref` fields are stored as text. Existing method values (`level: technique`, `domain: research`) are kept and only produce warnings. These are for Tasks 2 and 3.
 - `content/methods/*.md` are now historical copies. Edits there no longer reach the hub.
+
+## Task 2. Vocabulary nodes and name matcher
+
+**Changed**
+- `web/core/vocab.js` (new): `resolve(kind, name, { create, aliases, by, model })`, which returns `{ key, name, created, match }`, plus `analyse`, `judge`, `derived` and `nameProps`.
+  - Normalisation: case, punctuation, accents, plurals (terms only), and "Last, First" (people).
+  - Matches, in rank order: exact, alias, acronym (letter by letter on either side, guarded so a 2-letter acronym alone never matches), typo (one edit in one word of 8+ letters).
+  - Candidates come from indexed `norm`/`letters` lookups, then the `vocab_text` full-text index.
+  - Non-exact matches learn the spelling as an alias.
+  - Creates and alias writes take a per-label `(:VocabLock)` and re-check under it. The key comes from the normalised name, written with MERGE on the unique key.
+- `schema/schema.json`: a `match` mode per entity, validated by the loader.
+- `web/migrations/006_vocab_matching.js`: `norm` and `letters` indexes per label, the `vocab_text` full-text index, `VocabLock` nodes with a unique constraint, and a batched backfill of the derived fields (existing keys kept).
+- Writers stamp `norm` and `letters` when they create vocabulary nodes: `artifacts.js` (paper authors and topics, concepts), `notes.js` (concepts), and `backup.js` (when restoring old backups).
+- README ("Vocabulary and name matching"), `schema/CHANGELOG.md`. No API or env change, so openapi and `_env.example` are unchanged.
+
+**Tested for real**
+- Offline: normalisation, the matching rules and 12 false-positive guards, `resolve()` against a fake graph (exact without writes, alias learning under the lock, `create:false` never writes, lock then re-check then create, a node created meanwhile is found, a missing full-text index), the writers' derived fields, and migration 006's Cypher and backfill.
+  - Mutation check: 42 single-line breaks; 41 fail the suite. The survivor is equivalent: `letters > 0` only matters when no acronym is involved, and that case is already an exact match.
+- Integration on a throwaway Neo4j 5:
+  - 20 parallel `resolve('Topic', …)` calls over 5 spellings ("Zero-knowledge proof", "ZK proofs", "zero knowledge proofs", "ZERO KNOWLEDGE PROOF", "ZKP") create exactly one node with `by: claude` and the model.
+  - Every spelling then resolves to it, and a typo is found through `vocab_text` with `create:false`.
+  - 10 of 10 runs passed.
+  - With the lock removed, the same test fails on every run (3 nodes created), so it does detect races.
+  - This test also found a real gap in an earlier version: "ZKP" and "ZK proofs" did not match each other, which made duplicates order-dependent (2 of 6 runs failed). The letter-by-letter acronym rule and the `letters` lookup fixed it.
+- Legacy data: created with the previous commit's code (papers with "José García", "Lovelace, Ada", `topic:zero-knowledge-proofs`, and the Markdown notes). After migration 006 no vocabulary node lacked `norm`, and `vocab_text` was ONLINE. Each of these resolved to the existing node under its old key, with `create:false` writing nothing:
+  - "Jose Garcia" and "José García" → `person:jos-garc-a`
+  - "Ada Lovelace" → `person:lovelace-ada`
+  - "Zero-knowledge proof", "ZK proofs" and "ZKP" → `concept:zero-knowledge-proofs`
+  - "CBDC" and "Central bank digital currencies" → `domain:digital-currency`
+  - The integration suite passed on that migrated database too.
+
+**Not tested / open**
+- Not wired into the writers yet: papers, notes and the generic API still create vocabulary nodes by slug key (now with `norm`/`letters` stamped). Until Task 4 routes them through `resolve()`, a new paper tag can still create a sibling of a node the matcher created. Example: a paper tagged `topic:zk-proofs` gets `concept:zk-proofs` even when `concept:zero-knowledge-proof` exists.
+- Proper nouns get odd-looking keys from singularising (for example, "Bayes" becomes `baye`). Matching is consistent on both sides; only the key reads strangely.
+- Existing duplicate vocabulary nodes (two legacy keys with one meaning) are not merged. `resolve()` picks the first by key.
+- `vocab_text` covers the entity labels known today. Adding an entity needs a migration that rebuilds it.
+- Not run against your own database. Migration 006 runs there on the next app start; it is additive (indexes, lock nodes, derived fields), but take a `hub backup` first.

@@ -10,6 +10,7 @@ const backup = require('../core/backup');
 const query = require('../core/query');
 const publicExport = require('../core/public-export');
 const files = require('../features/papers/files');
+const vocab = require('../core/vocab');
 
 // This test prunes Markdown-sourced notes and restores a backup, so it must never run against a database that holds your real library.
 if (process.env.HUB_INTEGRATION !== '1') {
@@ -24,7 +25,7 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
   await db.exec('RETURN 1 AS ok');
   const ran = await migrate.run();
   console.log('migrations applied this run:', ran.join(', ') || '(none, already up to date)');
-  assert.ok((await migrate.applied()).includes('005_collections'));
+  assert.ok((await migrate.applied()).includes('006_vocab_matching'));
   await db.exec('CALL db.awaitIndexes(60)');
 
   // paper with a Drive share link: stored canonically, nothing downloaded
@@ -65,6 +66,25 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
   assert.equal(useCase.key, `usecase:offline-payments-${stamp}`);
   const [ft] = await db.run("SHOW FULLTEXT INDEXES YIELD name, labelsOrTypes WHERE name = 'artifact_text' RETURN labelsOrTypes");
   assert.ok(ft.labelsOrTypes.includes('UseCase') && ft.labelsOrTypes.includes('CaseStudy'));
+
+  // vocabulary matcher: the brief's variants, 20 parallel calls with mixed spellings, full-text typo lookup
+  const tag = 'it' + [...stamp.toString(26)].map((c) => String.fromCharCode(97 + parseInt(c, 26))).join(''); // letters only
+  const spellings = [`Zero-knowledge proof ${tag}`, `ZK proofs ${tag}`, `zero knowledge proofs ${tag}`, `ZERO KNOWLEDGE PROOF ${tag}`, `ZKP ${tag}`];
+  const parallel = await Promise.all(Array.from({ length: 20 }, (_, i) => vocab.resolve('Topic', spellings[i % spellings.length], { model: 'it-model' })));
+  const topicNodes = await db.run('MATCH (t:Topic) WHERE t.norm ENDS WITH $tag RETURN t.key AS key, t.by AS by, t.model AS model, t.aliases AS aliases', { tag });
+  assert.equal(topicNodes.length, 1, `parallel calls created ${topicNodes.length} nodes: ${topicNodes.map((t) => t.key).join(', ')}`);
+  assert.equal(new Set(parallel.map((r) => r.key)).size, 1); assert.equal(parallel.filter((r) => r.created).length, 1);
+  assert.deepEqual([topicNodes[0].by, topicNodes[0].model], ['claude', 'it-model']);
+  for (const v of spellings) assert.equal((await vocab.resolve('Topic', v)).key, topicNodes[0].key, v);
+  assert.ok(topicNodes[0].aliases.length >= 1, 'non-exact spellings were learnt as aliases');
+  const crypto1 = await vocab.resolve('Concept', `Cryptographic accumulators ${tag}`);
+  const typoed = await vocab.resolve('Concept', `Cryptogrphic accumulators ${tag}`, { create: false });
+  assert.deepEqual([typoed.key, typoed.match], [crypto1.key, 'typo'], 'found through the vocab_text full-text index');
+  assert.equal((await vocab.resolve('Concept', `Homomorphic encryption ${tag}`, { create: false })).key, null);
+  assert.equal((await db.run('MATCH (c:Concept) WHERE c.norm CONTAINS $tag RETURN count(c) AS c', { tag }))[0].c, 1, 'create:false wrote nothing');
+  // nodes written by the paper writer are found: authors were stamped with norm on write
+  assert.deepEqual(await vocab.resolve('Person', 'Lovelace, Ada', { create: false }), { key: 'person:ada-lovelace', name: 'Ada Lovelace', created: false, match: 'exact' });
+  await db.exec('MATCH (n) WHERE (n:Topic OR n:Concept) AND n.norm ENDS WITH $tag DETACH DELETE n', { tag });
 
   // notes sync: upsert, edges to the paper and a concept, prune; methods are skipped and never pruned
   const entries = [

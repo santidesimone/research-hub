@@ -9,6 +9,7 @@ const FIELD = /^[a-z][a-z0-9_]*$/;
 const MANAGED = ['db', 'markdown', 'api'];
 const TIERS = ['core', 'standard', 'deep'];
 const BY = ['S', 'C', 'Y', 'Sys'];
+const MATCH_MODES = ['term', 'name', 'person']; // how web/core/vocab.js normalises names of that entity
 const SCALARS = ['text', 'longtext', 'markdown', 'integer', 'date', 'datetime', 'url', 'boolean']; // allowed inside objects
 
 // -> list of problems (empty when the schema is usable)
@@ -53,7 +54,10 @@ function check(s) {
     }
     for (const p of t.public_props || []) if (!global.has(p)) out.push(`${at}.public_props: ${p} is not in the global public_props whitelist`);
   }
-  for (const [label, e] of Object.entries(s.entities || {})) if (!/^[a-z]+:$/.test(e.key_prefix || '')) out.push(`entities.${label}: key_prefix looks like "word:"`);
+  for (const [label, e] of Object.entries(s.entities || {})) {
+    if (!/^[a-z]+:$/.test(e.key_prefix || '')) out.push(`entities.${label}: key_prefix looks like "word:"`);
+    if (!MATCH_MODES.includes(e.match)) out.push(`entities.${label}: match must be one of ${MATCH_MODES.join(', ')}`);
+  }
   for (const p of s.entity_public_props || []) if (!global.has(p)) out.push(`entity_public_props: ${p} is not in the global public_props whitelist`);
   for (const [field, rel] of Object.entries(s.relations || {})) if (!relTypes[rel]) out.push(`relations.${field}: ${rel} is not in relation_types`);
   for (const [rel, r] of Object.entries(relTypes)) {

@@ -9,6 +9,7 @@ const { schema, safeLabel, safeRel, orphanLabels, keyPrefix } = require('./schem
 const { HttpError } = require('./errors');
 const { writeTx, run } = require('./db');
 const hooks = require('./hooks');
+const { nameProps } = require('./vocab');
 
 const KINDS = Object.fromEntries(Object.entries(schema.types).filter(([, d]) => d.managed === 'markdown' && d.folder));
 const FOLDER_KIND = Object.fromEntries(Object.entries(KINDS).map(([n, d]) => [d.folder, n]));
@@ -101,7 +102,7 @@ async function sync(entries, { prune = true, allowEmpty = false, dryRun = false 
   for (const it of items) { if (!byLabel.has(it.label)) byLabel.set(it.label, []); byLabel.get(it.label).push({ key: it.key, props: it.props }); }
   const relRows = new Map(); // rel -> [{a, b}]
   for (const it of items) for (const r of it.relations) { if (!relRows.has(r.rel)) relRows.set(r.rel, []); relRows.get(r.rel).push({ a: it.key, b: r.target }); }
-  const conceptRows = items.flatMap((it) => it.concepts.map((c) => ({ a: it.key, ck: c.key, name: c.name })));
+  const conceptRows = items.flatMap((it) => it.concepts.map((c) => ({ a: it.key, ck: c.key, name: c.name, derived: nameProps('Concept', c.name) })));
   const targets = [...new Set([...relRows.values()].flat().map((r) => r.b))];
 
   const out = await writeTx(async (tx) => {
@@ -132,7 +133,7 @@ async function sync(entries, { prune = true, allowEmpty = false, dryRun = false 
     }
     if (conceptRows.length) {
       await tx.run(
-        `UNWIND $rows AS r MATCH (a:Artifact {key:r.a}) MERGE (c:Concept {key:r.ck}) SET c.name = r.name
+        `UNWIND $rows AS r MATCH (a:Artifact {key:r.a}) MERGE (c:Concept {key:r.ck}) SET c.name = r.name, c += r.derived
          MERGE (a)-[x:ABOUT]->(c) SET x.source = 'markdown'`, { rows: conceptRows });
       edges += conceptRows.length;
     }

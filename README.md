@@ -195,6 +195,16 @@ curl -X POST http://localhost:3000/api/artifacts/case_study -H "Authorization: B
 
 `search_papers` (MCP) and the API use a Neo4j full-text index (`artifact_text`, created by migration `004`) over title, TL;DR, abstract, summary, authors, venue and note text of every type (rebuilt by migration `005`), ranked, with topic matches added. If the index is missing it falls back to a plain scan.
 
+## Vocabulary and name matching
+
+People, concepts, topics, domains, venues, organisations and datasets are shared nodes, not strings. Callers pass names; `web/core/vocab.js` `resolve(kind, name, { create, aliases, by, model })` finds the node that name means or creates one (flagged `by: claude` by default) and returns `{ key, name, created, match }`. A match is one of:
+
+- **exact**: same normalised form as the node's name or an alias. Case, punctuation, accents and (for topics, concepts and domains) plurals are ignored, and `Lovelace, Ada` reads as `Ada Lovelace`.
+- **acronym**: upper-case acronyms line up letter by letter, so `ZKP`, `ZK proofs` and `zero-knowledge proofs` are one node. A match needs a shared ordinary word or at least three letters, so `AI` alone matches nothing.
+- **typo**: one edit in one word of 8+ letters.
+
+Different word order, partial overlaps and short-word typos never match: an empty match beats a wrong one. A non-exact match records the spelling as an alias. Creating a node takes a short per-type lock (`(:VocabLock {label})`), so parallel calls with different spellings still create one node. Lookups use indexes on the derived `norm` and `letters` fields and the `vocab_text` full-text index (migration `006`, which also backfilled existing nodes). How each type is normalised is its `match` entry in `schema/schema.json`.
+
 ## Backup and restore
 
 Neo4j is the only copy of your library, so back it up:

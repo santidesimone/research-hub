@@ -1,9 +1,10 @@
 // Generic artifact persistence: any type described in schema/schema.json is written, listed and deleted here.
 // A type module turns request input into {key, label, props, links}; this file turns that into Cypher.
 const { writeTx, run } = require('./db');
-const { schema, safeLabel, safeRel, orphanLabels } = require('./schema');
+const { schema, safeLabel, safeRel, orphanLabels, entityLabels } = require('./schema');
 const { HttpError } = require('./errors');
 const types = require('./types');
+const vocab = require('./vocab');
 const hooks = require('./hooks');
 
 // The hub's own bookkeeping, from the type's schema entry: how it is managed, its schema version, its collection.
@@ -15,6 +16,9 @@ function systemProps(label) {
     onCreate: def.collection ? { record_status: 'auto' } : {}, // never reset an owner's "reviewed"
   };
 }
+
+// Vocabulary nodes written here (authors, concepts) carry the matcher's fields too, so vocab.resolve() finds them.
+const vocabFields = (m) => (entityLabels.includes(m.label) && m.props && m.props.name ? vocab.nameProps(m.label, m.props.name) : {});
 
 // art = { key, label, props: {..}, links: [ {rel, merge:{label,key,props}} | {rel, match:key} ], warnings?: [] }
 async function upsertArtifact(tx, art, { overwrite = false } = {}) {
@@ -39,9 +43,9 @@ async function upsertArtifact(tx, art, { overwrite = false } = {}) {
     if (link.merge) {
       await tx.run(
         `MATCH (n:Artifact {key:$key})
-         MERGE (t:${safeLabel(link.merge.label)} {key:$tkey}) SET t += $tprops
+         MERGE (t:${safeLabel(link.merge.label)} {key:$tkey}) SET t += $tprops, t += $tderived
          MERGE (n)-[r:${rel}]->(t) SET r.source = 'hub'`,
-        { key: art.key, tkey: link.merge.key, tprops: link.merge.props || {} }
+        { key: art.key, tkey: link.merge.key, tprops: link.merge.props || {}, tderived: vocabFields(link.merge) }
       );
     } else {
       const res = await tx.run(

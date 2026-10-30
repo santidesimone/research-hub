@@ -66,7 +66,7 @@ const seed = require('../../data/seed_papers.json');
 
   // migrations are discoverable and ordered
   const migrate = require('../core/migrate');
-  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', 'personal_001_layer']);
+  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', 'personal_001_layer']);
   // personal layer: separate node, driven by hooks, core untouched
   calls.length = 0;
   require('../features/personal').mount({ get() {}, put() {}, delete() {}, post() {} });
@@ -433,6 +433,137 @@ const seed = require('../../data/seed_papers.json');
   mlog.length = 0; ftRow = null;
   await m005.up(fakeMigDb);
   assert.ok(mlog.some(([q]) => q.startsWith('CREATE FULLTEXT INDEX artifact_text')) && !mlog.some(([q]) => q.includes('DROP INDEX')), 'a missing index is created');
+
+  /* ------------------------------------------------------------ vocabulary: normalising and judging names */
+  const vocab = require('../core/vocab');
+  const norm = (m, x) => vocab.analyse(m, x).norm;
+  assert.equal(norm('term', 'Zero-knowledge proof'), 'zero knowledge proof');
+  assert.equal(norm('term', 'zero knowledge proofs'), 'zero knowledge proof');
+  assert.equal(norm('term', 'Zéro–Knowledge  PROOFS!'), 'zero knowledge proof', 'accents, dashes, case and plurals');
+  assert.equal(norm('term', 'ZKPs'), 'zkp');
+  assert.equal(norm('person', 'Lovelace, Ada'), 'ada lovelace'); assert.equal(norm('person', 'José García'), 'jose garcia');
+  assert.equal(norm('name', 'Proceedings of Systems'), 'proceedings of systems', 'proper names are not singularised');
+  assert.deepEqual(['analysis', 'physics', 'process', 'policies', 'approaches', 'news', 'gas'].map(vocab.singular), ['analysis', 'physics', 'process', 'policy', 'approach', 'news', 'gas']);
+  assert.deepEqual(vocab.analyse('term', 'ZERO KNOWLEDGE PROOF').acr, [false, false, false], 'a shouted phrase is not a row of acronyms');
+  const VJ = (a, b, aliases = []) => vocab.judge(vocab.analyse('term', a), 'term', { name: b, aliases });
+  assert.equal(VJ('zero knowledge proofs', 'Zero-knowledge proof'), 'exact');
+  assert.equal(VJ('ZK proofs', 'Zero-knowledge proof'), 'acronym');
+  assert.equal(VJ('ZKP', 'zero knowledge proof'), 'acronym');
+  assert.equal(VJ('ZKP', 'ZK proofs'), 'acronym', 'two acronym spellings match each other directly');
+  assert.equal(VJ('AI systems', 'artificial intelligence systems'), 'acronym');
+  assert.equal(VJ('ZK', 'zero knowledge'), null, 'two letters and no shared word: too ambiguous');
+  assert.equal(VJ('ZK proofs', 'ZK theorems'), null, 'shared letters do not excuse different words');
+  assert.equal(VJ('ZKP', 'zero knowledge theorem'), null, 'every letter must line up');
+  assert.equal(VJ('zero knowledge proof systems', 'ZKP'), null, 'a longer name is not an acronym match');
+  assert.deepEqual(['ZKP', 'ZK proofs', 'zero-knowledge proofs', 'privacy'].map((x) => vocab.analyse('term', x).letters), ['zkp', 'zkp', 'zkp', null]);
+  assert.equal(VJ('central bank digital currency', 'digital currency', ['CBDC', 'central bank digital currency']), 'alias');
+  assert.equal(VJ('CBDC', 'central bank digital currency'), 'acronym'); assert.equal(VJ('central bank digital currency', 'CBDC'), 'acronym', 'either side may be the acronym');
+  assert.equal(VJ('cryptograpy', 'Cryptography'), 'typo');
+  for (const [a, b] of [['AI', 'art investing'], ['zk proofs', 'zero knowledge proof'], ['formal methods', 'normal methods'], ['proof zero knowledge', 'zero knowledge proof'],
+    ['zero knowledge', 'zero knowledge proof'], ['cryptograpy protocoll', 'cryptography protocol'], ['privacy', 'privacy engineering'], ['cryptograpy theory', 'cryptography theories of x'], ['model checking', 'modal checking']]) {
+    assert.equal(VJ(a, b), null, `"${a}" must not match "${b}"`);
+  }
+  assert.equal(vocab.lucene(vocab.analyse('term', 'ZK cryptographic proofs')), 'cryptographic~1 OR proof', 'acronyms are not searched; long words fuzzy');
+  assert.equal(vocab.labelOf('topic'), 'Topic'); assert.throws(() => vocab.labelOf('Paper'), (e) => e.status === 400);
+  assert.deepEqual(vocab.derived('Domain', 'Digital currency', ['CBDC', 'cbdc', 'Central bank digital currencies']),
+    { norm: 'digital currency', letters: 'dc', aliases_norm: ['cbdc', 'central bank digital currency'], aliases_letters: ['cbdc'], aliases_text: 'cbdc | central bank digital currency' });
+
+  /* ------------------------------------------------------------ vocabulary: resolve() against a fake graph */
+  const rec = (o) => ({ get: (k) => o[k] });
+  const ZKP = { key: 'concept:zero-knowledge-proof', name: 'Zero-knowledge proof', aliases: [] };
+  let reads; let vtx;
+  const fakeGraph = ({ exact = [], fuzzy = [], locked: underLock = [], ftFails = false } = {}) => {
+    reads = []; vtx = [];
+    runImpl = async (q, p) => { reads.push([q, p]); if (q.includes('fulltext.queryNodes')) { if (ftFails) throw new Error('no such index'); return fuzzy; } return exact; };
+    txImpl = async (q, p) => { vtx.push([q, p]); if (q.includes('LIMIT 200') || q.includes('RETURN n.key AS key, n.name AS name')) return { records: underLock.map(rec) }; return { records: [] }; };
+  };
+  fakeGraph({ exact: [ZKP] });
+  assert.deepEqual(await vocab.resolve('concept', 'zero knowledge proofs'), { key: ZKP.key, name: ZKP.name, created: false, match: 'exact' });
+  assert.equal(reads[0][1].norm, 'zero knowledge proof'); assert.equal(vtx.length, 0, 'an exact match writes nothing');
+  assert.equal(reads[0][1].letters, 'zkp'); assert.ok(reads[0][0].includes('n.letters = $letters') && /ORDER BY CASE WHEN n.norm = \$norm OR \$norm IN coalesce\(n.aliases_norm, \[\]\) THEN 0 ELSE 1 END/.test(reads[0][0]), 'acronym candidates by letters; exact hits sort first');
+
+  fakeGraph({ fuzzy: [ZKP], locked: [ZKP] });
+  const zk = await vocab.resolve('Concept', 'ZK proofs');
+  assert.deepEqual([zk.key, zk.match, zk.created], [ZKP.key, 'acronym', false]);
+  assert.ok(vtx[0][0].includes('MERGE (l:VocabLock {label:$label})') && vtx[0][1].label === 'Concept', 'alias writes take the lock first');
+  const aliasSet = vtx.find(([q]) => q.includes('SET n.aliases = $aliases'));
+  assert.deepEqual([aliasSet[1].aliases, aliasSet[1].an], [['ZK proofs'], ['zk proof']], 'the spelling is learnt as an alias');
+
+  fakeGraph({ fuzzy: [ZKP], locked: [ZKP] });
+  assert.equal((await vocab.resolve('Concept', 'ZK proofs', { create: false })).match, 'acronym'); assert.equal(vtx.length, 0, 'create:false never writes');
+  fakeGraph();
+  assert.deepEqual(await vocab.resolve('Concept', 'Homomorphic encryption', { create: false }), { key: null, name: 'Homomorphic encryption', created: false, match: null });
+  assert.equal(vtx.length, 0);
+
+  fakeGraph();
+  const made = await vocab.resolve('Concept', 'Zero-knowledge proofs', { aliases: ['ZKP'], model: 'claude-x' });
+  assert.deepEqual(made, { key: 'concept:zero-knowledge-proof', name: 'Zero-knowledge proofs', created: true, match: 'new' });
+  const vq = vtx.map(([q]) => q);
+  assert.ok(vq[0].includes('VocabLock') && vq[1].includes('LIMIT 200') && vq[2].startsWith('MERGE (n:Concept {key:$key})'), 'lock, re-check, then create');
+  assert.ok(vq[2].includes('ON CREATE SET') && vq[2].includes("n.record_status = 'auto'"));
+  assert.deepEqual([vtx[2][1].by, vtx[2][1].model, vtx[2][1].aliases, vtx[2][1].derived.norm, vtx[2][1].derived.aliases_norm], ['claude', 'claude-x', ['ZKP'], 'zero knowledge proof', ['zkp']]);
+  assert.deepEqual(vtx[1][1].words, ['zero', 'knowledge', 'proof']);
+  assert.ok(vq[2].includes('n.by = $by') && vq[2].includes('n.model = $model'), 'provenance is written on create');
+  fakeGraph();
+  await vocab.resolve('Concept', 'ZK proofs of it');
+  assert.deepEqual(vtx[1][1].words, ['proof'], 'the locked re-check scans ordinary words of 3+ letters only');
+
+  fakeGraph({ exact: [{ key: 'concept:a', name: 'cryptograpy', aliases: [] }, { key: 'concept:b', name: 'Cryptography', aliases: [] }] });
+  assert.equal((await vocab.resolve('Concept', 'cryptography')).key, 'concept:b', 'an exact match beats a typo match that sorts first');
+  fakeGraph({ fuzzy: [ZKP], locked: [{ ...ZKP, aliases: ['ZK-proofs'] }] });
+  await vocab.resolve('Concept', 'ZK proofs');
+  assert.ok(!vtx.some(([q]) => q.includes('SET n.aliases')), 'a spelling already learnt (by a parallel call) is not added twice');
+
+  fakeGraph({ locked: [{ key: 'concept:zkp-by-someone', name: 'zero knowledge proof', aliases: [] }] });
+  const raced = await vocab.resolve('Concept', 'Zero-knowledge proofs');
+  assert.deepEqual([raced.key, raced.created], ['concept:zkp-by-someone', false], 'a node created meanwhile is found under the lock');
+  assert.ok(!vtx.some(([q]) => q.startsWith('MERGE (n:Concept')), 'and no second node is created');
+
+  fakeGraph({ ftFails: true });
+  assert.equal((await vocab.resolve('Topic', 'Payments')).created, true, 'a missing full-text index only disables fuzzy matching');
+  fakeGraph();
+  await assert.rejects(() => vocab.resolve('Concept', ' -- '), (e) => e.status === 400);
+  await assert.rejects(() => vocab.resolve('Concept', 'x'.repeat(201)), (e) => e.status === 400);
+  await assert.rejects(() => vocab.resolve('Paper', 'x'), (e) => e.status === 400);
+  runImpl = async () => []; txImpl = null;
+
+  /* ------------------------------------------------------------ vocabulary: the hub's own writers stamp matcher fields */
+  calls.length = 0;
+  await artifacts.add('note', { title: 'Vocab note', concepts: ['Zero-knowledge-proofs'] });
+  const conceptMerge = calls.find(([q]) => q.includes('MERGE (t:Concept'));
+  assert.ok(conceptMerge[0].includes('t += $tderived')); assert.deepEqual(conceptMerge[1].tderived, { norm: 'zero knowledge proof', letters: 'zkp' });
+  txLog.length = 0;
+  txImpl = async (q, p) => { txLog.push([q, p]); return null; };
+  await notes.sync([{ path: 'notes/v.md', meta: { concepts: ['Smart contracts'] } }], { prune: false });
+  const cRows = txLog.find(([q]) => q.includes('MERGE (c:Concept'));
+  assert.ok(cRows[0].includes('c += r.derived')); assert.deepEqual(cRows[1].rows[0].derived, { norm: 'smart contract', letters: 'sc' });
+  txLog.length = 0;
+  txImpl = async (q, p) => { txLog.push([q, p]); return q.includes('RETURN count(x)') ? { records: [{ get: () => ({ toNumber: () => p.rows.length }) }] } : { records: [] }; };
+  await backup.restore({ ...F, nodes: [{ labels: ['Concept'], props: { key: 'concept:a', name: 'Smart contracts' } }, { labels: ['Concept'], props: { key: 'concept:b', name: 'B', norm: 'kept' } }] });
+  const restored = txLog.find(([q]) => q.includes('MERGE (n:Concept')) [1].rows;
+  assert.equal(restored.find((r) => r.key === 'concept:a').props.norm, 'smart contract', 'old backups get the derived fields');
+  assert.equal(restored.find((r) => r.key === 'concept:b').props.norm, 'kept');
+  txImpl = null;
+
+  /* ------------------------------------------------------------ vocabulary: migration 006 */
+  const m006 = require('../migrations/006_vocab_matching');
+  const m6 = [];
+  let pending = { Person: [{ key: 'person:jos-garc-a', name: 'José García', aliases: [] }], Concept: [{ key: 'concept:smart-contracts', name: 'smart contracts', aliases: ['SC'] }, { key: 'concept:x', name: null, aliases: [] }, { key: 'concept:dash', name: '--', aliases: [] }] };
+  await m006.up({ run: async (q, p) => {
+    m6.push([q, p]);
+    const label = (q.match(/^MATCH \(n:(\w+)\) WHERE n.norm IS NULL/) || [])[1];
+    if (label) { const out = pending[label] || []; pending[label] = []; return out.map((r) => ({ ...r, name: r.name || r.key })); }
+    return [];
+  } });
+  const m6q = m6.map(([q]) => q).join('\n');
+  for (const l of ['person', 'concept', 'topic', 'domain', 'venue', 'organisation', 'dataset']) assert.ok(m6q.includes(`CREATE INDEX ${l}_norm IF NOT EXISTS`) && m6q.includes(`CREATE INDEX ${l}_letters IF NOT EXISTS`), l);
+  assert.ok(m6q.includes('CREATE FULLTEXT INDEX vocab_text IF NOT EXISTS FOR (n:Person|Concept|Topic|Domain|Venue|Organisation|Dataset) ON EACH [n.norm, n.aliases_text]'));
+  assert.ok(m6q.includes('REQUIRE l.label IS UNIQUE')); assert.deepEqual(m6.find(([q]) => q.includes('MERGE (:VocabLock'))[1].labels, S.entityLabels);
+  const backfill = m6.filter(([q]) => q.startsWith('UNWIND $rows AS r MATCH')).flatMap(([, p]) => p.rows);
+  assert.deepEqual(backfill.find((r) => r.key === 'person:jos-garc-a').props.norm, 'jose garcia');
+  assert.deepEqual(backfill.find((r) => r.key === 'concept:smart-contracts').props, { norm: 'smart contract', letters: 'sc', aliases_norm: ['sc'], aliases_letters: ['sc'], aliases_text: 'sc' });
+  assert.equal(backfill.find((r) => r.key === 'concept:x').props.norm, 'x', 'a node without a name is matched by its key');
+  assert.equal(backfill.find((r) => r.key === 'concept:dash').props.norm, 'concept:dash', 'norm is never left empty');
 
   /* ------------------------------------------------------------ search query building */
   assert.equal(q.luceneQuery('Blind sig+nature'), 'blind* AND sig* AND nature*');

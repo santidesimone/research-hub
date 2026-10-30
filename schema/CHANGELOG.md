@@ -2,6 +2,13 @@
 
 Every change to `schema/schema.json`, with the reason. The spec is `docs/SCHEMA_DESIGN.md`. A per-type `schema_version` is raised when that type's fields change. Items below the current version form the audit worklist, so a change is never silently applied to old items.
 
+## v3, name matching (2026-10-30)
+
+Why: Claude passes vocabulary names, and the server must link them to one node per meaning (Task 2).
+
+- Every entity has a `match` mode for `web/core/vocab.js`: `term` (Topic, Concept, Domain: plurals singularised), `name` (Venue, Organisation, Dataset), or `person` (also reads "Last, First"). The loader rejects other values.
+- Vocabulary nodes carry derived fields: `norm`, `letters` (the acronym signature), `aliases_norm`, `aliases_letters` and `aliases_text`. Matcher-created nodes also carry `by`, `model` and `record_status`. These are not schema fields: the matcher maintains them, and migration `006` backfilled them on existing nodes. Existing keys are unchanged.
+
 ## v3 (2026-10-30): Collections
 
 Why: the Library becomes four collections (Paper, Method, Use case, Case study), each with its own fields, and Claude needs a precise field list to fill. See `docs/SCHEMA_DESIGN.md`.
