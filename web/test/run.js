@@ -292,6 +292,15 @@ const seed = require('../../data/seed_papers.json');
   /* ------------------------------------------------------------ search query building */
   assert.equal(q.luceneQuery('Blind sig+nature'), 'blind* AND sig* AND nature*');
   assert.equal(q.luceneQuery('  '), ''); assert.ok(!/["\\()]/.test(q.luceneQuery('a" (b) \\c')));
+  // Neo4j 5 rejects a pattern comprehension over a lone node, e.g. [(s:Personal {...}) | s.status]; it needs a relationship.
+  assert.ok(!/\[\s*\([^()]*\)\s*\|/.test(q.SEARCH_RETURN), 'pattern comprehensions in search include a relationship');
+  assert.ok(q.SEARCH_RETURN.includes('(s:Personal)-[:FOR]->(p)'), 'status comes from the personal layer via FOR');
+  let searchCall;
+  runImpl = async (cy, p) => { searchCall = [cy, p]; return []; };
+  await q.searchPapers('Digital-Cash');
+  assert.equal(searchCall[1].topic, 'digital cash', 'a tag-style query matches concept names, which use spaces');
+  assert.ok(searchCall[0].includes('toLower(c.name) CONTAINS $topic'));
+  runImpl = async () => [];
 
   console.log('all tests passed');
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -6,6 +6,7 @@ const neo4j = require('neo4j-driver');
 const db = require('./db');
 const { driver } = db;
 const { HttpError } = require('./errors');
+const log = require('./log');
 
 const MAX_ROWS = 500;
 const TIMEOUT_MS = 15000;
@@ -84,12 +85,13 @@ const SEARCH_COLUMNS = ['key', 'title', 'year', 'authors', 'topics', 'has_file',
 const SEARCH_RETURN = `RETURN p.key AS key, p.title AS title, p.year AS year, p.authors AS authors,
             [(p)-[:ABOUT]->(c:Concept) | c.name] AS topics,
             p.file_url IS NOT NULL AS has_file,
-            head([(s:Personal {key: 'personal:' + p.key}) | s.status]) AS status`;
+            head([(s:Personal)-[:FOR]->(p) | s.status]) AS status`;
 
 async function searchPapers(text, limit = 20) {
   const n = neo4j.int(Math.min(Number(limit) || 20, 100));
   const q = String(text || '').toLowerCase().trim();
   const lucene = luceneQuery(q);
+  const topic = q.replace(/-/g, ' '); // concept names are stored with spaces ('topic:digital-cash' -> 'digital cash')
   if (lucene) {
     try {
       const rows = await db.run(
@@ -97,23 +99,23 @@ async function searchPapers(text, limit = 20) {
            CALL db.index.fulltext.queryNodes('artifact_text', $lucene) YIELD node, score
            WITH node, score WHERE node:Paper RETURN node AS p, score
            UNION
-           MATCH (p:Paper)-[:ABOUT]->(c:Concept) WHERE toLower(c.name) CONTAINS $q RETURN p, 1.0 AS score
+           MATCH (p:Paper)-[:ABOUT]->(c:Concept) WHERE toLower(c.name) CONTAINS $topic RETURN p, 1.0 AS score
          }
          WITH p, max(score) AS score
          ${SEARCH_RETURN}
          ORDER BY score DESC, p.year DESC LIMIT $limit`,
-        { lucene, q, limit: n });
+        { lucene, topic, limit: n });
       return { columns: SEARCH_COLUMNS, rows, count: rows.length, truncated: false };
-    } catch (e) { /* index missing or not online yet: use the scan below */ }
+    } catch (e) { log.warn(`full-text search failed, using the scan: ${e.message}`); } // index missing or not online yet
   }
   return readOnly(
     `MATCH (p:Paper)
      WHERE toLower(p.title) CONTAINS $q OR any(a IN p.authors WHERE toLower(a) CONTAINS $q)
         OR toLower(coalesce(p.venue, '')) CONTAINS $q
-        OR EXISTS { MATCH (p)-[:ABOUT]->(c:Concept) WHERE toLower(c.name) CONTAINS $q }
+        OR EXISTS { MATCH (p)-[:ABOUT]->(c:Concept) WHERE toLower(c.name) CONTAINS $topic }
      ${SEARCH_RETURN}
      ORDER BY p.year DESC LIMIT $limit`,
-    { q, limit: n });
+    { q, topic, limit: n });
 }
 
-module.exports = { readOnly, overview, searchPapers, guard, luceneQuery, MAX_ROWS };
+module.exports = { readOnly, overview, searchPapers, guard, luceneQuery, SEARCH_RETURN, MAX_ROWS };
