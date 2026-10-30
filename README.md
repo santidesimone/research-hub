@@ -149,14 +149,16 @@ Put the three values in `.env`, restart, and run `./bin/hub drive` to check. Ful
 
 Papers that an earlier version stored in a bucket keep their old reference as `legacy_pdf_uri` (migration `003`; nothing is deleted); the UI shows a hint to re-upload them.
 
-## Markdown notes, methods, projects
+## Markdown notes and projects
 
-Keep one file per item on your computer, ideally in a git repo (this project's `content/` folder is an example): `notes/`, `methods/`, `projects/`. Push them to the hub:
+Keep one file per note or project on your computer, ideally in a git repo (this project's `content/` folder is an example): `notes/`, `projects/`. Push them to the hub:
 
 ```bash
 ./bin/hub sync-notes ./content --dry-run     # what would be created / updated / removed
 ./bin/hub sync-notes ./content               # one atomic batch; files you deleted are removed from the graph
 ```
+
+**Methods, use cases and case studies are database-managed** (schema v3): create and edit them in the Library, the API (`POST /api/artifacts/<type>`), MCP or the CLI. `sync-notes` skips files in `methods/` (or with `kind: method`) with a message and never prunes a database-managed item. Methods that came from Markdown were moved into the database by migration `005` (they keep `source_path` and get `imported_from: markdown`), so the files in `content/methods/` are now only a historical copy.
 
 The node key is `<kind>:<filename>`. The file's text is stored on the node as `body`, so notes need no redeploy and are searchable. Front matter:
 
@@ -171,30 +173,34 @@ concepts: ["evaluation"]
 ---
 ```
 
-Relationship fields: `about uses extends supports contradicts critiques annotates inspired`. Papers are `doi:` plus the lowercase DOI (or the `paper:<hash>` key returned when you added them). **Quote values containing a colon.** Unknown targets are reported in `warnings` and skipped. A `status:` line is ignored (status is personal; set it with `hub status`). `sync-notes` refuses to prune when no usable file is found, so an empty or wrong folder cannot wipe your notes. `--no-prune` only adds and updates.
+Relationship fields: `about uses extends supports contradicts critiques annotates inspired builds_on replicates introduces addresses instance_of variant_of alternative_to requires`. Papers are `doi:` plus the lowercase DOI (or the `paper:<hash>` key returned when you added them). **Quote values containing a colon.** Unknown targets are reported in `warnings` and skipped. A `status:` line is ignored (status is personal; set it with `hub status`). `sync-notes` refuses to prune when no usable file is found, so an empty or wrong folder cannot wipe your notes. `--no-prune` only adds and updates.
 
-Notes can also be created without files: `POST /api/artifacts/<type>` or Claude's `add_artifact`:
+Any type can also be created without files: `POST /api/artifacts/<type>` or Claude's `add_artifact`. Input is checked against the type's fields in `schema/schema.json`: a missing title is a 400; empty Core fields, values outside an enum, bad numbers, dates, lists or objects come back as `warnings` (the value is stored as sent); fields the schema does not know are kept.
 
 ```bash
 curl -X POST http://localhost:3000/api/artifacts/method \
   -H "Authorization: Bearer $HUB_API_TOKEN" -H "Content-Type: application/json" \
   -d '{"title":"Citation chaining","level":"technique","domain":"research","summary":"Follow references and citations.",
        "body":"# Citation chaining\n\n1. Pick seeds ...","uses":[],"concepts":["literature review"],"visibility":"public"}'
-# 201 {"key":"method:citation-chaining","created":true,"warnings":[]}
+# 201 {"key":"method:citation-chaining","created":true,"warnings":["tldr is empty (Core field)", ...]}
+
+curl -X POST http://localhost:3000/api/artifacts/case_study -H "Authorization: Bearer $HUB_API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"title":"Lisbon CBDC pilot","case_type":"pilot","sources":[{"url":"https://example.org/report","note":"final report"}]}'
+# 201 {"key":"case:lisbon-cbdc-pilot", ...}   use cases get usecase:<slug> keys
 ```
 
 **Citations.** `./bin/hub enrich` adds `(:Paper)-[:CITES]->(:Paper)` edges between papers in your library using OpenAlex (set `OPENALEX_EMAIL` for the polite pool).
 
 ## Search
 
-`search_papers` (MCP) and the API use a Neo4j full-text index (`artifact_text`, created by migration `004`) over title, abstract, summary, authors, venue and note text, ranked, with topic matches added. If the index is missing it falls back to a plain scan.
+`search_papers` (MCP) and the API use a Neo4j full-text index (`artifact_text`, created by migration `004`) over title, TL;DR, abstract, summary, authors, venue and note text of every type (rebuilt by migration `005`), ranked, with topic matches added. If the index is missing it falls back to a plain scan.
 
 ## Backup and restore
 
 Neo4j is the only copy of your library, so back it up:
 
 ```bash
-./bin/hub backup                  # research-hub-backup-<date>.json: papers, notes, links, people, concepts, your personal layer
+./bin/hub backup                  # research-hub-backup-<date>.json: every artifact, link and vocabulary node (people, concepts, topics, domains ...), your personal layer
 ./bin/hub restore backup.json     # merges by key, in batches; never deletes; safe to run twice
 ```
 
@@ -203,7 +209,7 @@ On Google Cloud, `deploy/neo4j-vm.sh` also schedules nightly disk snapshots. The
 ## How it is organised (and how to change it)
 
 ```
-schema/schema.json        the graph model: artifact types, colours, relations, public fields
+schema/schema.json        the graph model: types and their fields, vocabulary, relations, public fields (history: schema/CHANGELOG.md)
 bin/hub                   command-line client;  bin/drive-auth  one-time Google login for Drive uploads
 web/server.js             config check, middleware, mounts everything under BASE_PATH, loads web/features/*, runs graph migrations
 web/core/                 config, log, security headers, rate limit, db, schema, auth, links, drive, generic artifact writer,
@@ -222,9 +228,9 @@ web/test/                 run.js (offline, no database) and integration.js (need
 - **Add an app**: create `web/apps/<id>/app.json` (`{id,title,description,icon,auth:"public"|"owner",order}`) and `app.js` (`export default { mount(ctx) {...}, onRoute?(ctx) }`). It appears in the apps menu and is served at `/<id>`. It gets `ctx.el`, `ctx.api`, `ctx.navigate`, `ctx.route` (path, query) and shared helpers; it uses only CSS classes from `base.css` and colours from tokens, so it follows whatever skin is active.
 - **Change the look**: copy `web/skins/paper` to `web/skins/mine`, edit the tokens, run with `HUB_SKIN=mine` (or try one live with `?skin=slate` in the URL). A skin that loads fonts from another host lists it in `skin.json` under `"csp": {"style": [...], "font": [...]}`. A test checks that every skin defines every token the app uses.
 - **Change how papers work**: edit only `web/features/papers/`. Remove the folder and papers disappear from the API; nothing else breaks.
-- **Add a new artifact type** (say `dataset`): add it to `schema/schema.json` (label, colour, optional Markdown `folder`, extra `props`). That alone gives you `hub sync-notes` support, `POST /api/artifacts/dataset`, and the UI legend and colour. Only write `web/features/<name>/type.js` if the type needs special input handling (like papers do).
-- **Add a relationship type**: add it to `relations` in `schema/schema.json`. It becomes a front-matter field and an API field.
-- **Change stored data (a migration)**: add `web/migrations/00N_what_it_does.js` exporting `{ id, description, async up(db) }` where `db.run(cypher, params)` writes. On the next start it runs once, and its id is recorded on a `(:SchemaMeta {id:'graph'})` node. Write migrations so they are safe to run twice. `002`, `003` and `004` are real examples. `GET /api/schema` lists what has been applied.
+- **Add a new artifact type** (say `dataset`): add it to `schema/schema.json` (label, colour, `managed` (`db`, `markdown` with a `folder`, or `api`), `schema_version`, optional `key_prefix`, legacy `props`, and for a Library collection `"collection": true` with `fields` and layout hints). That alone gives you `POST /api/artifacts/dataset` with validation (and `hub sync-notes` support if it is Markdown-managed), and the UI legend and colour. Only write `web/features/<name>/type.js` if the type needs special input handling (like papers do). The schema is checked at start-up: an unknown field type, a `ref` to a label that does not exist or a type `public_props` entry outside the global whitelist stops the server. Record the change in `schema/CHANGELOG.md`; raise the type's `schema_version` when its fields change.
+- **Add a relationship type**: add it to `relation_types` (with its endpoints) in `schema/schema.json`; add it to `relations` as well if it should be a front-matter and API field.
+- **Change stored data (a migration)**: add `web/migrations/00N_what_it_does.js` exporting `{ id, description, async up(db) }` where `db.run(cypher, params)` writes. On the next start it runs once, and its id is recorded on a `(:SchemaMeta {id:'graph'})` node. Write migrations so they are safe to run twice. `002` to `005` are real examples. `GET /api/schema` lists what has been applied.
 - **Tests**: `cd web && npm test` (offline: parsing, the Cypher issued, Drive calls against a fake Google, notes sync, backup, public whitelist, config checks, security policy). `npm run test:integration` runs against a real Neo4j and refuses to start unless `HUB_INTEGRATION=1` (it prunes and restores data, so use a throwaway database).
 
 ## The personal layer (status)

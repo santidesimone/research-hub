@@ -24,7 +24,7 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
   await db.exec('RETURN 1 AS ok');
   const ran = await migrate.run();
   console.log('migrations applied this run:', ran.join(', ') || '(none, already up to date)');
-  assert.ok((await migrate.applied()).includes('004_fulltext_search'));
+  assert.ok((await migrate.applied()).includes('005_collections'));
   await db.exec('CALL db.awaitIndexes(60)');
 
   // paper with a Drive share link: stored canonically, nothing downloaded
@@ -54,17 +54,34 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
   await assert.rejects(() => query.readOnly('CREATE (n:Hack {x:1}) RETURN n'), /read-only/i);
   await assert.rejects(() => query.readOnly('MATCH (n:Paper) DETACH DELETE n'), /read-only/i);
 
-  // notes sync: upsert, edges to the paper and a concept, prune
+  // schema v3: seeded domains, database-managed method with validator warnings and unknown fields kept
+  const domains = await db.run("MATCH (d:Domain) WHERE d.seeded RETURN d.key AS key");
+  assert.ok(domains.length >= 10 && domains.some((d) => d.key === 'domain:digital-currency'));
+  const method = await artifacts.add('method', { title: `Method B ${stamp}`, slug: `it-${stamp}-b`, level: 'technique', kind: 'technique', visibility: 'public', mood: 'kept' });
+  assert.ok(method.warnings.some((w) => w.startsWith('level:')));
+  const [mrow] = await db.run('MATCH (m:Method {key:$k}) RETURN m.managed AS managed, m.collection AS c, m.record_status AS rs, m.mood AS mood, m.source AS source', { k: `method:it-${stamp}-b` });
+  assert.deepEqual(mrow, { managed: 'db', c: 'method', rs: 'auto', mood: 'kept', source: 'hub' });
+  const useCase = await artifacts.add('use_case', { title: `Offline payments ${stamp}`, actors: [{ role: 'payer' }], status: 'idea' });
+  assert.equal(useCase.key, `usecase:offline-payments-${stamp}`);
+  const [ft] = await db.run("SHOW FULLTEXT INDEXES YIELD name, labelsOrTypes WHERE name = 'artifact_text' RETURN labelsOrTypes");
+  assert.ok(ft.labelsOrTypes.includes('UseCase') && ft.labelsOrTypes.includes('CaseStudy'));
+
+  // notes sync: upsert, edges to the paper and a concept, prune; methods are skipped and never pruned
   const entries = [
     { path: `notes/it-${stamp}-a.md`, meta: { title: 'Note A', annotates: [paperKey], concepts: ['integration-testing'], visibility: 'private' }, body: '# A\ntext' },
+    { path: `projects/it-${stamp}-p.md`, meta: { title: 'Project P', visibility: 'public' }, body: 'project text' },
     { path: `methods/it-${stamp}-b.md`, meta: { title: 'Method B', level: 'technique', visibility: 'public' }, body: 'method text' },
   ];
   const r1 = await notes.sync(entries, { prune: false });
-  assert.equal(r1.created, 2); assert.equal(r1.edges, 2); assert.deepEqual(r1.skipped, []);
+  assert.equal(r1.created, 2); assert.equal(r1.edges, 2); assert.equal(r1.skipped.length, 1);
   const [edge] = await db.run("MATCH (n:Note {key:$k})-[r:ANNOTATES]->(p:Paper {key:$p}) RETURN r.source AS s", { k: `note:it-${stamp}-a`, p: paperKey });
   assert.equal(edge.s, 'markdown');
+  // a db-managed item that somehow carries source 'markdown' is still never pruned
+  await db.exec('MATCH (m:Method {key:$k}) SET m.source = $s', { k: `method:it-${stamp}-b`, s: 'markdown' });
   const r2 = await notes.sync([entries[1]], { prune: true });
-  assert.deepEqual(r2.removed, [`note:it-${stamp}-a`]);
+  assert.ok(r2.removed.includes(`note:it-${stamp}-a`)); assert.ok(!r2.removed.includes(`method:it-${stamp}-b`));
+  assert.equal((await db.run('MATCH (m:Method {key:$k}) RETURN count(m) AS c', { k: `method:it-${stamp}-b` }))[0].c, 1);
+  await db.exec('MATCH (m:Method {key:$k}) SET m.source = $s', { k: `method:it-${stamp}-b`, s: 'hub' });
   await assert.rejects(() => notes.sync([], { prune: true }), /Refusing to prune/);
 
   // public preview: public items only, whitelisted fields only
@@ -85,7 +102,7 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
 
   // clean up
   await artifacts.remove(paperKey);
-  await db.exec("MATCH (n:Artifact) WHERE n.key STARTS WITH 'method:it-' OR n.key STARTS WITH 'note:it-' DETACH DELETE n");
+  await db.exec("MATCH (n:Artifact) WHERE n.key STARTS WITH 'method:it-' OR n.key STARTS WITH 'note:it-' OR n.key STARTS WITH 'project:it-' OR n.key STARTS WITH 'usecase:offline-payments-' DETACH DELETE n");
   await db.exec("MATCH (c:Concept {key:'concept:integration-testing'}) WHERE NOT (c)--() DELETE c");
   console.log('integration tests passed');
 })().then(() => db.driver.close()).catch(async (e) => { console.error(e); await db.driver.close(); process.exit(1); });

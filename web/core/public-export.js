@@ -1,26 +1,28 @@
-// The public preview: nodes marked public, whitelisted fields only (schema.public_props), computed from the graph on demand.
+// The public preview: nodes marked public, whitelisted fields only, computed from the graph on demand. The whitelist is
+// schema.public_props; a type's own public_props can only narrow it, and vocabulary nodes (only the labels marked
+// public in schema.entities) export entity_public_props.
 // There is no file and no bucket: the result is cached in memory for PUBLIC_CACHE_SECONDS and dropped whenever the hub
 // writes, so one instance is always current and other Cloud Run instances catch up within the TTL.
 const crypto = require('crypto');
 const { run } = require('./db');
-const { schema } = require('./schema');
+const { publicProps, publicEntityLabels } = require('./schema');
 const config = require('./config');
 
-const PUBLIC = new Set(schema.public_props);
-const keep = (props) => Object.fromEntries(Object.entries(props).filter(([k]) => PUBLIC.has(k)));
+const keep = (props, labels) => { const allowed = publicProps(labels); return Object.fromEntries(Object.entries(props).filter(([k]) => allowed.has(k))); };
+const VOCAB = 'any(l IN labels(b) WHERE l IN $vocab)';
 
 async function build() {
   const [nodes, extra, edges] = await Promise.all([
     run("MATCH (a:Artifact {visibility:'public'}) RETURN a.key AS key, labels(a) AS labels, properties(a) AS props"),
-    run("MATCH (:Artifact {visibility:'public'})-[]->(b) WHERE b:Person OR b:Concept RETURN DISTINCT b.key AS key, labels(b) AS labels, properties(b) AS props"),
-    run("MATCH (a:Artifact {visibility:'public'})-[r]->(b) WHERE b:Person OR b:Concept OR (b:Artifact AND b.visibility = 'public') RETURN a.key AS `from`, b.key AS `to`, type(r) AS type"),
+    run(`MATCH (:Artifact {visibility:'public'})-[]->(b) WHERE ${VOCAB} RETURN DISTINCT b.key AS key, labels(b) AS labels, properties(b) AS props`, { vocab: publicEntityLabels }),
+    run(`MATCH (a:Artifact {visibility:'public'})-[r]->(b) WHERE ${VOCAB} OR (b:Artifact AND b.visibility = 'public') RETURN a.key AS \`from\`, b.key AS \`to\`, type(r) AS type`, { vocab: publicEntityLabels }),
   ]);
   const seen = new Set();
   const outNodes = [];
   for (const n of [...nodes, ...extra]) {
     if (seen.has(n.key)) continue;
     seen.add(n.key);
-    outNodes.push({ key: n.key, labels: n.labels, props: keep(n.props) });
+    outNodes.push({ key: n.key, labels: n.labels, props: keep(n.props, n.labels) });
   }
   outNodes.sort((a, b) => (a.key < b.key ? -1 : 1));
   edges.sort((a, b) => (`${a.from}|${a.to}|${a.type}` < `${b.from}|${b.to}|${b.type}` ? -1 : 1));

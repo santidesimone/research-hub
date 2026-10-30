@@ -12,6 +12,7 @@ const { run, writeTx } = require('../../core/db');
 const { HttpError } = require('../../core/errors');
 const { requireOwner } = require('../../core/auth');
 const hooks = require('../../core/hooks');
+const { fieldsOf } = require('../../core/schema');
 
 const FIELDS = ['status'];
 const DEFAULT_STATUS = 'to-read'; // policy of this layer: new papers start in your reading inbox
@@ -44,8 +45,10 @@ async function setState(key, fields) {
 }
 
 // Status given alongside a write: {status: 'x'} or a 'status:x' tag (the format the paper API and CSL files already use).
-function statusFromInput(input) {
-  if (input && typeof input.status === 'string' && input.status.trim()) return input.status.trim();
+// A type whose schema has its own `status` field (use_case: idea, candidate ...) keeps it: only the tag form applies there.
+function statusFromInput(input, type) {
+  const own = type && fieldsOf(type).status;
+  if (!own && input && typeof input.status === 'string' && input.status.trim()) return input.status.trim();
   for (const t of (input && input.tags) || []) {
     const s = typeof t === 'string' ? t : t && t.tag;
     if (s && /^status:/i.test(s.trim())) return s.trim().slice(7).trim();
@@ -56,10 +59,11 @@ function statusFromInput(input) {
 module.exports = {
   name: 'personal',
   setState,
+  statusFromInput,
   mount(app) {
     // New or re-posted artifacts: record the status if one was sent; give brand-new papers the default.
     hooks.on('afterWrite', async ({ key, type, input, created }) => {
-      const given = statusFromInput(input);
+      const given = statusFromInput(input, type);
       if (given) await setState(key, { status: given });
       else if (created && type === 'paper') await setState(key, { status: DEFAULT_STATUS });
     });

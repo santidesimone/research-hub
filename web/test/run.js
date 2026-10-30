@@ -66,7 +66,7 @@ const seed = require('../../data/seed_papers.json');
 
   // migrations are discoverable and ordered
   const migrate = require('../core/migrate');
-  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', 'personal_001_layer']);
+  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', 'personal_001_layer']);
   // personal layer: separate node, driven by hooks, core untouched
   calls.length = 0;
   require('../features/personal').mount({ get() {}, put() {}, delete() {}, post() {} });
@@ -218,8 +218,14 @@ const seed = require('../../data/seed_papers.json');
   assert.deepEqual({ title: t1.props.title, visibility: t1.props.visibility, note_kind: t1.props.note_kind, body: t1.props.body, source_path: t1.props.source_path, path: t1.props.path }, { title: 'Hello', visibility: 'public', note_kind: 'reading', body: '# Hi', source_path: 'notes/My Note.md', path: null });
   assert.deepEqual(t1.relations.map((r) => `${r.rel} ${r.target}`).sort(), ['ANNOTATES doi:10.1/abc', 'USES method:tdd']);
   assert.deepEqual(t1.concepts, [{ key: 'concept:digital-cash', name: 'digital cash' }, { key: 'concept:privacy', name: 'Privacy' }]);
-  const tm = notes.toItem({ path: 'methods/snow.md', meta: {}, body: '' }).item;
-  assert.equal(tm.key, 'method:snow'); assert.equal(tm.props.title, 'snow'); assert.equal(tm.props.level, null, 'fields removed from front matter are removed from the node'); assert.equal(tm.props.body, null);
+  const tm = notes.toItem({ path: 'projects/snow.md', meta: {}, body: '' }).item;
+  assert.equal(tm.key, 'project:snow'); assert.equal(tm.props.title, 'snow'); assert.equal(tm.props.repo, null, 'fields removed from front matter are removed from the node'); assert.equal(tm.props.body, null);
+  assert.deepEqual([tm.props.managed, tm.props.schema_version], ['markdown', 1]);
+  // methods are database-managed now: their files are skipped, by folder or by kind
+  assert.match(notes.toItem({ path: 'methods/snow.md', meta: {}, body: '' }).skip, /managed in the hub database/);
+  assert.match(notes.toItem({ path: 'notes/x.md', meta: { kind: 'method' } }).skip, /managed in the hub database/);
+  assert.match(notes.toItem({ path: 'x.md', meta: { kind: 'use_case' } }).skip, /managed in the hub database/);
+  assert.equal(notes.toItem({ path: 'methods/x.md', meta: { kind: 'note' } }).item.key, 'note:x', 'an explicit Markdown kind still wins');
   assert.ok(notes.toItem({ path: 'notes/x.md', meta: { visibility: 'secret' } }).warnings[0].includes('using private'));
   assert.equal(notes.toItem({ path: 'x.md', meta: { kind: 'project' } }).item.key, 'project:x');
   assert.ok(notes.toItem({ path: 'misc/x.md', meta: {} }).skip.includes('put it in a')); assert.ok(notes.toItem({ path: 'notes/x.txt', meta: {} }).skip);
@@ -236,13 +242,13 @@ const seed = require('../../data/seed_papers.json');
   hooks.on('afterWrite', (e) => events.push(['w', e.key, e.created])); hooks.on('afterRemove', (e) => events.push(['r', e.key]));
   const res = await notes.sync([
     { path: 'notes/a.md', meta: { title: 'A', uses: ['method:tdd'], annotates: ['doi:10.9/missing'], concepts: ['x'] }, body: 'a' },
-    { path: 'methods/b.md', meta: {}, body: 'b' },
+    { path: 'projects/b.md', meta: {}, body: 'b' }, { path: 'methods/m.md', meta: {}, body: 'm' },
     { path: 'notes/a.md', meta: {}, body: 'dup' }, { path: 'bad/c.md', meta: {} },
   ]);
   assert.equal(res.upserted, 2); assert.equal(res.created, 2); assert.deepEqual(res.removed, ['note:gone']); assert.equal(res.edges, 2);
-  assert.equal(res.skipped.length, 2); assert.ok(res.warnings.some((w) => /note:a ANNOTATES -> doi:10.9\/missing: target not found/.test(w)));
+  assert.equal(res.skipped.length, 3); assert.ok(res.skipped.some((x) => x.startsWith('methods/m.md:'))); assert.ok(res.warnings.some((w) => /note:a ANNOTATES -> doi:10.9\/missing: target not found/.test(w)));
   const stm = txLog.map(([q]) => q).join('\n');
-  assert.ok(stm.includes('SET n:Note') && stm.includes('SET n:Method') && stm.includes("n.source = 'markdown'") && stm.includes('MERGE (a)-[x:USES]->(b)') && !stm.includes('x:ANNOTATES'), 'one batched statement per label and relation, missing targets skipped');
+  assert.ok(stm.includes('SET n:Note') && stm.includes('SET n:Project') && !stm.includes('SET n:Method') && stm.includes("n.source = 'markdown'") && stm.includes('MERGE (a)-[x:USES]->(b)') && !stm.includes('x:ANNOTATES'), 'one batched statement per label and relation, missing targets skipped');
   assert.ok(events.some((e) => e[0] === 'w' && e[1] === 'note:a' && e[2] === true) && events.some((e) => e[0] === 'r' && e[1] === 'note:gone'));
   await assert.rejects(() => notes.sync([], { prune: true }), (e) => e.status === 400 && /Refusing to prune/.test(e.message));
   runImpl = async (q) => (q.includes('NOT n.key IN') ? [{ key: 'note:zzz' }] : []);
@@ -288,6 +294,145 @@ const seed = require('../../data/seed_papers.json');
   pubExport.invalidate(); const c2 = await pubExport.read();
   assert.equal(c2.etag, c1.etag, 'unchanged data keeps its ETag'); assert.equal(builds, 6);
   runImpl = async () => [];
+
+  /* ------------------------------------------------------------ schema v3: loader */
+  const S = require('../core/schema');
+  assert.deepEqual(S.check(schema), [], 'the shipped schema is valid');
+  const broken = (mutate) => { const c = JSON.parse(JSON.stringify(schema)); mutate(c); return S.check(c).join('\n'); };
+  assert.match(broken((c) => { c.types.method.fields.kind.type = 'colour'; }), /method\.fields\.kind: unknown type colour/);
+  assert.match(broken((c) => { c.types.method.fields.kind.enum = []; }), /kind: enum needs values/);
+  assert.match(broken((c) => { c.types.paper.fields.venue.ref = 'Journal'; }), /venue: ref Journal is not an entity or type label/);
+  assert.match(broken((c) => { c.types.paper.fields.venue.rel = 'HOSTED_BY'; }), /venue: rel HOSTED_BY is not in relation_types/);
+  assert.match(broken((c) => { c.types.use_case.public_props.push('goal'); }), /use_case\.public_props: goal is not in the global public_props whitelist/);
+  assert.match(broken((c) => { c.entity_public_props.push('aliases'); }), /entity_public_props: aliases/);
+  assert.match(broken((c) => { c.types.note.managed = 'files'; }), /types\.note: managed must be one of/);
+  assert.match(broken((c) => { c.types.note.schema_version = 0; }), /types\.note: schema_version/);
+  assert.match(broken((c) => { c.types.case_study.list_columns.push('nope'); }), /case_study: layout names unknown field nope/);
+  assert.match(broken((c) => { c.relations.cites_loosely = 'CITES_LOOSELY'; }), /relations\.cites_loosely: CITES_LOOSELY is not in relation_types/);
+  assert.match(broken((c) => { c.relation_types.USES.to.push('Gadget'); }), /relation_types\.USES: unknown label Gadget/);
+  assert.match(broken((c) => { c.common_fields.visibility.default = 'secret'; }), /visibility: default "secret" is not a valid value/);
+  assert.match(broken((c) => { c.types.method.fields.kind.tier = 'gold'; }), /kind: tier must be/);
+  assert.match(broken((c) => { c.types.method.fields.kind.by = ['Z']; }), /kind: by must list/);
+  const os = require('os');
+  const badFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hub-schema-')), 'schema.json');
+  fs.writeFileSync(badFile, JSON.stringify({ ...schema, version: 'three' }));
+  assert.throws(() => S.load(badFile), /schema\/schema\.json is invalid:[\s\S]*version must be an integer/);
+  assert.deepEqual(Object.keys(schema.types).filter((t) => schema.types[t].collection).sort(), ['case_study', 'method', 'paper', 'use_case']);
+  assert.deepEqual(['note', 'project'].map(S.managedBy), ['markdown', 'markdown']);
+  assert.deepEqual(['method', 'use_case', 'case_study', 'paper'].map(S.managedBy), ['db', 'db', 'db', 'api']);
+  assert.ok(['Topic', 'Concept', 'Domain', 'Person', 'Venue', 'Organisation', 'Dataset'].every((l) => S.entityLabels.includes(l)));
+  assert.ok(['INTRODUCES', 'ADDRESSES', 'INSTANCE_OF', 'VARIANT_OF', 'INVOLVES', 'PUBLISHED_IN', 'BROADER', 'CITES', 'AUTHORED_BY'].every((r) => S.safeRel(r)));
+  assert.deepEqual(S.orphanLabels, ['Person', 'Concept'], 'seeded Domains and other vocabulary are never deleted as orphans');
+  assert.ok(S.fieldsOf('case_study').title && S.fieldsOf('case_study').case_type && !S.fieldsOf('note').title, 'collections get the common fields');
+
+  /* ------------------------------------------------------------ schema v3: validator */
+  const v0 = S.validate('use_case', { summary: 'no title' });
+  assert.deepEqual(v0.errors, ['title is required']);
+  const v1 = S.validate('case_study', {
+    title: 'Pilot', case_type: 'pilot', geography: 'EU', organisations: ['ECB'], sector: 'payments', sources: [{ url: 'https://x.example/r', note: 'report' }],
+    period: { from: '2023-01', to: 'later' }, outcomes: [{ measure: 'uptake', expected: 'yes' }], sensitivity: 'secret', lessons: 'one', mood: 'good', provenance: { x: 1 },
+  });
+  assert.deepEqual(v1.errors, []);
+  assert.deepEqual(v1.unknown, ['mood']);
+  for (const w of ['period: to: expected a date (YYYY, YYYY-MM or YYYY-MM-DD)', 'outcomes: expected: expected true or false', 'sensitivity: expected one of public, internal, confidential', 'lessons: expected a list', 'tldr is empty (Core field)', 'not in the case_study schema (kept as is): mood']) {
+    assert.ok(v1.warnings.includes(w), `warns: ${w} (got ${v1.warnings.join(' | ')})`);
+  }
+  assert.ok(!v1.warnings.some((w) => /provenance|record_status|visibility|created_at/.test(w)), 'hub-set fields and fields with defaults are not reported');
+  const v2 = S.validate('paper', { title: 'P', relevance: 7, rigor: 3, citation_count: -1, url: 'ftp://x', key_findings: [{ text: 't', page: 3 }] });
+  for (const w of ['relevance: must be at most 5', 'citation_count: must be at least 0', 'url: expected an http(s) link', 'key_findings: unknown part "page" (expected text, location)']) assert.ok(v2.warnings.includes(w), w);
+  assert.ok(!v2.warnings.some((w) => w.startsWith('rigor')));
+  assert.deepEqual(S.validate('note', { title: 'n', body: 'b', annotates: ['x'], concepts: ['c'], note_kind: 'reading' }), { errors: [], warnings: [], unknown: [] }, 'Markdown types: base fields, relations and their props are known');
+
+  /* ------------------------------------------------------------ schema v3: generic writer */
+  const uc = types.get('use_case').parse({ title: 'Offline payments', goal: 'Pay without a network', status: 'idea', actors: [{ role: 'payer' }], mood: 'good', source: 'evil', 'bad key': 1, collection: 'paper' });
+  assert.equal(uc.key, 'usecase:offline-payments'); assert.equal(uc.label, 'UseCase');
+  assert.equal(uc.props.goal, 'Pay without a network'); assert.deepEqual(uc.props.actors, ['{"role":"payer"}'], 'objects are stored as JSON text');
+  assert.equal(uc.props.mood, 'good', 'unknown fields are preserved');
+  assert.ok(!('source' in uc.props) && !('bad key' in uc.props) && !('collection' in uc.props), 'reserved and unsafe names are never written from input');
+  assert.ok(uc.warnings.some((w) => /ignored \(reserved or not a valid field name\): source, bad key/.test(w)));
+  assert.equal(types.get('case_study').parse({ title: 'Lisbon pilot' }).key, 'case:lisbon-pilot');
+  assert.throws(() => types.get('case_study').parse({ title: '   ' }), (e) => e.status === 400);
+  const legacyMethod = types.get('method').parse({ title: 'Snowballing', level: 'technique', domain: 'research' });
+  assert.deepEqual([legacyMethod.props.level, legacyMethod.props.domain], ['technique', 'research'], 'old method data is stored unchanged');
+  assert.ok(legacyMethod.warnings.includes('level: expected one of foundational, intermediate, advanced'));
+  calls.length = 0;
+  const ucOut = await artifacts.add('use_case', { title: 'Offline payments', status: 'nonsense' });
+  assert.ok(ucOut.warnings.includes('status: expected one of idea, candidate, validated, in_use, retired'), 'validator warnings reach the API response');
+  assert.ok(!calls.some(([q]) => q.includes('Personal')), "a use case's own status field never becomes your personal status");
+  const personal = require('../features/personal');
+  assert.equal(personal.statusFromInput({ status: 'idea' }, 'use_case'), null);
+  assert.equal(personal.statusFromInput({ tags: ['status:reading'] }, 'use_case'), 'reading', 'the tag form still works');
+  assert.equal(personal.statusFromInput({ status: 'reading' }, 'method'), 'reading');
+  const [ucWrite] = calls.filter(([q]) => q.includes('n += $sys'));
+  assert.deepEqual(ucWrite[1].sys, { managed: 'db', schema_version: 1, collection: 'use_case' });
+  assert.deepEqual(ucWrite[1].onCreate, { record_status: 'auto' }); assert.ok(ucWrite[0].includes('ON CREATE SET n.created_at = datetime(), n += $onCreate'), 'record_status is only set on create');
+  assert.deepEqual(artifacts.systemProps('Note'), { props: { managed: 'markdown', schema_version: 1 }, onCreate: {} });
+  calls.length = 0;
+  runImpl = async () => [{ key: 'usecase:x' }];
+  await artifacts.remove('usecase:x');
+  const cleanup = calls.map(([q]) => q).filter((q) => q.includes('WHERE NOT (x)--() DELETE x'));
+  assert.deepEqual(cleanup.map((q) => q.match(/MATCH \(x:(\w+)\)/)[1]), ['Person', 'Concept']);
+  runImpl = async () => [];
+
+  /* ------------------------------------------------------------ schema v3: prune never touches database-managed items */
+  txLog.length = 0;
+  txImpl = async (q, p) => { txLog.push([q, p]); return null; };
+  await notes.sync([{ path: 'notes/a.md', meta: {}, body: 'a' }]);
+  const [pruneQ] = txLog.filter(([q]) => q.includes('DETACH DELETE n RETURN key'));
+  assert.ok(pruneQ[0].includes('any(l IN labels(n) WHERE l IN $labels)')); assert.deepEqual(pruneQ[1].labels, ['Note', 'Project']);
+  let dryQ;
+  runImpl = async (q, p) => { if (q.includes('NOT n.key IN')) dryQ = [q, p]; return []; };
+  await notes.sync([{ path: 'notes/a.md', meta: {} }], { dryRun: true });
+  assert.deepEqual(dryQ[1].labels, ['Note', 'Project']);
+  runImpl = async () => []; txImpl = null;
+
+  /* ------------------------------------------------------------ schema v3: public preview per type, vocabulary */
+  let vocabParams;
+  runImpl = async (q, p) => {
+    if (q.includes('RETURN a.key AS key')) return [{ key: 'usecase:u', labels: ['Artifact', 'UseCase'], props: { key: 'usecase:u', title: 'U', summary: 's', tldr: 't', goal: 'private goal', domain: 'payments', body: 'b' } }];
+    if (q.includes('DISTINCT b.key')) { vocabParams = p; return [{ key: 'domain:payments', labels: ['Domain'], props: { key: 'domain:payments', name: 'payments', aliases: ['x'], by: 'owner', title: 'odd' } }]; }
+    return [];
+  };
+  pubExport.invalidate();
+  const pubV3 = JSON.parse((await pubExport.read()).text);
+  assert.deepEqual(Object.keys(pubV3.nodes.find((n) => n.key === 'usecase:u').props).sort(), ['key', 'summary', 'title'], 'a type list narrows the global whitelist');
+  assert.deepEqual(Object.keys(pubV3.nodes.find((n) => n.key === 'domain:payments').props).sort(), ['key', 'name'], 'vocabulary nodes export key and name only');
+  assert.ok(vocabParams.vocab.includes('Domain') && !vocabParams.vocab.includes('Organisation'), 'organisations stay out of the public preview');
+  assert.deepEqual([...S.publicProps(['Organisation'])], []); assert.deepEqual([...S.publicProps(['Personal'])], []);
+  runImpl = async () => []; pubExport.invalidate();
+
+  /* ------------------------------------------------------------ schema v3: backup covers vocabulary */
+  txImpl = async (q, p) => (q.includes('RETURN count(x)') ? { records: [{ get: () => ({ toNumber: () => p.rows.length }) }] } : { records: [] });
+  const rv = await backup.restore({ ...F, nodes: [{ labels: ['Domain'], props: { key: 'domain:payments', name: 'payments' } }, { labels: ['Artifact', 'CaseStudy'], props: { key: 'case:x', title: 'X' } }], rels: [{ from: 'case:x', to: 'org:ecb', type: 'INVOLVES' }] });
+  assert.equal(rv.nodes, 2); assert.equal(rv.rels_restored, 1);
+  await assert.rejects(() => backup.restore({ ...F, nodes: [{ labels: ['HubSetting'], props: { key: 'x' } }] }), (e) => e.status === 400);
+  txImpl = null;
+
+  /* ------------------------------------------------------------ schema v3: migration 005 */
+  const m005 = require('../migrations/005_collections');
+  const mlog = [];
+  let ftRow = { labelsOrTypes: ['Paper', 'Method', 'Note', 'Project'], properties: ['title', 'abstract', 'summary', 'authors', 'venue', 'body'] };
+  const fakeMigDb = { run: async (q, p) => { mlog.push([q, p]); return q.startsWith('SHOW FULLTEXT') ? (ftRow ? [ftRow] : []) : []; } };
+  await m005.up(fakeMigDb);
+  const mq = mlog.map(([q]) => q).join('\n');
+  for (const l of ['topic', 'domain', 'venue', 'organisation', 'dataset']) assert.ok(mq.includes(`CREATE CONSTRAINT ${l}_key IF NOT EXISTS`), l);
+  assert.ok(mq.includes('DROP INDEX artifact_text') && /FOR \(n:Paper\|Method\|UseCase\|CaseStudy\|Note\|Project\) ON EACH \[n\.title, n\.tldr/.test(mq), 'full-text index rebuilt over every type');
+  assert.ok(mq.includes("MATCH (n:Method {source:'markdown'}) SET n.source = 'hub', n.imported_from = 'markdown'"), 'Markdown methods become database-managed');
+  assert.ok(!mq.includes("MATCH (n:Note {source:'markdown'}) SET"), 'notes stay Markdown-managed');
+  assert.ok(mq.indexOf("(n:Method)-[r]->()") < mq.indexOf("MATCH (n:Method {source:'markdown'}) SET"), 'edges are converted before the nodes, so a re-run still finds them');
+  const methodStamp = mlog.find(([q, p]) => q.startsWith('MATCH (n:Method) SET n.managed') && p.name === 'method');
+  assert.deepEqual([methodStamp[1].managed, methodStamp[1].version], ['db', 1]); assert.ok(methodStamp[0].includes('n.collection = $name'));
+  const noteStamp = mlog.find(([q]) => q.startsWith('MATCH (n:Note) SET n.managed'));
+  assert.ok(!noteStamp[0].includes('collection'), 'notes are not a collection');
+  const seedRows = mlog.find(([q]) => q.includes('MERGE (d:Domain'))[1].rows;
+  assert.equal(seedRows.length, 10); assert.deepEqual(seedRows[0], { key: 'domain:digital-currency', name: 'digital currency', aliases: ['CBDC', 'central bank digital currency'] });
+  assert.ok(mlog.find(([q]) => q.includes('MERGE (d:Domain'))[0].includes('ON CREATE SET'), 'owner edits to seeded domains survive a re-run');
+  mlog.length = 0; ftRow = { labelsOrTypes: S.typeLabels, properties: ['title', 'tldr', 'abstract', 'summary', 'authors', 'venue', 'body'] };
+  await m005.up(fakeMigDb);
+  assert.ok(!mlog.some(([q]) => /DROP INDEX|CREATE FULLTEXT/.test(q)), 'an up-to-date index is left alone');
+  mlog.length = 0; ftRow = null;
+  await m005.up(fakeMigDb);
+  assert.ok(mlog.some(([q]) => q.startsWith('CREATE FULLTEXT INDEX artifact_text')) && !mlog.some(([q]) => q.includes('DROP INDEX')), 'a missing index is created');
 
   /* ------------------------------------------------------------ search query building */
   assert.equal(q.luceneQuery('Blind sig+nature'), 'blind* AND sig* AND nature*');

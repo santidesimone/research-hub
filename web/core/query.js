@@ -60,8 +60,8 @@ async function overview() {
   return {
     labels, relationship_types: rels, properties_by_label: props, patterns,
     notes: [
-      'Every paper/method/note/project node has labels :Artifact and its type (:Paper, :Method, :Note, :Project). Person and Concept are separate labels.',
-      "Keys: papers 'doi:<lowercase doi>' or 'paper:<hash>'; others '<type>:<slug>'; people 'person:<slug>'; concepts 'concept:<slug>'.",
+      'Every item has label :Artifact and its type (:Paper, :Method, :UseCase, :CaseStudy, :Note, :Project). Collection items carry collection, managed, schema_version and record_status. Vocabulary nodes are separate labels: Person, Concept, Topic, Domain, Venue, Organisation, Dataset.',
+      "Keys: papers 'doi:<lowercase doi>' or 'paper:<hash>'; methods 'method:<slug>', use cases 'usecase:<slug>', case studies 'case:<slug>', notes 'note:<slug>', projects 'project:<slug>'; vocabulary '<prefix>:<slug>' (person, concept, topic, domain, venue, org, dataset). Fields per type: schema/schema.json.",
       "Your personal layer (status such as to-read/reading/read/canonical/critique-target) is NOT on the paper: it is (:Personal {key:'personal:<artifact key>', status})-[:FOR]->(:Artifact).",
       'Papers have: title, year, doi, venue, url, abstract, authors[], author_lasts[], item_type, visibility, file_url (link to the PDF, usually Google Drive), drive_file_id (set only when the hub uploaded the file), openalex_id, cited_by_count. Relationships: AUTHORED_BY, ABOUT, CITES, ANNOTATES, USES, EXTENDS, SUPPORTS, CONTRADICTS, CRITIQUES, INSPIRED.',
       'Queries are read-only, return at most 500 rows, and must be a single statement without procedure calls.',

@@ -152,7 +152,7 @@
         "required": [
           "title"
         ],
-        "description": "Fields of a note, method, project or any type added to schema/schema.json. Relation fields take artifact keys (e.g. \"doi:10.1/x\", \"method:tdd\").",
+        "description": "Fields of any type in schema/schema.json other than papers (method, use_case, case_study, note, project). Collections (method, use_case, case_study) also accept their own schema fields, e.g. kind, purpose, procedure (method), goal, scenario, status (use_case), case_type, sources, outcomes (case_study): see GET /api/schema and schema/schema.json. Relation fields take artifact keys (e.g. \"doi:10.1/x\", \"method:tdd\").",
         "properties": {
           "title": {
             "type": "string"
@@ -166,9 +166,6 @@
           "body": {
             "type": "string",
             "description": "Markdown"
-          },
-          "status": {
-            "type": "string"
           },
           "visibility": {
             "type": "string",
@@ -226,6 +223,54 @@
             }
           },
           "concepts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "builds_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "replicates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "introduces": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "instance_of": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "variant_of": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "alternative_to": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requires": {
             "type": "array",
             "items": {
               "type": "string"
@@ -429,7 +474,7 @@
     "/api/artifacts/{type}": {
       "post": {
         "operationId": "addArtifact",
-        "summary": "Add an artifact of any type in schema.json (paper, method, note, project, ...)",
+        "summary": "Add an artifact of any type in schema.json (method, use_case, case_study, note, project, ...)",
         "security": [
           {
             "bearerAuth": []
@@ -465,10 +510,10 @@
         },
         "responses": {
           "201": {
-            "description": "{key, created, warnings[]}; warnings list relation targets that were not found"
+            "description": "{key, created, warnings[]}; warnings list schema problems (empty Core fields, invalid enum values, unknown fields kept) and relation targets that were not found"
           },
           "400": {
-            "description": "Invalid input"
+            "description": "Invalid input: a required field is missing, or visibility is not public/private"
           },
           "404": {
             "description": "Unknown type"
@@ -476,7 +521,8 @@
           "409": {
             "description": "Key already exists"
           }
-        }
+        },
+        "description": "Validated against the type's fields in schema/schema.json: a missing required field (title) is a 400; empty Core fields, enum, number, date, list and object problems are returned as warnings and the value is stored as sent; fields the schema does not know are kept (except reserved hub properties). Keys: method:<slug>, usecase:<slug>, case:<slug>, note:<slug>, project:<slug>. Objects and lists of objects are stored as JSON text."
       }
     },
     "/api/artifacts": {

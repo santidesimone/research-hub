@@ -1,14 +1,25 @@
 // Generic artifact persistence: any type described in schema/schema.json is written, listed and deleted here.
 // A type module turns request input into {key, label, props, links}; this file turns that into Cypher.
 const { writeTx, run } = require('./db');
-const { schema, safeLabel, safeRel, entityLabels } = require('./schema');
+const { schema, safeLabel, safeRel, orphanLabels } = require('./schema');
 const { HttpError } = require('./errors');
 const types = require('./types');
 const hooks = require('./hooks');
 
-// art = { key, label, props: {..}, links: [ {rel, merge:{label,key,props}} | {rel, match:key} ] }
+// The hub's own bookkeeping, from the type's schema entry: how it is managed, its schema version, its collection.
+function systemProps(label) {
+  const [name, def] = Object.entries(schema.types).find(([, t]) => t.label === label) || [];
+  if (!def) return { props: {}, onCreate: {} };
+  return {
+    props: { managed: def.managed, schema_version: def.schema_version, ...(def.collection ? { collection: name } : {}) },
+    onCreate: def.collection ? { record_status: 'auto' } : {}, // never reset an owner's "reviewed"
+  };
+}
+
+// art = { key, label, props: {..}, links: [ {rel, merge:{label,key,props}} | {rel, match:key} ], warnings?: [] }
 async function upsertArtifact(tx, art, { overwrite = false } = {}) {
   const label = safeLabel(art.label);
+  const sys = systemProps(art.label);
   const found = await tx.run('MATCH (n:Artifact {key:$key}) RETURN labels(n) AS labels', { key: art.key });
   if (found.records.length) {
     const labels = found.records[0].get('labels');
@@ -17,12 +28,12 @@ async function upsertArtifact(tx, art, { overwrite = false } = {}) {
   }
   await tx.run(
     `MERGE (n:Artifact {key:$key})
-     ON CREATE SET n.created_at = datetime()
-     SET n:${label}, n += $props, n.source = 'hub', n.updated_at = datetime()`,
-    { key: art.key, props: art.props }
+     ON CREATE SET n.created_at = datetime(), n += $onCreate
+     SET n:${label}, n += $props, n += $sys, n.source = 'hub', n.updated_at = datetime()`,
+    { key: art.key, props: art.props, sys: sys.props, onCreate: sys.onCreate }
   );
   await tx.run("MATCH (n:Artifact {key:$key})-[r]->() WHERE r.source = 'hub' DELETE r", { key: art.key });
-  const warnings = [];
+  const warnings = [...(art.warnings || [])];
   for (const link of art.links || []) {
     const rel = safeRel(link.rel);
     if (link.merge) {
@@ -60,7 +71,7 @@ async function remove(key) {
   await hooks.emit('beforeRemove', { key });
   await writeTx(async (tx) => {
     await tx.run('MATCH (n:Artifact {key:$key}) DETACH DELETE n', { key });
-    for (const l of entityLabels) await tx.run(`MATCH (x:${safeLabel(l)}) WHERE NOT (x)--() DELETE x`);
+    for (const l of orphanLabels) await tx.run(`MATCH (x:${safeLabel(l)}) WHERE NOT (x)--() DELETE x`);
   });
   await hooks.emit('afterRemove', { key });
   return { deleted: key };
@@ -71,4 +82,4 @@ async function list(typeName) {
   return run(`MATCH (n:${label}) RETURN n.key AS key, properties(n) AS props ORDER BY n.title`);
 }
 
-module.exports = { upsertArtifact, add, remove, list };
+module.exports = { upsertArtifact, add, remove, list, systemProps };

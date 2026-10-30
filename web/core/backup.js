@@ -1,17 +1,18 @@
-// Backup and restore of everything the hub owns in Neo4j: artifacts, people, concepts and your personal layer.
+// Backup and restore of everything the hub owns in Neo4j: artifacts, vocabulary nodes (people, concepts, topics, domains ...)
+// and your personal layer.
 // With files kept as links, Neo4j is the only copy of your library, so this is the safety net (alongside disk snapshots).
 //   export()   -> { format, version, exported_at, nodes: [{labels, props}], rels: [{from, to, type, props}] }
 //   restore()  -> merges a backup into the graph by key. It never deletes anything, so it is safe to run twice.
 const { run, writeTx } = require('./db');
-const { schema, safeLabel } = require('./schema');
+const { schema, safeLabel, entityLabels, relationTypes } = require('./schema');
 const { HttpError } = require('./errors');
 
 const FORMAT = 'research-hub-backup';
 const VERSION = 1;
 const BATCH = 500;
-const BASE_LABELS = ['Artifact', 'Person', 'Concept', 'Personal'];
+const BASE_LABELS = ['Artifact', ...entityLabels, 'Personal']; // a node is merged on the first of these it has
 const ALLOWED_LABELS = new Set([...BASE_LABELS, ...Object.values(schema.types).map((t) => t.label)]);
-const ALLOWED_RELS = new Set([...Object.values(schema.relations), 'AUTHORED_BY', 'CITES', 'FOR']);
+const ALLOWED_RELS = new Set([...relationTypes, 'FOR']);
 const SAFE = /^[A-Za-z][A-Za-z0-9_]*$/;
 
 const ANY = BASE_LABELS.join('|');
