@@ -195,6 +195,35 @@ curl -X POST http://localhost:3000/api/artifacts/case_study -H "Authorization: B
 
 `search_papers` (MCP) and the API use a Neo4j full-text index (`artifact_text`, created by migration `004`) over title, TL;DR, abstract, summary, authors, venue and note text of every type (rebuilt by migration `005`), ranked, with topic matches added. If the index is missing it falls back to a plain scan.
 
+## Collections API (`/api/items`)
+
+Papers, methods, use cases and case studies, driven by the fields in `schema/schema.json`. Owner only; keys are URL-encoded (`encodeURIComponent`), because DOI keys contain `/`.
+
+```bash
+H="Authorization: Bearer $HUB_API_TOKEN"
+curl -H "$H" "http://127.0.0.1:3000/api/items?collection=method&kind=technique,tool&domain=payments&q=sampling&sort=title&limit=20"
+curl -H "$H" -H "Content-Type: application/json" -X POST http://127.0.0.1:3000/api/items \
+  -d '{"collection":"use_case","fields":{"title":"Offline payments","status":"idea","domain":["payments"],"actors":[{"role":"payer"}]}}'
+curl -H "$H" "http://127.0.0.1:3000/api/items/usecase%3Aoffline-payments"          # fields, provenance, links in and out
+curl -H "$H" -H "Content-Type: application/json" -X PATCH http://127.0.0.1:3000/api/items/usecase%3Aoffline-payments -d '{"fields":{"goal":"Pay with no network"}}'
+curl -H "$H" -H "Content-Type: application/json" -X PUT http://127.0.0.1:3000/api/items/method%3Asnowballing/links \
+  -d '{"rel":"ADDRESSES","target":"usecase:offline-payments","evidence":"section 2","location":"p. 3","confidence":"medium"}'
+```
+
+- **List:**
+  - Filters are the collection's `filters` in the schema; comma means OR.
+  - Link filters take vocabulary names or keys.
+  - `q` is full-text, and `sort` is `title`, `created_at`, `updated_at` or a scalar list column (prefix `-` to reverse).
+  - Pages hold up to 100 items; follow `next_cursor`.
+- **Storage:** scalars and lists are node properties; objects go in `<field>_json`. Link fields are edges: names go through the vocabulary matcher (below), and other items are referenced by key. Each field's provenance is stored in `provenance_json`.
+- **Owner edits win:**
+  - POST and PATCH mark each field `by: owner, status: reviewed`.
+  - Other writers (Claude's analysis, source lookups) only fill empty fields of their kind.
+  - They never touch an owner or reviewed value; `force` replaces only values that writer wrote itself.
+  - Clearing a field with PATCH keeps it the owner's, so Claude does not refill it.
+- **Papers:** POST through `/api/items` uses the paper writer (DOI lookup, authors, `file_url`). PATCH cannot change a paper's `doi`, `authors` or `venue`. `/api/papers`, `/api/artifacts`, import and export are unchanged.
+- Your reading status is not an item field; set it with `/api/personal`.
+
 ## Vocabulary and name matching
 
 People, concepts, topics, domains, venues, organisations and datasets are shared nodes, not strings. Callers pass names; `web/core/vocab.js` `resolve(kind, name, { create, aliases, by, model })` finds the node that name means or creates one (flagged `by: claude` by default) and returns `{ key, name, created, match }`. A match is one of:

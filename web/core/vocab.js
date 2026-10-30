@@ -31,8 +31,10 @@ function singular(w) {
 
 const ACRONYM = /^[A-Z]{2,6}s?$/;
 
-// -> { norm, toks, acr, letters }: normalised tokens, which tokens were written as acronyms, and the letter signature
-// (an acronym gives each of its letters, a word its first letter; null for a single word) used to find acronym matches.
+// -> { norm, toks, acr, forms, letters, sigs }: normalised tokens and which were written in capitals. A capitalised word
+// may be an acronym ("ZKP") or just a word in capitals ("ZERO KNOWLEDGE proofs"), so a name has up to two forms: with
+// those tokens as acronyms (one unit per letter) and as plain words. Each form has a letter signature (an acronym gives
+// each of its letters, a word its first letter; null for a single unit) used to find acronym matches.
 function analyse(mode, raw) {
   let s = String(raw == null ? '' : raw).trim();
   if (mode === 'person') { const parts = s.split(','); if (parts.length === 2 && parts[1].trim()) s = `${parts[1]} ${parts[0]}`; } // "Lovelace, Ada"
@@ -44,17 +46,23 @@ function analyse(mode, raw) {
     const low = acr[i] ? t.replace(/s$/, '').toLowerCase() : t.toLowerCase(); // "ZKPs" -> zkp
     return mode === 'term' ? singular(low) : low;
   });
-  const units = toks.flatMap((t, i) => (acr[i] ? [...t].map((c) => ({ i: c })) : [{ w: t }]));
-  return { norm: toks.join(' '), toks, acr, units, letters: units.length > 1 ? units.map((u) => u.i || u.w[0]).join('') : null };
+  const signature = (units) => (units.length > 1 ? units.map((u) => u.i || u.w[0]).join('') : null);
+  const forms = [toks.flatMap((t, i) => (acr[i] ? [...t].map((c) => ({ i: c })) : [{ w: t }]))];
+  if (acr.some(Boolean)) forms.push(toks.map((t) => ({ w: t })));
+  const sigs = forms.map(signature);
+  return { norm: toks.join(' '), toks, acr, forms, letters: sigs[0], letters_plain: sigs[1] || null, sigs: [...new Set(sigs.filter(Boolean))] };
 }
 
 // Unit by unit: word = word, an acronym letter = a word starting with it, or = the same acronym letter. A two-letter
 // acronym alone is too ambiguous ("AI" vs "art investing"), so it needs a shared ordinary word ("ZK proofs").
 function acronymMatch(a, b) {
-  if (a.units.length !== b.units.length) return false;
+  return a.forms.some((ua) => b.forms.some((ub) => unitsMatch(ua, ub)));
+}
+function unitsMatch(ua, ub) {
+  if (ua.length !== ub.length) return false;
   let anchors = 0, letters = 0;
-  for (let k = 0; k < a.units.length; k++) {
-    const x = a.units[k], y = b.units[k];
+  for (let k = 0; k < ua.length; k++) {
+    const x = ua[k], y = ub[k];
     if (x.w && y.w) { if (x.w !== y.w) return false; anchors++; continue; }
     if ((x.i || x.w[0]) !== (y.i || y.w[0])) return false;
     letters++;
@@ -115,14 +123,15 @@ function derived(label, name, aliases = []) {
   const a = analyse(mode, name);
   const al = aliases.map((x) => analyse(mode, x));
   const aliasNorms = [...new Set(al.map((x) => x.norm).filter(Boolean))];
-  return { norm: a.norm, letters: a.letters, aliases_norm: aliasNorms, aliases_letters: [...new Set(al.map((x) => x.letters).filter(Boolean))], aliases_text: aliasNorms.join(' | ') };
+  return { norm: a.norm, letters: a.letters, letters_plain: a.letters_plain, aliases_norm: aliasNorms, aliases_letters: [...new Set(al.flatMap((x) => x.sigs))], aliases_text: aliasNorms.join(' | ') };
 }
-const nameProps = (label, name) => { const d = derived(label, name); return { norm: d.norm, letters: d.letters }; };
+const nameProps = (label, name) => { const d = derived(label, name); return { norm: d.norm, letters: d.letters, letters_plain: d.letters_plain }; };
 
 const FIELDS = 'n.key AS key, n.name AS name, coalesce(n.aliases, []) AS aliases';
 // Indexed candidates: same normalised form or alias, or the same letter signature (acronym spellings). Name and alias
 // hits sort first, so many nodes sharing a signature can never push the exact one past the limit.
-const EXACT = `n.norm = $norm OR $norm IN coalesce(n.aliases_norm, []) OR ($letters IS NOT NULL AND (n.letters = $letters OR $letters IN coalesce(n.aliases_letters, [])))`;
+const EXACT = `n.norm = $norm OR $norm IN coalesce(n.aliases_norm, [])
+  OR (size($sigs) > 0 AND (n.letters IN $sigs OR n.letters_plain IN $sigs OR any(s IN $sigs WHERE s IN coalesce(n.aliases_letters, []))))`;
 const FIRST_EXACT = `ORDER BY CASE WHEN n.norm = $norm OR $norm IN coalesce(n.aliases_norm, []) THEN 0 ELSE 1 END, n.key`;
 
 function lucene(q) {
@@ -131,7 +140,7 @@ function lucene(q) {
 
 async function candidates(label, q) {
   const L = safeLabel(label);
-  const rows = await db.run(`MATCH (n:${L}) WHERE ${EXACT} RETURN ${FIELDS} ${FIRST_EXACT} LIMIT 50`, { norm: q.norm, letters: q.letters });
+  const rows = await db.run(`MATCH (n:${L}) WHERE ${EXACT} RETURN ${FIELDS} ${FIRST_EXACT} LIMIT 50`, { norm: q.norm, sigs: q.sigs });
   const text = lucene(q);
   if (!text) return { exact: rows, fuzzy: [] };
   try {
@@ -193,7 +202,7 @@ async function resolve(kind, name, { create = true, aliases = [], by = 'claude',
     const words = q.toks.filter((t, i) => !q.acr[i] && t.length >= 3);
     const res = await tx.run(
       `MATCH (n:${L}) WHERE n.key = $key OR ${EXACT} OR any(t IN $words WHERE n.norm CONTAINS t OR coalesce(n.aliases_text, '') CONTAINS t)
-       RETURN ${FIELDS} ${FIRST_EXACT} LIMIT 200`, { key, norm: q.norm, letters: q.letters, words });
+       RETURN ${FIELDS} ${FIRST_EXACT} LIMIT 200`, { key, norm: q.norm, sigs: q.sigs, words });
     const rows = rowsOf(res);
     const again = pick(q, mode, rows) || (rows.find((r) => r.key === key) && { ...rows.find((r) => r.key === key), match: 'exact' });
     if (again) {

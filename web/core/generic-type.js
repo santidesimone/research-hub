@@ -34,12 +34,19 @@ module.exports = function makeGenericType(name, def) {
       for (const p of def.props) props[p] = scalar(input[p]);
       for (const [f, spec] of Object.entries(fields)) {
         if (f in props || RESERVED.has(f) || (spec.by.length === 1 && spec.by[0] === 'Sys')) continue;
-        props[f] = scalar(input[f]);
+        if (spec.type === 'object') { props[`${f}_json`] = input[f] == null ? null : JSON.stringify(input[f]); props[f] = null; } // same storage as /api/items
+        else props[f] = scalar(input[f]);
       }
-      const kept = unknown.filter((k) => UNKNOWN_NAME.test(k) && !RESERVED.has(k));
+      // your reading status belongs to the personal layer, unless the type has a status field of its own
+      const reserved = (k) => RESERVED.has(k) || (k === 'status' && !fields.status) || (k.endsWith('_json') && fields[k.slice(0, -5)]);
+      const kept = unknown.filter((k) => UNKNOWN_NAME.test(k) && !reserved(k));
+      // the validator reports every unknown field; say only what actually happened to each
+      for (let i = warnings.length - 1; i >= 0; i--) if (warnings[i].startsWith(`not in the ${name} schema`)) warnings.splice(i, 1);
+      if (kept.length) warnings.push(`not in the ${name} schema (kept as is): ${kept.slice(0, MAX_UNKNOWN).join(', ')}`);
       for (const k of kept.slice(0, MAX_UNKNOWN)) props[k] = scalar(input[k]);
       if (kept.length > MAX_UNKNOWN) warnings.push(`only the first ${MAX_UNKNOWN} unknown fields were kept`);
-      const dropped = unknown.filter((k) => !kept.includes(k));
+      const dropped = unknown.filter((k) => !kept.includes(k) && k !== 'status');
+      if (unknown.includes('status') && !kept.includes('status')) warnings.push('status: saved as your personal status, not on the item');
       if (dropped.length) warnings.push(`ignored (reserved or not a valid field name): ${dropped.join(', ')}`);
       const links = [];
       for (const [field, rel] of Object.entries(schema.relations)) {

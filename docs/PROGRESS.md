@@ -7,7 +7,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | 0 Baseline against real services | done (2026-10-30) | See "Task 0" below. |
 | 1 Schema model v3 | done (2026-10-30) | See "Task 1" below. |
 | 2 Vocabulary nodes and matcher | done (2026-10-30) | See "Task 2" below. |
-| 3 Generic items API | not started | |
+| 3 Generic items API | done (2026-10-30) | See "Task 3" below. |
 | 4 Claude analysis, single-call save, audit | not started | |
 | 5 Library UI: Collections, forms, audit | not started | |
 | 6 CLI, API docs, CI, docs | not started | |
@@ -111,3 +111,54 @@ Update at the end of every task. For each: what changed, what was tested for rea
 - Existing duplicate vocabulary nodes (two legacy keys with one meaning) are not merged. `resolve()` picks the first by key.
 - `vocab_text` covers the entity labels known today. Adding an entity needs a migration that rebuilds it.
 - Not run against your own database. Migration 006 runs there on the next app start; it is additive (indexes, lock nodes, derived fields), but take a `hub backup` first.
+
+## Task 3. Generic items API with provenance
+
+**Changed**
+- `web/core/items.js` (new): storage per field type (properties, `<field>_json`, edges for link fields via `vocab.resolve`, and `provenance_json`), `get`, `list`, `create`, `update`, `remove`, `link`, `unlink`, and `write(key, fields, {by, model, confidence, force})` with the merge rules. Task 4 calls `write` with `by: 'claude'`.
+  - **Owner:** writes always apply, marked `by: owner, status: reviewed`.
+  - **Claude and source:** fill only empty fields their kind may fill. They never touch owner or reviewed values (a value without provenance counts as the owner's). `force` replaces only that writer's own values.
+  - The decision is re-checked inside the write transaction, and vocabulary is resolved only for fields that will be written.
+- `web/features/items/index.js` (new): `GET/POST /api/items`, `GET/PATCH/DELETE /api/items/:key` and `PUT/DELETE /api/items/:key/links`, all owner only. DOI keys with `/` work URL-encoded.
+- Listing: enum and link filters from the schema's `filters` (link filters by vocabulary name or key, never creating nodes), full-text `q` with a title-scan fallback, a whitelisted `sort`, keyset cursor pagination (limit at most 100), and `total`.
+- Papers: create goes through the paper writer (DOI lookup, Person nodes, file link). `item_type` is converted at the boundary (`journal_article` and `journalArticle`), so stored data and the CSL export are unchanged. PATCH refuses `doi`, `authors` and `venue`.
+- Text written by older versions into link fields (a method's `domain: research`, a paper's `venue`) reads as `{key: null, name}`. An owner PATCH replaces it with real links.
+- `web/core/generic-type.js` (legacy `/api/artifacts`): objects in `<field>_json`. A `status` is no longer kept as an unknown field (the personal layer takes it, and the warning now says so). One accurate warning per unknown field.
+- `web/core/schema.js`: link fields must be unambiguous and allowed by `relation_types`. `validate(..., {partial})` checks a PATCH.
+- Migrations:
+  - `007_items_json_fields`: copies Task 1-style object values into `<field>_json`, then removes the old property.
+  - `008_vocab_letters_plain`: fixes the Task 2 race below.
+- `web/openapi.json` (the items paths and schemas), README ("Collections API"), `schema/CHANGELOG.md`. No env change.
+
+**Found and fixed: a Task 2 bug.** The new integration tests hit two failures.
+- **Flaky test (test bug):** "parallel calls created 0 nodes" in about 1 run of 26. The test's random tag sometimes ended in "s" and was singularised away. Fixed: tags use the letters a–p only.
+- **Real duplicate race (code bug):** "ZK proofs" and "ZERO KNOWLEDGE PROOF *tag*" could create two Topics. Next to lowercase text, "ZERO" and "PROOF" were taken as acronyms, so the stored letter signature was wrong and "ZK proofs" could not match it. A standalone reproducer showed 13 of 40 rounds with duplicates. Fixed by trying capitalised words both as acronyms and as words, and storing both signatures (migration 008). Afterwards, 0 of 80 rounds and 0 of 30 integration runs duplicated.
+
+**Tested for real**
+- Offline: about 120 new assertions over an in-memory graph behind the fake db, plus a real Express app on an ephemeral port driven with `fetch`:
+  - CRUD for all four collections; papers with `item_type` mapping, author order and locked fields.
+  - Every merge rule: owner, reviewed, no provenance, `force` own vs other, field `by`, empty values, unknown fields, the stale decision under the transaction.
+  - Links: endpoint validation in both directions, evidence and confidence limits, `{kind, name}` targets.
+  - List query building: filters, codec, `q` and fallback, sort expressions, cursor in both directions, exact last page, limit cap.
+  - All routes owner-only; encoded DOI keys; migrations 007 and 008.
+  - Mutation checks: items 53/53; vocabulary 44/47 (one equivalent survivor, two stale entries for code that no longer exists, checked by hand); the new warning filters killed.
+- Integration on a throwaway Neo4j 5:
+  - Create, read and delete for all four collections; names linked to the seeded Domains (including the alias "CBDC").
+  - Owner value kept against a Claude write; Claude fills empty fields with model and confidence; `force` on its own value; a Claude-created Topic flagged `by: claude`.
+  - Links with endpoint checks; enum, link and `item_type` filters.
+  - A full cursor walk returns every item in order with no repeats.
+  - 30 of 30 runs passed after the fixes.
+- Legacy data: created with the previous commit (Task 2 code), including use cases and case studies stored through `/api/artifacts`. After 007 and 008:
+  - Objects read back parsed through `/api/items`.
+  - Old text domains appear as `{key: null}`.
+  - A DOI-keyed paper reads with `book_chapter` and its authors.
+  - An owner PATCH replaced the text domain with the seeded Domain, and the domain filter finds it.
+  - `/api/papers`, `/api/artifacts` and `/api/export` still answer 200.
+  - The integration suite passed on that database.
+
+**Not tested / open**
+- No UI uses `/api/items` yet (Task 5), so there is no browser check in this task.
+- Paper authors and venue cannot be edited through `/api/items` (Task 4 fills them from Crossref and OpenAlex and writes Venue nodes). A paper's `venue` stays text until then.
+- Paper create is two transactions (the paper writer, then the extra fields). A failure in the second leaves the paper without those fields; re-send them with PATCH.
+- Filters match link edges only: older text values (`domain: research`) are not found by a domain filter until edited.
+- Not run against your own database. Migrations 007 and 008 run on the next start; they copy before removing, but take a `hub backup` first.

@@ -2,6 +2,16 @@
 
 Every change to `schema/schema.json`, with the reason. The spec is `docs/SCHEMA_DESIGN.md`. A per-type `schema_version` is raised when that type's fields change. Items below the current version form the audit worklist, so a change is never silently applied to old items.
 
+## v3, items storage (2026-10-30)
+
+Why: the collections API (Task 3) needs one storage convention and per-field provenance.
+
+- Object fields and lists of objects are stored as JSON text in `<field>_json`, not in the field itself. Migration `007` copies values written the earlier way, then removes the old property.
+- Each item stores its per-field provenance map in `provenance_json`.
+- Link-field edges carry `field`, `position` and `source: 'items'`.
+- The loader also checks two things for every link field: it has a `rel`, and no other link field in the same type uses the same relationship and target. Its relationship must also allow that type to that target in `relation_types`. Together these make link fields read back unambiguously.
+- Vocabulary nodes gain `letters_plain`, and aliases store every letter signature. A word written in capitals next to lowercase text ("ZERO KNOWLEDGE PROOF rollup") is tried both as an acronym and as a word. Migration `008` adds the index and recomputes these fields. This fixes a duplicate-node race in Task 2's matcher.
+
 ## v3, name matching (2026-10-30)
 
 Why: Claude passes vocabulary names, and the server must link them to one node per meaning (Task 2).

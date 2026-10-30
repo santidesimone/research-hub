@@ -13,7 +13,7 @@ const fakeTx = { run: async (q, p) => {
   return { records: q.includes('RETURN a.key') ? [{}] : q.includes('RETURN labels(n)') && existing ? [{ get: () => existing }] : q.includes('count(r)') ? [{ get: () => ({ toNumber: () => (p.tkey === 'method:missing' ? 0 : 1) }) }] : [] };
 } };
 const dbPath = require.resolve('../core/db');
-require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: { run: (q, p) => runImpl(q, p), exec: async () => [], writeTx: async (fn) => fn(fakeTx), driver: {} } };
+require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: { run: (q, p) => runImpl(q, p), exec: async () => [], writeTx: async (fn) => fn(fakeTx), driver: {}, plain: (v) => v } };
 
 const types = require('../core/types');
 const artifacts = require('../core/artifacts');
@@ -66,7 +66,7 @@ const seed = require('../../data/seed_papers.json');
 
   // migrations are discoverable and ordered
   const migrate = require('../core/migrate');
-  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', 'personal_001_layer']);
+  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', 'personal_001_layer']);
   // personal layer: separate node, driven by hooks, core untouched
   calls.length = 0;
   require('../features/personal').mount({ get() {}, put() {}, delete() {}, post() {} });
@@ -346,7 +346,12 @@ const seed = require('../../data/seed_papers.json');
   /* ------------------------------------------------------------ schema v3: generic writer */
   const uc = types.get('use_case').parse({ title: 'Offline payments', goal: 'Pay without a network', status: 'idea', actors: [{ role: 'payer' }], mood: 'good', source: 'evil', 'bad key': 1, collection: 'paper' });
   assert.equal(uc.key, 'usecase:offline-payments'); assert.equal(uc.label, 'UseCase');
-  assert.equal(uc.props.goal, 'Pay without a network'); assert.deepEqual(uc.props.actors, ['{"role":"payer"}'], 'objects are stored as JSON text');
+  assert.equal(uc.props.goal, 'Pay without a network'); assert.equal(uc.props.actors_json, '[{"role":"payer"}]', 'objects are stored as JSON text in <field>_json'); assert.equal(uc.props.actors, null);
+  const mStatus = types.get('method').parse({ title: 'M', status: 'reading', procedure_json: 'x' });
+  assert.ok(!('status' in mStatus.props) && !('procedure_json' in mStatus.props), 'a reading status or a storage name is never kept as a field');
+  assert.ok(!mStatus.warnings.some((w) => w.includes('kept as is')), 'and is not reported as kept');
+  assert.ok(mStatus.warnings.includes('status: saved as your personal status, not on the item') && mStatus.warnings.includes('ignored (reserved or not a valid field name): procedure_json'));
+  assert.ok(types.get('method').parse({ title: 'M', mood: 'x', status: 'y' }).warnings.includes('not in the method schema (kept as is): mood'));
   assert.equal(uc.props.mood, 'good', 'unknown fields are preserved');
   assert.ok(!('source' in uc.props) && !('bad key' in uc.props) && !('collection' in uc.props), 'reserved and unsafe names are never written from input');
   assert.ok(uc.warnings.some((w) => /ignored \(reserved or not a valid field name\): source, bad key/.test(w)));
@@ -450,6 +455,11 @@ const seed = require('../../data/seed_papers.json');
   assert.equal(VJ('ZK proofs', 'Zero-knowledge proof'), 'acronym');
   assert.equal(VJ('ZKP', 'zero knowledge proof'), 'acronym');
   assert.equal(VJ('ZKP', 'ZK proofs'), 'acronym', 'two acronym spellings match each other directly');
+  // a word written in capitals next to lowercase text is tried both as an acronym and as a word
+  assert.equal(VJ('ZK proofs rollup', 'ZERO KNOWLEDGE PROOF rollup'), 'acronym');
+  assert.equal(VJ('ZERO KNOWLEDGE PROOFS in practice', 'ZKP in practice'), 'acronym');
+  assert.deepEqual(vocab.analyse('term', 'ZERO KNOWLEDGE PROOF rollup').sigs, ['zerokproofr', 'zkpr']);
+  assert.deepEqual(vocab.derived('Topic', 'ZKP', ['ZK proofs']).aliases_letters, ['zkp', 'zp'], 'every signature of an alias is stored');
   assert.equal(VJ('AI systems', 'artificial intelligence systems'), 'acronym');
   assert.equal(VJ('ZK', 'zero knowledge'), null, 'two letters and no shared word: too ambiguous');
   assert.equal(VJ('ZK proofs', 'ZK theorems'), null, 'shared letters do not excuse different words');
@@ -466,7 +476,7 @@ const seed = require('../../data/seed_papers.json');
   assert.equal(vocab.lucene(vocab.analyse('term', 'ZK cryptographic proofs')), 'cryptographic~1 OR proof', 'acronyms are not searched; long words fuzzy');
   assert.equal(vocab.labelOf('topic'), 'Topic'); assert.throws(() => vocab.labelOf('Paper'), (e) => e.status === 400);
   assert.deepEqual(vocab.derived('Domain', 'Digital currency', ['CBDC', 'cbdc', 'Central bank digital currencies']),
-    { norm: 'digital currency', letters: 'dc', aliases_norm: ['cbdc', 'central bank digital currency'], aliases_letters: ['cbdc'], aliases_text: 'cbdc | central bank digital currency' });
+    { norm: 'digital currency', letters: 'dc', letters_plain: null, aliases_norm: ['cbdc', 'central bank digital currency'], aliases_letters: ['cbdc'], aliases_text: 'cbdc | central bank digital currency' });
 
   /* ------------------------------------------------------------ vocabulary: resolve() against a fake graph */
   const rec = (o) => ({ get: (k) => o[k] });
@@ -480,7 +490,7 @@ const seed = require('../../data/seed_papers.json');
   fakeGraph({ exact: [ZKP] });
   assert.deepEqual(await vocab.resolve('concept', 'zero knowledge proofs'), { key: ZKP.key, name: ZKP.name, created: false, match: 'exact' });
   assert.equal(reads[0][1].norm, 'zero knowledge proof'); assert.equal(vtx.length, 0, 'an exact match writes nothing');
-  assert.equal(reads[0][1].letters, 'zkp'); assert.ok(reads[0][0].includes('n.letters = $letters') && /ORDER BY CASE WHEN n.norm = \$norm OR \$norm IN coalesce\(n.aliases_norm, \[\]\) THEN 0 ELSE 1 END/.test(reads[0][0]), 'acronym candidates by letters; exact hits sort first');
+  assert.deepEqual(reads[0][1].sigs, ['zkp']); assert.ok(reads[0][0].includes('n.letters IN $sigs OR n.letters_plain IN $sigs') && /ORDER BY CASE WHEN n.norm = \$norm OR \$norm IN coalesce\(n.aliases_norm, \[\]\) THEN 0 ELSE 1 END/.test(reads[0][0]), 'acronym candidates by letters; exact hits sort first');
 
   fakeGraph({ fuzzy: [ZKP], locked: [ZKP] });
   const zk = await vocab.resolve('Concept', 'ZK proofs');
@@ -531,12 +541,12 @@ const seed = require('../../data/seed_papers.json');
   calls.length = 0;
   await artifacts.add('note', { title: 'Vocab note', concepts: ['Zero-knowledge-proofs'] });
   const conceptMerge = calls.find(([q]) => q.includes('MERGE (t:Concept'));
-  assert.ok(conceptMerge[0].includes('t += $tderived')); assert.deepEqual(conceptMerge[1].tderived, { norm: 'zero knowledge proof', letters: 'zkp' });
+  assert.ok(conceptMerge[0].includes('t += $tderived')); assert.deepEqual(conceptMerge[1].tderived, { norm: 'zero knowledge proof', letters: 'zkp', letters_plain: null });
   txLog.length = 0;
   txImpl = async (q, p) => { txLog.push([q, p]); return null; };
   await notes.sync([{ path: 'notes/v.md', meta: { concepts: ['Smart contracts'] } }], { prune: false });
   const cRows = txLog.find(([q]) => q.includes('MERGE (c:Concept'));
-  assert.ok(cRows[0].includes('c += r.derived')); assert.deepEqual(cRows[1].rows[0].derived, { norm: 'smart contract', letters: 'sc' });
+  assert.ok(cRows[0].includes('c += r.derived')); assert.deepEqual(cRows[1].rows[0].derived, { norm: 'smart contract', letters: 'sc', letters_plain: null });
   txLog.length = 0;
   txImpl = async (q, p) => { txLog.push([q, p]); return q.includes('RETURN count(x)') ? { records: [{ get: () => ({ toNumber: () => p.rows.length }) }] } : { records: [] }; };
   await backup.restore({ ...F, nodes: [{ labels: ['Concept'], props: { key: 'concept:a', name: 'Smart contracts' } }, { labels: ['Concept'], props: { key: 'concept:b', name: 'B', norm: 'kept' } }] });
@@ -561,9 +571,286 @@ const seed = require('../../data/seed_papers.json');
   assert.ok(m6q.includes('REQUIRE l.label IS UNIQUE')); assert.deepEqual(m6.find(([q]) => q.includes('MERGE (:VocabLock'))[1].labels, S.entityLabels);
   const backfill = m6.filter(([q]) => q.startsWith('UNWIND $rows AS r MATCH')).flatMap(([, p]) => p.rows);
   assert.deepEqual(backfill.find((r) => r.key === 'person:jos-garc-a').props.norm, 'jose garcia');
-  assert.deepEqual(backfill.find((r) => r.key === 'concept:smart-contracts').props, { norm: 'smart contract', letters: 'sc', aliases_norm: ['sc'], aliases_letters: ['sc'], aliases_text: 'sc' });
+  assert.deepEqual(backfill.find((r) => r.key === 'concept:smart-contracts').props, { norm: 'smart contract', letters: 'sc', letters_plain: null, aliases_norm: ['sc'], aliases_letters: ['sc'], aliases_text: 'sc' });
   assert.equal(backfill.find((r) => r.key === 'concept:x').props.norm, 'x', 'a node without a name is matched by its key');
   assert.equal(backfill.find((r) => r.key === 'concept:dash').props.norm, 'concept:dash', 'norm is never left empty');
+
+  /* ------------------------------------------------------------ items: an in-memory graph behind the fake db */
+  const items = require('../core/items');
+  const G = new Map(); // key -> { labels, props, out: [{ rel, to, r }] }
+  const gRow = (k) => {
+    const n = G.get(k); if (!n) return null;
+    const out = n.out.map((e) => { const t = G.get(e.to) || { labels: [], props: {} }; return { rel: e.rel, r: { ...e.r }, key: e.to, name: t.props.name ?? t.props.title, labels: t.labels }; });
+    const inc = [...G.entries()].flatMap(([sk, sn]) => sn.out.filter((e) => e.to === k).map((e) => ({ rel: e.rel, r: { ...e.r }, key: sk, name: sn.props.title, labels: sn.labels })));
+    return { labels: [...n.labels], props: { ...n.props }, out, inc };
+  };
+  const gRecs = (rows) => ({ records: rows.map((o) => ({ get: (k) => o[k] })) });
+  const gTx = async (q, p) => {
+    calls.push([q, p]);
+    if (q.includes('AS inc')) { const r = gRow(p.key); return gRecs(r ? [r] : []); }
+    if (q.startsWith('MATCH (n:Artifact {key:$key}) RETURN labels(n) AS labels')) return gRecs(G.has(p.key) ? [{ labels: G.get(p.key).labels }] : []);
+    if (q.includes('MERGE (n:Artifact {key:$key})')) {
+      const label = q.match(/SET n:(\w+)/)[1];
+      const n = G.get(p.key) || { labels: ['Artifact', label], props: { key: p.key, ...p.onCreate }, out: [] };
+      Object.assign(n.props, p.props, p.sys, { source: 'hub' }); G.set(p.key, n); return gRecs([]);
+    }
+    if (q.includes("WHERE r.source = 'hub' DELETE r")) { const n = G.get(p.key); if (n) n.out = n.out.filter((e) => e.r.source !== 'hub'); return gRecs([]); }
+    const tm = q.match(/MERGE \(t:(\w+) \{key:\$tkey\}\)/);
+    if (tm) { if (!G.has(p.tkey)) G.set(p.tkey, { labels: [tm[1]], props: { key: p.tkey, ...p.tprops }, out: [] }); G.get(p.key).out.push({ rel: q.match(/MERGE \(n\)-\[r:(\w+)\]->\(t\)/)[1], to: p.tkey, r: { source: 'hub' } }); return gRecs([]); }
+    const del = q.match(/^MATCH \(n:Artifact \{key:\$key\}\)-\[r:(\w+)\]->\(t:(\w+)\) WHERE r.field = \$field OR r.field IS NULL DELETE r/);
+    if (del) { const n = G.get(p.key); n.out = n.out.filter((e) => !(e.rel === del[1] && (G.get(e.to) || { labels: [] }).labels.includes(del[2]) && (e.r.field == null || e.r.field === p.field))); return gRecs([]); }
+    const mk = q.match(/MATCH \(t:(\w+) \{key:x.key\}\)\s+MERGE \(n\)-\[r:(\w+)\]->\(t\)/);
+    if (mk) {
+      const n = G.get(p.key); const ok = [];
+      for (const x of p.rows) { if (!G.has(x.key) || !G.get(x.key).labels.includes(mk[1])) continue; n.out = n.out.filter((e) => !(e.rel === mk[2] && e.to === x.key)); n.out.push({ rel: mk[2], to: x.key, r: { field: p.field, position: x.position, source: 'items', by: p.by, at: p.at } }); ok.push({ key: x.key }); }
+      return gRecs(ok);
+    }
+    if (q.startsWith('MATCH (n:Artifact {key:$key}) SET n += $sets')) { const n = G.get(p.key); for (const [k, v] of Object.entries(p.sets)) { if (v == null) delete n.props[k]; else n.props[k] = v; } n.props.provenance_json = p.prov; return gRecs([]); }
+    const lk = q.match(/OPTIONAL MATCH \(n\)-\[old:(\w+)\]->\(t\)/);
+    if (lk) { const n = G.get(p.key); const fresh = !n.out.some((e) => e.rel === lk[1] && e.to === p.tkey); n.out = n.out.filter((e) => !(e.rel === lk[1] && e.to === p.tkey)); n.out.push({ rel: lk[1], to: p.tkey, r: { ...p.props } }); return gRecs([{ fresh }]); }
+    const ul = q.match(/-\[x:(\w+)\]->\(t \{key:\$target\}\) WITH collect/);
+    if (ul) { const n = G.get(p.key); const before = n.out.length; n.out = n.out.filter((e) => !(e.rel === ul[1] && e.to === p.target)); return gRecs([{ n: before - n.out.length }]); }
+    if (q.includes('DETACH DELETE n')) { G.delete(p.key); return gRecs([]); }
+    if (q.startsWith('MATCH (a:Artifact {key:$key}) RETURN a.key')) return gRecs(G.has(p.key) ? [{ 'a.key': p.key }] : []); // personal layer
+    return gRecs([]);
+  };
+  const gRun = async (q, p) => {
+    if (q.includes('AS inc')) { const r = gRow(p.key); return r ? [r] : []; }
+    if (q.startsWith('MATCH (n:Artifact {key:$key}) RETURN n.key AS key')) return G.has(p.key) ? [{ key: p.key }] : [];
+    if (q.startsWith('MATCH (t {key:$k}) RETURN labels(t)')) return G.has(p.k) ? [{ labels: G.get(p.k).labels }] : [];
+    return [];
+  };
+  const resolved = [];
+  const realResolve = vocab.resolve;
+  vocab.resolve = async (kind, name, opts = {}) => {
+    const label = vocab.labelOf(kind);
+    resolved.push([label, name, opts]);
+    const key = schema.entities[label].key_prefix + vocab.analyse(schema.entities[label].match, name).norm.replace(/ /g, '-');
+    if (opts.create === false) return { key: G.has(key) ? key : null, created: false, match: G.has(key) ? 'exact' : null };
+    if (!G.has(key)) G.set(key, { labels: [label], props: { key, name, by: opts.by }, out: [] });
+    return { key, name, created: true, match: 'new' };
+  };
+  runImpl = gRun; txImpl = gTx;
+
+  /* ------------------------------------------------------------ items: create and read, all four collections */
+  const mItem = await items.create({ collection: 'method', fields: { title: 'Snowball sampling', kind: 'technique', procedure: ['seed', 'expand'], domain: ['Research methodology'], strengths: 'cheap', mood: 'kept', status: 'reading' } });
+  assert.deepEqual([mItem.key, mItem.created], ['method:snowball-sampling', true]);
+  assert.ok(mItem.warnings.includes('status: set your reading status with /api/personal'), 'a reading status is never stored on the item');
+  assert.deepEqual(mItem.warnings.filter((w) => /schema \(kept as is\)|status/.test(w)), ['status: set your reading status with /api/personal', 'not in the method schema (kept as is): mood'], 'one accurate message per unknown field');
+  assert.ok(mItem.warnings.includes('strengths: expected a list') && mItem.warnings.includes('not in the method schema (kept as is): mood'));
+  const mNode = G.get('method:snowball-sampling');
+  assert.deepEqual(mNode.props.procedure, ['seed', 'expand']); assert.equal(mNode.props.status, undefined); assert.equal(mNode.props.mood, 'kept');
+  assert.deepEqual([mNode.props.collection, mNode.props.managed, mNode.props.record_status], ['method', 'db', 'auto']);
+  assert.deepEqual(JSON.parse(mNode.props.provenance_json).kind, { by: 'owner', at: JSON.parse(mNode.props.provenance_json).kind.at, status: 'reviewed' });
+  assert.deepEqual(mNode.out.find((e) => e.rel === 'ABOUT').r, { field: 'domain', position: 0, source: 'items', by: 'owner', at: mNode.out[0].r.at });
+  assert.equal(resolved.at(-1)[2].by, 'owner', 'vocabulary created by an owner write is flagged by=owner');
+  const mGot = await items.get('method:snowball-sampling');
+  assert.deepEqual(mGot.fields.domain, [{ key: 'domain:research-methodology', name: 'Research methodology' }]);
+  assert.deepEqual([mGot.fields.kind, mGot.fields.purpose, mGot.extra, mGot.record_status, mGot.collection], ['technique', null, { mood: 'kept' }, 'auto', 'method']);
+  assert.ok(!('record_status' in mGot.fields) && !('provenance' in mGot.fields) && !('mood' in mGot.fields));
+  await assert.rejects(() => items.create({ collection: 'method', fields: { title: 'Snowball sampling' } }), (e) => e.status === 409);
+  await assert.rejects(() => items.create({ collection: 'note', fields: { title: 'n' } }), (e) => e.status === 400 && /collection must be one of/.test(e.message));
+  await assert.rejects(() => items.create({ collection: 'use_case', fields: { goal: 'no title' } }), (e) => e.status === 400 && /title is required/.test(e.message));
+
+  const ucItem = await items.create({ collection: 'use_case', fields: { title: 'Offline payments', status: 'idea', actors: [{ role: 'payer', organisation_type: 'bank' }], requirements: [{ kind: 'quality', text: 'works offline' }] } });
+  assert.equal(ucItem.key, 'usecase:offline-payments');
+  const ucNode = G.get('usecase:offline-payments');
+  assert.equal(ucNode.props.actors_json, '[{"role":"payer","organisation_type":"bank"}]'); assert.equal(ucNode.props.actors, undefined); assert.equal(ucNode.props.status, 'idea', "a use case's own status is a field");
+  assert.deepEqual((await items.get('usecase:offline-payments')).fields.requirements, [{ kind: 'quality', text: 'works offline' }], 'objects come back parsed');
+  const csItem = await items.create({ collection: 'case_study', slug: 'lisbon', fields: { title: 'Lisbon CBDC pilot', case_type: 'pilot', organisations: ['ECB', 'Banco de Portugal'], sector: 'Payments', sources: [{ url: 'https://example.org/r' }] } });
+  assert.equal(csItem.key, 'case:lisbon');
+  const csGot = await items.get('case:lisbon');
+  assert.deepEqual(csGot.fields.organisations.map((o) => o.key), ['org:ecb', 'org:banco-de-portugal'], 'ordered as given, not alphabetically');
+  assert.deepEqual(csGot.fields.sector, { key: 'domain:payment', name: 'Payments' }, 'a single ref field is one value');
+
+  /* ------------------------------------------------------------ items: papers through the paper writer */
+  const pItem = await items.create({ collection: 'paper', fields: { title: 'Accumulators', authors: ['Ada Lovelace', 'Alan Turing'], year: 2024, item_type: 'conference_paper', venue: 'CRYPTO', contribution_type: 'empirical', research_problem: 'p' } });
+  assert.equal(pItem.created, true); assert.ok(pItem.key.startsWith('paper:'));
+  const pNode = G.get(pItem.key);
+  assert.equal(pNode.props.item_type, 'conferencePaper', 'stored the way the CSL export expects'); assert.equal(pNode.props.contribution_type, 'empirical');
+  const pGot = await items.get(pItem.key);
+  assert.equal(pGot.fields.item_type, 'conference_paper', 'returned in the schema\'s values');
+  assert.deepEqual(pGot.fields.authors.map((a) => a.name), ['Ada Lovelace', 'Alan Turing']);
+  assert.deepEqual(pGot.fields.venue, { key: null, name: 'CRYPTO' }, 'text from the paper writer is shown with key null');
+  assert.deepEqual([pGot.provenance.title.by, pGot.provenance.contribution_type.by, pGot.provenance.year.by], ['owner', 'owner', 'owner']);
+  assert.ok(!('abstract' in pGot.provenance), 'no provenance for a field nobody filled');
+  await items.update(pItem.key, { item_type: 'talk' });
+  assert.equal(G.get(pItem.key).props.item_type, 'presentation', 'edits are stored in the paper writer\'s values');
+  G.get(pItem.key).props.abstract = 'from Crossref';
+  G.get(pItem.key).props.provenance_json = JSON.stringify({ ...JSON.parse(G.get(pItem.key).props.provenance_json), abstract: { by: 'source', status: 'auto' } });
+  assert.equal((await items.write(pItem.key, { abstract: 'claude rewrite' }, { by: 'claude', force: true })).skipped[0].reason, 'not a claude field');
+  assert.equal((await items.write(pItem.key, { peer_review: 'grey' }, { by: 'source' })).filled[0], 'peer_review');
+  assert.equal((await items.write(pItem.key, { peer_review: 'preprint' }, { by: 'claude', force: true })).skipped[0].reason, 'already filled', 'force replaces only values Claude itself wrote');
+  for (const f of ['doi', 'authors', 'venue']) await assert.rejects(() => items.update(pItem.key, { [f]: 'x' }), (e) => e.status === 400 && /cannot be edited on a paper/.test(e.message), f);
+
+  /* ------------------------------------------------------------ items: owner edits and the merge rules */
+  const up1 = await items.update('method:snowball-sampling', { kind: 'procedure', procedure: [], level: 'intermediate' });
+  assert.deepEqual(up1.filled, ['kind', 'procedure', 'level']);
+  assert.equal(G.get('method:snowball-sampling').props.procedure, undefined, 'the owner can clear a field');
+  await assert.rejects(() => items.update('method:snowball-sampling', { title: '' }), (e) => e.status === 400 && /title is required/.test(e.message));
+  assert.deepEqual((await items.update('method:snowball-sampling', { purpose: 'p' })).warnings, [], 'a PATCH is not warned about other empty Core fields');
+  assert.deepEqual((await items.update('method:snowball-sampling', { tldr: '' })).warnings, ['tldr is empty (Core field)'], 'but emptying one is');
+  await items.update('method:snowball-sampling', { domain: ['Payments'] });
+  assert.deepEqual(G.get('method:snowball-sampling').out.filter((e) => e.rel === 'ABOUT').map((e) => e.to), ['domain:payment'], 'a ref field is replaced, not appended');
+  assert.ok((await items.update('usecase:offline-payments', { actors_json: 'x' })).warnings.includes('ignored (reserved or not a valid field name): actors_json'));
+  delete JSON.parse(G.get('method:snowball-sampling').props.provenance_json).purpose;
+  G.get('method:snowball-sampling').props.provenance_json = JSON.stringify({ ...JSON.parse(G.get('method:snowball-sampling').props.provenance_json), purpose: undefined });
+  G.get('method:snowball-sampling').props.when_to_use = 'legacy text, no provenance';
+  resolved.length = 0;
+  const cl = await items.write('method:snowball-sampling', {
+    kind: 'tool', procedure: ['claude step'], when_to_use: 'claude', when_not_to_use: 'never', level: 'advanced', inputs: [], topics: ['Sampling'], domain: ['Payments'], mood2: 'x',
+  }, { by: 'claude', model: 'claude-x', confidence: 'medium' });
+  const why = Object.fromEntries(cl.skipped.map((x) => [x.field, x.reason]));
+  assert.deepEqual(why, { kind: 'owner value', procedure: 'owner value', when_to_use: 'owner value', level: 'not a claude field', inputs: 'empty value', domain: 'owner value', mood2: 'not in the schema' });
+  assert.deepEqual(cl.filled, ['when_not_to_use', 'topics']);
+  const clProv = JSON.parse(G.get('method:snowball-sampling').props.provenance_json);
+  assert.deepEqual({ ...clProv.when_not_to_use, at: 0 }, { by: 'claude', at: 0, model: 'claude-x', confidence: 'medium', status: 'auto' });
+  assert.deepEqual(resolved.map(([l, n, o]) => [l, n, o.by]), [['Topic', 'Sampling', 'claude']], 'a skipped ref field never creates vocabulary');
+  assert.equal(G.get('method:snowball-sampling').props.kind, 'procedure', 'owner edits are never overwritten');
+  const again = await items.write('method:snowball-sampling', { when_not_to_use: 'claude v2' }, { by: 'claude' });
+  assert.deepEqual(again.skipped, [{ field: 'when_not_to_use', reason: 'already filled' }]);
+  const forced = await items.write('method:snowball-sampling', { when_not_to_use: 'claude v2' }, { by: 'claude', force: true });
+  assert.deepEqual(forced.filled, ['when_not_to_use'], 'force replaces a value the same writer wrote');
+  assert.deepEqual((await items.write('method:snowball-sampling', { when_to_use: 'x' }, { by: 'claude', force: true })).skipped[0].reason, 'owner value', 'force never touches owner values');
+  await items.write('method:snowball-sampling', { example: 'claude example' }, { by: 'claude' });
+  const pv = JSON.parse(G.get('method:snowball-sampling').props.provenance_json); pv.example.status = 'reviewed';
+  G.get('method:snowball-sampling').props.provenance_json = JSON.stringify(pv);
+  assert.equal((await items.write('method:snowball-sampling', { example: 'v2' }, { by: 'claude', force: true })).skipped[0].reason, 'owner value', 'a Claude value the owner reviewed is protected too');
+  // the merge decision is re-checked inside the transaction: a field that became writable meanwhile is skipped, never cleared
+  const realRun = runImpl;
+  runImpl = async (q, p) => { const rows = await realRun(q, p); if (q.includes('AS inc') && rows[0]) rows[0].props.provenance_json = JSON.stringify({ ...JSON.parse(rows[0].props.provenance_json || '{}'), domain: { by: 'owner' } }); return rows; };
+  resolved.length = 0;
+  const stale = await items.write('usecase:offline-payments', { domain: ['Payments'] }, { by: 'claude' });
+  runImpl = realRun;
+  assert.deepEqual(stale.skipped, [{ field: 'domain', reason: 'changed while saving, try again' }]); assert.equal(resolved.length, 0);
+  assert.ok(!G.get('usecase:offline-payments').out.some((e) => e.rel === 'ABOUT'), 'nothing was linked or cleared');
+  await items.update('method:snowball-sampling', { when_not_to_use: 'owner says' });
+  assert.equal((await items.write('method:snowball-sampling', { when_not_to_use: 'claude v3' }, { by: 'claude', force: true })).skipped[0].reason, 'owner value', 'once the owner edits a Claude value it is the owner\'s');
+  await assert.rejects(() => items.write('method:snowball-sampling', {}, { by: 'robot' }), (e) => e.status === 400);
+  await assert.rejects(() => items.write('method:snowball-sampling', {}, { by: 'claude', confidence: 'sure' }), (e) => e.status === 400);
+  await assert.rejects(() => items.update('method:nope', { purpose: 'x' }), (e) => e.status === 404);
+  assert.equal(items.blocked({ by: ['C'] }, 'source', 'v', null, null, false), 'not a source field');
+
+  /* ------------------------------------------------------------ items: typed links */
+  const lk1 = await items.link('method:snowball-sampling', { rel: 'addresses', target: 'usecase:offline-payments', evidence: 'section 2', location: 'p. 3', confidence: 'high' });
+  assert.deepEqual(lk1, { key: 'method:snowball-sampling', rel: 'ADDRESSES', target: 'usecase:offline-payments', created: true });
+  const lkEdge = G.get('method:snowball-sampling').out.find((e) => e.rel === 'ADDRESSES');
+  assert.deepEqual([lkEdge.r.evidence, lkEdge.r.location, lkEdge.r.confidence, lkEdge.r.by, lkEdge.r.status, lkEdge.r.source], ['section 2', 'p. 3', 'high', 'owner', 'reviewed', 'items']);
+  assert.equal((await items.link('method:snowball-sampling', { rel: 'ADDRESSES', target: 'usecase:offline-payments' })).created, false);
+  assert.ok((await items.get('usecase:offline-payments')).links.in.some((l) => l.rel === 'ADDRESSES' && l.key === 'method:snowball-sampling'));
+  await assert.rejects(() => items.link('method:snowball-sampling', { rel: 'ADDRESSES', target: pItem.key }), (e) => e.status === 400 && /ADDRESSES goes from Method to UseCase, not Method to Paper/.test(e.message));
+  await assert.rejects(() => items.link('usecase:offline-payments', { rel: 'ADDRESSES', target: 'method:snowball-sampling' }), (e) => e.status === 400);
+  await assert.rejects(() => items.link('usecase:offline-payments', { rel: 'ADDRESSES', target: 'usecase:offline-payments' }), (e) => e.status === 400 && /from Method/.test(e.message), 'the source label is checked too');
+  await assert.rejects(() => items.link('method:snowball-sampling', { rel: 'LIKES', target: 'usecase:offline-payments' }), (e) => e.status === 400 && /Unknown relation/.test(e.message));
+  await assert.rejects(() => items.link('method:snowball-sampling', { rel: 'ADDRESSES', target: 'usecase:offline-payments', confidence: 'sure' }), (e) => e.status === 400);
+  await assert.rejects(() => items.link('method:snowball-sampling', { rel: 'ADDRESSES', target: 'usecase:offline-payments', evidence: 'x'.repeat(2001) }), (e) => e.status === 400);
+  await assert.rejects(() => items.link('method:snowball-sampling', { rel: 'ADDRESSES', target: 'usecase:missing' }), (e) => e.status === 404);
+  assert.equal((await items.link('case:lisbon', { rel: 'about', target: { kind: 'topic', name: 'Retail CBDC' } })).target, 'topic:retail-cbdc');
+  assert.equal((await items.unlink('method:snowball-sampling', { rel: 'addresses', target: 'usecase:offline-payments' })).deleted, 1);
+  await assert.rejects(() => items.unlink('method:snowball-sampling', { rel: 'addresses', target: 'usecase:offline-payments' }), (e) => e.status === 404);
+
+  /* ------------------------------------------------------------ items: HTTP routes (real Express, encoded DOI keys) */
+  G.set('doi:10.1/a/b', { labels: ['Artifact', 'Paper'], props: { key: 'doi:10.1/a/b', title: 'Slashes', collection: 'paper' }, out: [] });
+  G.set('note:n', { labels: ['Artifact', 'Note'], props: { key: 'note:n', title: 'N' }, out: [] });
+  const appX = require('express')();
+  require('../features/items').mount(appX);
+  appX.use((err, _req, res, _next) => res.status(err.status || 500).json({ error: err.message }));
+  const srv = await new Promise((ok) => { const x = appX.listen(0, '127.0.0.1', () => ok(x)); });
+  const iBase = `http://127.0.0.1:${srv.address().port}`;
+  const H = { Authorization: 'Bearer abc', 'Content-Type': 'application/json' };
+  try {
+    for (const [m, u] of [['GET', '/api/items?collection=method'], ['POST', '/api/items'], ['GET', '/api/items/x%3Ay'], ['PATCH', '/api/items/x%3Ay'], ['DELETE', '/api/items/x%3Ay'], ['PUT', '/api/items/x%3Ay/links'], ['DELETE', '/api/items/x%3Ay/links']]) {
+      assert.equal((await fetch(iBase + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: ['GET', 'DELETE'].includes(m) ? undefined : '{}' })).status, 401, `${m} ${u} is owner only`);
+    }
+    const g1 = await (await fetch(`${iBase}/api/items/${encodeURIComponent('doi:10.1/a/b')}`, { headers: H })).json();
+    assert.equal(g1.key, 'doi:10.1/a/b', 'a DOI key with slashes round-trips');
+    assert.equal((await fetch(`${iBase}/api/items/${encodeURIComponent('note:n')}`, { headers: H })).status, 404, 'notes are not collection items');
+    const pr = await fetch(`${iBase}/api/items`, { method: 'POST', headers: H, body: JSON.stringify({ collection: 'use_case', fields: { title: 'Via HTTP' } }) });
+    assert.equal(pr.status, 201);
+    const pa = await fetch(`${iBase}/api/items/${encodeURIComponent('usecase:via-http')}`, { method: 'PATCH', headers: H, body: JSON.stringify({ fields: { goal: 'g' } }) });
+    assert.deepEqual((await pa.json()).filled, ['goal']);
+    const lp = await fetch(`${iBase}/api/items/${encodeURIComponent('method:snowball-sampling')}/links`, { method: 'PUT', headers: H, body: JSON.stringify({ rel: 'ADDRESSES', target: 'usecase:via-http' }) });
+    assert.equal((await lp.json()).created, true);
+    const ld = await fetch(`${iBase}/api/items/${encodeURIComponent('method:snowball-sampling')}/links?rel=ADDRESSES&target=${encodeURIComponent('usecase:via-http')}`, { method: 'DELETE', headers: H });
+    assert.equal((await ld.json()).deleted, 1);
+    assert.equal((await fetch(`${iBase}/api/items/${encodeURIComponent('usecase:via-http')}`, { method: 'DELETE', headers: H })).status, 200);
+    assert.ok(!G.has('usecase:via-http'));
+    assert.equal((await fetch(`${iBase}/api/items/${encodeURIComponent('note:n')}`, { method: 'DELETE', headers: H })).status, 404, 'DELETE only removes collection items');
+  } finally { srv.close(); }
+
+  /* ------------------------------------------------------------ items: listing (query building) */
+  let lq = [];
+  runImpl = async (q, p) => {
+    lq.push([q, p]);
+    if (q.includes('fulltext.queryNodes')) return [{ key: 'method:a' }];
+    if (q.includes('count(n) AS total')) return [{ total: 3 }];
+    if (q.includes('ORDER BY s')) return [1, 2, 3].map((i) => ({ key: `method:m${i}`, s: `t${i}`, labels: ['Artifact', 'Method'], props: { key: `method:m${i}`, title: `T${i}`, kind: 'tool', domain: i === 3 ? 'research' : undefined }, e_domain: i === 1 ? [{ key: 'domain:payment', name: 'Payments' }] : [] }));
+    return [];
+  };
+  const page1 = await items.list({ collection: 'method', kind: 'tool,metric', domain: 'Payments,domain:x', q: 'snow', sort: 'title', limit: '2' });
+  const [listQ, listP] = lq.find(([q]) => q.includes('ORDER BY s'));
+  assert.ok(listQ.includes('n.`kind` IN $f_kind') && listQ.includes('EXISTS { MATCH (n)-[:ABOUT]->(t:Domain) WHERE t.key IN $f_domain }') && listQ.includes('n.key IN $qkeys'));
+  assert.deepEqual([listP.f_kind, listP.f_domain, listP.qkeys], [['tool', 'metric'], ['domain:payment', 'domain:x'], ['method:a']]);
+  assert.ok(listQ.includes("toLower(toString(coalesce(n.`title`, ''))) AS s") && listQ.includes('ORDER BY s ASC, n.key ASC'));
+  assert.equal(listP.limit.toNumber(), 3, 'one extra row tells whether there is a next page');
+  assert.deepEqual([page1.items.length, page1.total], [2, 3]);
+  assert.deepEqual(page1.items[0], { key: 'method:m1', title: 'T1', record_status: null, updated_at: null, kind: 'tool', level: null, maturity: null, domain: [{ key: 'domain:payment', name: 'Payments' }] });
+  assert.deepEqual(items.decodeCursor(page1.next_cursor), ['t2', 'method:m2']);
+  lq = [];
+  await items.list({ collection: 'method', sort: '-updated_at', cursor: page1.next_cursor });
+  const [q2, p2] = lq.find(([q]) => q.includes('ORDER BY s'));
+  assert.ok(q2.includes('coalesce(n.`updated_at`.epochMillis, 0) AS s') && q2.includes('WHERE s < $cs OR (s = $cs AND n.key < $ck)') && q2.includes('ORDER BY s DESC, n.key DESC'));
+  assert.deepEqual([p2.cs, p2.ck], ['t2', 'method:m2']);
+  lq = [];
+  assert.equal((await items.list({ collection: 'method', limit: '3' })).next_cursor, null, 'an exactly full last page has no next page');
+  lq = [];
+  const p3 = await items.list({ collection: 'method' });
+  assert.equal(p3.next_cursor, null, 'no next page when the extra row is absent'); assert.equal(lq.find(([q]) => q.includes('ORDER BY s'))[1].limit.toNumber(), 26);
+  assert.deepEqual(p3.items[2].domain, [{ key: null, name: 'research' }], 'older text values show in list columns');
+  lq = [];
+  await items.list({ collection: 'paper', item_type: 'journal_article', sort: '-year', limit: '1000' });
+  const [q4, p4] = lq.find(([q]) => q.includes('ORDER BY s'));
+  assert.deepEqual(p4.f_item_type, ['journalArticle']); assert.ok(q4.includes('coalesce(toInteger(n.`year`), -999999999) AS s')); assert.equal(p4.limit.toNumber(), 101, 'limit is capped at 100');
+  lq = [];
+  runImpl = async (q, p) => { lq.push([q, p]); if (q.includes('fulltext')) throw new Error('no index'); return q.includes('count(n)') ? [{ total: 0 }] : []; };
+  await items.list({ collection: 'use_case', q: 'Offline' });
+  assert.ok(lq.find(([q]) => q.includes('ORDER BY s'))[0].includes("toLower(coalesce(n.title, '')) CONTAINS $qtext"), 'title scan when the index is missing');
+  lq = [];
+  await items.list({ collection: 'case_study', sector: 'Unknown sector' });
+  assert.deepEqual(lq.find(([q]) => q.includes('ORDER BY s'))[1].f_sector, [], 'an unknown vocabulary name matches nothing (and creates nothing)');
+  await assert.rejects(() => items.list({ collection: 'method', colour: 'red' }), (e) => e.status === 400 && /filters for method: kind, level, maturity, domain, topics/.test(e.message));
+  await assert.rejects(() => items.list({ collection: 'method', sort: 'purpose' }), (e) => e.status === 400 && /sort must be one of/.test(e.message));
+  await assert.rejects(() => items.list({ collection: 'method', cursor: 'garbage' }), (e) => e.status === 400 && /invalid cursor/.test(e.message));
+  await assert.rejects(() => items.list({}), (e) => e.status === 400);
+  vocab.resolve = realResolve; runImpl = async () => []; txImpl = null;
+
+  /* ------------------------------------------------------------ vocabulary: migration 008 */
+  const m008 = require('../migrations/008_vocab_letters_plain');
+  const m8 = [];
+  const pages8 = { Topic: [[{ key: 'topic:zero-knowledge-proof-x', name: 'ZERO KNOWLEDGE PROOF x', aliases: ['ZK proofs x'] }]] };
+  await m008.up({ run: async (q, p) => {
+    m8.push([q, p]);
+    const lab = (q.match(/^MATCH \(n:(\w+)\) RETURN n.key AS key/) || [])[1];
+    if (lab) { const skip = Number(q.match(/SKIP (\d+)/)[1]); return skip === 0 ? (pages8[lab] || [[]])[0] : []; }
+    return [];
+  } });
+  for (const l of S.entityLabels) assert.ok(m8.some(([q]) => q.includes(`CREATE INDEX ${l.toLowerCase()}_letters_plain IF NOT EXISTS`)), l);
+  const p8 = m8.find(([q]) => q.startsWith('UNWIND $rows AS r MATCH (n:Topic'))[1].rows[0].props;
+  assert.deepEqual([p8.letters, p8.letters_plain, p8.aliases_letters], ['zerokproofx', 'zkpx', ['zkpx', 'zpx']]);
+  assert.ok(m8.find(([q]) => q.startsWith('MATCH (n:Topic) RETURN'))[0].includes('ORDER BY n.key SKIP 0 LIMIT 500'), 'stable paging over every node');
+
+  /* ------------------------------------------------------------ items: schema checks, migration 007 */
+  assert.match(broken((c) => { c.types.method.fields.topics2 = { ...c.common_fields.topics }; }), /types\.method: topics and topics2 both link ABOUT->Topic/);
+  assert.match(broken((c) => { c.types.use_case.fields.venue = { type: 'ref', ref: 'Venue', rel: 'PUBLISHED_IN', by: ['Y'], tier: 'deep' }; }), /use_case\.venue: relation_types\.PUBLISHED_IN does not allow UseCase -> Venue/);
+  const m007 = require('../migrations/007_items_json_fields');
+  assert.equal(m007.toJson(['{"role":"payer"}', 'plain text'], true), '[{"role":"payer"},"plain text"]');
+  assert.equal(m007.toJson('{"from":"2023"}', false), '{"from":"2023"}'); assert.equal(m007.toJson('{"a":1}', true), '[{"a":1}]', 'a single object in a list field becomes a list');
+  const m7 = [];
+  await m007.up({ run: async (q, p) => { m7.push([q, p]); return q.includes('n.`actors` IS NOT NULL') ? [{ key: 'usecase:x', value: ['{"role":"payer"}'] }] : []; } });
+  const m7w = m7.find(([q]) => q.startsWith('UNWIND') && q.includes('actors'));
+  assert.ok(m7w[0].includes('SET n.`actors_json` = r.json REMOVE n.`actors`'), 'copy, then remove, in one statement'); assert.deepEqual(m7w[1].rows, [{ key: 'usecase:x', json: '[{"role":"payer"}]' }]);
+  assert.ok(m7.some(([q]) => q.includes('MATCH (n:CaseStudy) WHERE n.`outcomes` IS NOT NULL AND n.`outcomes_json` IS NULL')), 'only nodes not migrated yet');
+  assert.ok(!m7.some(([q]) => q.includes('`provenance`')), 'hub-set objects are not fields to migrate');
 
   /* ------------------------------------------------------------ search query building */
   assert.equal(q.luceneQuery('Blind sig+nature'), 'blind* AND sig* AND nature*');

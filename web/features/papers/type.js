@@ -7,9 +7,17 @@ const { HttpError } = require('../../core/errors');
 
 const fileLink = (input) => input.file_url || input.pdf_url || null; // pdf_url is the older name for the same thing
 
+// The schema's item_type values (docs/SCHEMA_DESIGN.md) <-> what papers store (reference-manager item types, used by the
+// CSL export). The items API converts at its boundary, so stored data does not change.
+const ITEM_TYPE = { journal_article: 'journalArticle', conference_paper: 'conferencePaper', preprint: 'preprint', thesis: 'thesis', report: 'report', book_chapter: 'bookSection', standard: 'document', talk: 'presentation' };
+const ITEM_TYPE_BACK = Object.fromEntries(Object.entries(ITEM_TYPE).map(([a, b]) => [b, a]));
+
 module.exports = {
   name: 'paper',
   label: 'Paper',
+  codec: { item_type: { write: (v) => ITEM_TYPE[v] || v, read: (v) => ITEM_TYPE_BACK[v] || v } },
+  // identity and source facts the items API does not edit: the DOI is the key, authors and venue come from the source
+  locked: ['doi', 'authors', 'venue'],
 
   // DOI alone: look the rest up.
   async prepare(body) {

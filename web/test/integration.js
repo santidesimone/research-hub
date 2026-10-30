@@ -11,6 +11,7 @@ const query = require('../core/query');
 const publicExport = require('../core/public-export');
 const files = require('../features/papers/files');
 const vocab = require('../core/vocab');
+const items = require('../core/items');
 
 // This test prunes Markdown-sourced notes and restores a backup, so it must never run against a database that holds your real library.
 if (process.env.HUB_INTEGRATION !== '1') {
@@ -25,7 +26,7 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
   await db.exec('RETURN 1 AS ok');
   const ran = await migrate.run();
   console.log('migrations applied this run:', ran.join(', ') || '(none, already up to date)');
-  assert.ok((await migrate.applied()).includes('006_vocab_matching'));
+  assert.ok((await migrate.applied()).includes('007_items_json_fields'));
   await db.exec('CALL db.awaitIndexes(60)');
 
   // paper with a Drive share link: stored canonically, nothing downloaded
@@ -68,7 +69,8 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
   assert.ok(ft.labelsOrTypes.includes('UseCase') && ft.labelsOrTypes.includes('CaseStudy'));
 
   // vocabulary matcher: the brief's variants, 20 parallel calls with mixed spellings, full-text typo lookup
-  const tag = 'it' + [...stamp.toString(26)].map((c) => String.fromCharCode(97 + parseInt(c, 26))).join(''); // letters only
+  // letters a-p only: no trailing "s", which term normalisation would singularise away
+  const tag = 'it' + [...stamp.toString(16)].map((c) => String.fromCharCode(97 + parseInt(c, 16))).join('');
   const spellings = [`Zero-knowledge proof ${tag}`, `ZK proofs ${tag}`, `zero knowledge proofs ${tag}`, `ZERO KNOWLEDGE PROOF ${tag}`, `ZKP ${tag}`];
   const parallel = await Promise.all(Array.from({ length: 20 }, (_, i) => vocab.resolve('Topic', spellings[i % spellings.length], { model: 'it-model' })));
   const topicNodes = await db.run('MATCH (t:Topic) WHERE t.norm ENDS WITH $tag RETURN t.key AS key, t.by AS by, t.model AS model, t.aliases AS aliases', { tag });
@@ -85,6 +87,51 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
   // nodes written by the paper writer are found: authors were stamped with norm on write
   assert.deepEqual(await vocab.resolve('Person', 'Lovelace, Ada', { create: false }), { key: 'person:ada-lovelace', name: 'Ada Lovelace', created: false, match: 'exact' });
   await db.exec('MATCH (n) WHERE (n:Topic OR n:Concept) AND n.norm ENDS WITH $tag DETACH DELETE n', { tag });
+
+  // items API: CRUD for all four collections, merge rules, links, filters, pagination
+  const T = (x) => `${x} ${tag}`;
+  const ip = await items.create({ collection: 'paper', fields: { title: T('Items paper'), authors: ['Grace Hopper'], year: 2021, item_type: 'preprint', contribution_type: 'empirical', key_findings: [{ text: 'f1', location: 'p. 2' }] } });
+  const im = await items.create({ collection: 'method', fields: { title: T('Items method'), kind: 'technique', domain: ['payments'], procedure: ['a', 'b'] } });
+  const iu = await items.create({ collection: 'use_case', fields: { title: T('Items use case'), status: 'idea', actors: [{ role: 'payer' }], domain: ['CBDC'] } });
+  const ic = await items.create({ collection: 'case_study', fields: { title: T('Items case'), case_type: 'pilot', organisations: [T('Org B'), T('Org A')], outcomes: [{ measure: 'uptake', expected: true }] } });
+  const gp = await items.get(ip.key);
+  assert.deepEqual([gp.fields.item_type, gp.fields.year, gp.fields.contribution_type, gp.fields.authors[0].name], ['preprint', 2021, 'empirical', 'Grace Hopper']);
+  assert.deepEqual(gp.fields.key_findings, [{ text: 'f1', location: 'p. 2' }]);
+  assert.deepEqual((await items.get(im.key)).fields.domain, [{ key: 'domain:payments', name: 'payments' }], 'names link to the seeded Domains');
+  assert.deepEqual((await items.get(iu.key)).fields.domain.map((d) => d.key), ['domain:digital-currency'], 'an alias of a seeded Domain');
+  assert.deepEqual((await items.get(iu.key)).fields.actors, [{ role: 'payer' }]);
+  const gc = await items.get(ic.key);
+  assert.deepEqual(gc.fields.organisations.map((o) => o.name), [T('Org B'), T('Org A')]); assert.deepEqual(gc.fields.outcomes, [{ measure: 'uptake', expected: true }]);
+  // owner edits survive Claude; Claude fills empty fields; force only replaces Claude's own values
+  await items.update(im.key, { purpose: 'owner purpose' });
+  const cw = await items.write(im.key, { purpose: 'claude purpose', when_to_use: 'claude when', topics: [T('Sampling topic')] }, { by: 'claude', model: 'it-model', confidence: 'low' });
+  assert.deepEqual(cw.skipped, [{ field: 'purpose', reason: 'owner value' }]); assert.deepEqual(cw.filled, ['when_to_use', 'topics']);
+  assert.equal((await items.write(im.key, { when_to_use: 'claude v2' }, { by: 'claude', force: true })).filled[0], 'when_to_use');
+  const gm = await items.get(im.key);
+  assert.deepEqual([gm.fields.purpose, gm.fields.when_to_use, gm.provenance.when_to_use.model, gm.provenance.purpose.by], ['owner purpose', 'claude v2', undefined, 'owner']);
+  assert.equal((await db.run('MATCH (t:Topic) WHERE t.norm CONTAINS $tag RETURN t.by AS by', { tag }))[0].by, 'claude');
+  await assert.rejects(() => items.update(ip.key, { doi: '10.1/x' }), (e) => e.status === 400);
+  // typed links
+  assert.equal((await items.link(im.key, { rel: 'ADDRESSES', target: iu.key, evidence: 'why', location: 's. 1', confidence: 'medium' })).created, true);
+  await assert.rejects(() => items.link(im.key, { rel: 'ADDRESSES', target: ic.key }), (e) => e.status === 400);
+  assert.ok((await items.get(iu.key)).links.in.some((l) => l.rel === 'ADDRESSES' && l.key === im.key && l.evidence === 'why'));
+  assert.equal((await items.unlink(im.key, { rel: 'ADDRESSES', target: iu.key })).deleted, 1);
+  // list: filters, full-text q, every page of a cursor walk
+  for (const n of ['e', 'c', 'a', 'd', 'b']) await items.create({ collection: 'method', fields: { title: T(`Pager ${n}`), kind: n === 'c' ? 'tool' : 'metric', domain: n === 'a' ? ['payments'] : [] } });
+  const want = ['a', 'b', 'c', 'd', 'e'].map((n) => `method:pager-${n}-${tag}`);
+  let cursor = null; const seen = [];
+  do { const pg = await items.list({ collection: 'method', q: 'pager', sort: 'title', limit: '2', ...(cursor ? { cursor } : {}) }); seen.push(...pg.items.map((x) => x.key)); cursor = pg.next_cursor; } while (cursor);
+  assert.deepEqual(seen.filter((k) => want.includes(k)), want, 'pages in order, nothing skipped or repeated');
+  assert.equal(seen.length, new Set(seen).size);
+  const byKind = await items.list({ collection: 'method', kind: 'tool', q: 'pager' });
+  assert.deepEqual(byKind.items.map((x) => x.key), [`method:pager-c-${tag}`]);
+  const byDomain = await items.list({ collection: 'method', domain: 'Payments', q: tag });
+  assert.deepEqual(byDomain.items.map((x) => x.key).sort(), [im.key, `method:pager-a-${tag}`].sort());
+  assert.equal((await items.list({ collection: 'paper', item_type: 'preprint', q: tag })).items[0].key, ip.key);
+  // delete
+  for (const k of [ip.key, im.key, iu.key, ic.key, ...want]) await items.remove(k);
+  await assert.rejects(() => items.get(im.key), (e) => e.status === 404);
+  await db.exec('MATCH (n) WHERE (n:Topic OR n:Organisation) AND n.norm ENDS WITH $tag DETACH DELETE n', { tag });
 
   // notes sync: upsert, edges to the paper and a concept, prune; methods are skipped and never pruned
   const entries = [

@@ -52,6 +52,17 @@ function check(s) {
         if (!known.has(f)) out.push(`${at}: layout names unknown field ${f}`);
       }
     }
+    // link fields must read back unambiguously (one field per relationship and target) and be allowed by relation_types
+    const seenRefs = new Map();
+    for (const [f, spec] of Object.entries({ ...(t.collection ? s.common_fields : {}), ...(t.fields || {}) })) {
+      if (spec.type !== 'ref') continue;
+      if (!spec.rel) { out.push(`${at}.${f}: ref fields need a rel`); continue; }
+      const id = `${spec.rel}->${spec.ref}`;
+      if (seenRefs.has(id)) out.push(`${at}: ${seenRefs.get(id)} and ${f} both link ${id}`);
+      seenRefs.set(id, f);
+      const r = relTypes[spec.rel];
+      if (r && t.collection && (!(r.from || []).includes(t.label) || !(r.to || []).includes(spec.ref))) out.push(`${at}.${f}: relation_types.${spec.rel} does not allow ${t.label} -> ${spec.ref}`);
+    }
     for (const p of t.public_props || []) if (!global.has(p)) out.push(`${at}.public_props: ${p} is not in the global public_props whitelist`);
   }
   for (const [label, e] of Object.entries(s.entities || {})) {
@@ -149,7 +160,8 @@ function badValue(type, v, f = {}) {
 const INPUT_EXTRAS = new Set(['slug', 'concepts', 'kind', 'title', 'summary', 'visibility', 'body', ...Object.keys(schema.relations)]);
 
 // -> { errors, warnings, unknown }. Hub-set fields (by Sys only) are ignored: the writer sets them.
-function validate(typeName, input = {}) {
+// partial: only the fields present in input are checked (a PATCH); a required field may not be emptied.
+function validate(typeName, input = {}, { partial = false } = {}) {
   const t = schema.types[typeName];
   if (!t) return { errors: [`unknown type ${typeName}`], warnings: [], unknown: [] };
   const fields = fieldsOf(typeName);
@@ -157,6 +169,7 @@ function validate(typeName, input = {}) {
   const warnings = [];
   for (const [name, f] of Object.entries(fields)) {
     if (f.by.length === 1 && f.by[0] === 'Sys') continue;
+    if (partial && !(name in input)) continue;
     const v = input[name];
     if (empty(v)) {
       if (f.required) errors.push(`${name} is required`);

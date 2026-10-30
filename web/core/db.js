@@ -43,4 +43,4 @@ async function exec(query, params = {}) { // single auto-commit write (needed fo
   }
 }
 
-module.exports = { run, writeTx, exec, driver };
+module.exports = { run, writeTx, exec, driver, plain };

@@ -278,6 +278,204 @@
           }
         },
         "additionalProperties": true
+      },
+      "ItemCreate": {
+        "type": "object",
+        "required": [
+          "collection",
+          "fields"
+        ],
+        "properties": {
+          "collection": {
+            "type": "string",
+            "enum": [
+              "paper",
+              "method",
+              "use_case",
+              "case_study"
+            ]
+          },
+          "fields": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Fields from schema/schema.json (GET /api/schema). Link fields take names (resolved to vocabulary nodes) or keys; objects and lists of objects as JSON. Unknown fields are kept; a reading status is set with /api/personal."
+          },
+          "slug": {
+            "type": "string",
+            "description": "Optional key slug (default: from the title)"
+          },
+          "file_url": {
+            "type": "string",
+            "description": "Papers: link to the PDF"
+          },
+          "copy_to_drive": {
+            "type": "boolean",
+            "description": "Papers: copy the PDF to Drive"
+          }
+        }
+      },
+      "WriteResult": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "filled": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Item": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "collection": {
+            "type": "string"
+          },
+          "record_status": {
+            "type": "string"
+          },
+          "schema_version": {
+            "type": "integer"
+          },
+          "managed": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Every schema field; link fields as {key, name} (key null for text written by older versions)"
+          },
+          "provenance": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "by": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "confidence": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "links": {
+            "type": "object",
+            "properties": {
+              "out": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "in": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "meta": {
+            "type": "object"
+          },
+          "extra": {
+            "type": "object",
+            "description": "Fields the schema does not know, kept as sent"
+          }
+        }
+      },
+      "LinkBody": {
+        "type": "object",
+        "required": [
+          "rel",
+          "target"
+        ],
+        "properties": {
+          "rel": {
+            "type": "string",
+            "description": "A relation_types name (ADDRESSES) or its field name (addresses)"
+          },
+          "target": {
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "key"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          "evidence": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "location": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        }
       }
     }
   },
@@ -1187,6 +1385,359 @@
         "responses": {
           "200": {
             "description": "{ok:true}"
+          }
+        }
+      }
+    },
+    "/api/items": {
+      "get": {
+        "operationId": "listItems",
+        "summary": "List a collection with filters, full-text search, sort and cursor pagination",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Filters are the `filters` declared for the collection in schema/schema.json, passed as query parameters (comma-separated values mean OR). Enum filters match values; link filters (domain, topics, sector ...) take vocabulary names or keys. Unknown parameters are a 400 that lists the allowed filters.",
+        "parameters": [
+          {
+            "name": "collection",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "paper",
+                "method",
+                "use_case",
+                "case_study"
+              ]
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Full-text search (artifact_text index; title scan if the index is missing)"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "-updated_at"
+            },
+            "description": "title, created_at, updated_at or a scalar list column; prefix - for descending"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 25,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "next_cursor from the previous page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{collection, items: [{key, title, record_status, updated_at, <list_columns>}], total, next_cursor}"
+          },
+          "400": {
+            "description": "Invalid input (validation errors, unknown filter or sort, locked field)"
+          },
+          "401": {
+            "description": "Owner only"
+          },
+          "404": {
+            "description": "No such item (or not a collection item)"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createItem",
+        "summary": "Create an item (owner values: by=owner, status=reviewed)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "WriteResult",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input (validation errors, unknown filter or sort, locked field)"
+          },
+          "401": {
+            "description": "Owner only"
+          },
+          "404": {
+            "description": "No such item (or not a collection item)"
+          },
+          "409": {
+            "description": "Key already exists"
+          }
+        }
+      }
+    },
+    "/api/items/{key}": {
+      "get": {
+        "operationId": "getItem",
+        "summary": "One item: every field parsed, provenance per field, links in and out",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Item key, URL-encoded (encodeURIComponent): DOI keys contain \"/\"."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input (validation errors, unknown filter or sort, locked field)"
+          },
+          "401": {
+            "description": "Owner only"
+          },
+          "404": {
+            "description": "No such item (or not a collection item)"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateItem",
+        "summary": "Owner edit: given fields only; each becomes by=owner, status=reviewed and is never overwritten by Claude",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Item key, URL-encoded (encodeURIComponent): DOI keys contain \"/\"."
+          }
+        ],
+        "description": "An empty value clears the field (and keeps it the owner's). Papers: doi, authors and venue cannot be edited here.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "fields"
+                ],
+                "properties": {
+                  "fields": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "WriteResult",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input (validation errors, unknown filter or sort, locked field)"
+          },
+          "401": {
+            "description": "Owner only"
+          },
+          "404": {
+            "description": "No such item (or not a collection item)"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteItem",
+        "summary": "Delete an item",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Item key, URL-encoded (encodeURIComponent): DOI keys contain \"/\"."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{deleted}"
+          },
+          "400": {
+            "description": "Invalid input (validation errors, unknown filter or sort, locked field)"
+          },
+          "401": {
+            "description": "Owner only"
+          },
+          "404": {
+            "description": "No such item (or not a collection item)"
+          }
+        }
+      }
+    },
+    "/api/items/{key}/links": {
+      "put": {
+        "operationId": "linkItem",
+        "summary": "Add or update a typed link (endpoints checked against relation_types)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Item key, URL-encoded (encodeURIComponent): DOI keys contain \"/\"."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{key, rel, target, created}"
+          },
+          "400": {
+            "description": "Invalid input (validation errors, unknown filter or sort, locked field)"
+          },
+          "401": {
+            "description": "Owner only"
+          },
+          "404": {
+            "description": "No such item (or not a collection item)"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "unlinkItem",
+        "summary": "Remove a typed link",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Item key, URL-encoded (encodeURIComponent): DOI keys contain \"/\"."
+          },
+          {
+            "name": "rel",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "target",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{key, rel, target, deleted}"
+          },
+          "400": {
+            "description": "Invalid input (validation errors, unknown filter or sort, locked field)"
+          },
+          "401": {
+            "description": "Owner only"
+          },
+          "404": {
+            "description": "No such item (or not a collection item)"
           }
         }
       }
