@@ -32,7 +32,7 @@ gcloud secrets versions access latest --secret hub-api-token      # copy this so
 
 ## 2. Neo4j
 
-Cloud Run cannot host a database (no persistent disk), so Neo4j runs on a small VM reachable only inside your network:
+Cloud Run cannot host a database (no persistent disk), so Neo4j runs on a small VM reachable only inside your network. The VM has **no public IP** (Google bills public IPv4 addresses, and nothing needs one): it runs Container-Optimized OS, which has Docker built in, and pulls Neo4j from an Artifact Registry mirror of Docker Hub (`dockerhub`) through Private Google Access, which the script turns on for the default subnet. With no public IP you cannot SSH in directly; read its log with `gcloud compute instances get-serial-port-output neo4j-hub --zone us-central1-a`:
 
 ```bash
 NEO4J_PASSWORD=$(gcloud secrets versions access latest --secret neo4j-password) ./deploy/neo4j-vm.sh

@@ -24,6 +24,13 @@ gcloud run deploy "$SERVICE" --project "$PROJECT" --region "$REGION" --source . 
   --set-env-vars "BASE_PATH=${BASE_PATH},NEO4J_URI=${NEO4J_URI},NEO4J_USER=neo4j,HUB_SKIN=${SKIN},TRUST_PROXY=${TRUST_PROXY}" \
   --set-secrets "$SECRETS"
 
+# Keep only the 2 newest app images (each deploy adds one; Artifact Registry storage over 0.5 GB is billed)
+POLICY=$(mktemp)
+echo '[{"name":"keep-newest-2","action":{"type":"Keep"},"mostRecentVersions":{"keepCount":2}},{"name":"delete-older","action":{"type":"Delete"},"condition":{"tagState":"any"}}]' > "$POLICY"
+gcloud artifacts repositories set-cleanup-policies cloud-run-source-deploy --project "$PROJECT" --location "$REGION" --policy "$POLICY" --no-dry-run >/dev/null \
+  && echo "Image clean-up: the 2 newest app images are kept." || echo "(could not set the image clean-up policy; old images stay until deleted)"
+rm -f "$POLICY"
+
 URL=$(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format='get(status.url)')
 echo
 echo "Deployed. Direct URL (for testing):  ${URL}${BASE_PATH}/"
