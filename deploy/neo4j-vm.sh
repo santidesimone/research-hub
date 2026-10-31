@@ -11,7 +11,7 @@ set -euo pipefail
 : "${PROJECT:?set PROJECT}"; : "${NEO4J_PASSWORD:?set NEO4J_PASSWORD}"
 ZONE="${ZONE:-us-central1-a}"; NAME="${NAME:-neo4j-hub}"; REGION="${ZONE%-*}"
 MACHINE_TYPE="${MACHINE_TYPE:-e2-micro}"; DISK_TYPE="${DISK_TYPE:-pd-standard}"
-HEAP="${HEAP:-384m}"; PAGECACHE="${PAGECACHE:-128m}"   # Neo4j memory; together well under the machine's RAM
+HEAP="${HEAP:-256m}"; PAGECACHE="${PAGECACHE:-64m}"   # Neo4j memory. 384m+128m starved the e2-micro (1 GB, no swap on COS)
 MIRROR="${REGION}-docker.pkg.dev/${PROJECT}/dockerhub"
 SA=$(gcloud projects describe "$PROJECT" --format='get(projectNumber)')-compute@developer.gserviceaccount.com
 
