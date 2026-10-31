@@ -6,7 +6,7 @@
 set -euo pipefail
 : "${PROJECT:?set PROJECT}"; : "${NEO4J_URI:?set NEO4J_URI}"
 REGION="${REGION:-us-central1}"; SERVICE="${SERVICE:-research-hub}"; BASE_PATH="${BASE_PATH:-/research-hub}"; SKIN="${SKIN:-paper}"
-MIN_INSTANCES="${MIN_INSTANCES:-1}"   # 1 keeps one instance warm (no cold start, a few dollars a month); 0 scales to zero
+MIN_INSTANCES="${MIN_INSTANCES:-0}"   # 0 scales to zero (about free; the first request after idle waits a few seconds); 1 keeps one warm (~$8-10/month)
 TRUST_PROXY="${TRUST_PROXY:-2}"       # proxies in front: 2 = your site's rewrite (step 5) + Cloud Run. Use 1 if you serve the run.app URL directly
 
 SECRETS="HUB_API_TOKEN=hub-api-token:latest,NEO4J_PASSWORD=neo4j-password:latest"

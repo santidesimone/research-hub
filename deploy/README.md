@@ -6,7 +6,9 @@ and every page works as a direct link: `/research-hub/library?key=doi:...`, `/re
 The same code runs on your laptop and here; only environment variables differ (`_env.example` lists them). There is **no bucket**:
 files are links (your Google Drive, arXiv, publishers) and Neo4j holds only metadata, note text and your personal layer.
 
-Costs, roughly: Cloud Run is a few dollars a month with one warm instance (or free at zero); the Neo4j VM (e2-medium) is about $25-30/month; snapshots are cents.
+Costs, roughly, with the defaults: **about $1-3 a month**. Cloud Run scales to zero (`MIN_INSTANCES=0`; the first request after a quiet spell waits a few seconds while it starts). The Neo4j VM is an e2-micro with a 30 GB standard disk, which Google's free tier covers (one per account, in us-central1, us-east1 or us-west1). Snapshots are cents.
+
+Bigger, if you need it: `MIN_INSTANCES=1` keeps one instance warm (about $8-10/month). For the VM, `MACHINE_TYPE=e2-small HEAP=768m PAGECACHE=512m` costs about $13/month, and `MACHINE_TYPE=e2-medium HEAP=1g PAGECACHE=512m DISK_TYPE=pd-balanced` about $28. To resize an existing VM, stop it, run `gcloud compute instances set-machine-type neo4j-hub --machine-type e2-small`, start it again, and update its `neo4j-heap` and `neo4j-pagecache` metadata. The data stays on the disk.
 
 ## 0. One time
 
@@ -80,7 +82,7 @@ They only add or copy data, but they do change it, so back up first. Set `OPENAL
 
 Open the printed URL (`.../research-hub/`). First start applies the graph migrations. `.../research-hub/healthz` says the process is up; `.../research-hub/readyz` also checks the database.
 Sign in with the token, then load data from your computer: `hub add 10.1007/978-1-4757-0602-4_18 --file https://arxiv.org/pdf/...`, or `python scripts/seed.py` with `HUB_URL` set to the deployed address.
-`MIN_INSTANCES=0` in front of the command lets it scale to zero (cheaper, slower first request). Check Drive with `hub drive`.
+`MIN_INSTANCES=1` in front of the command keeps one instance warm (no wait on the first request, about $8-10/month). Check Drive with `hub drive`.
 
 Your Markdown notes are not in the image. Keep them in a folder (ideally a git repo) and push them with `hub sync-notes ./content`.
 
