@@ -14,7 +14,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | 7 Hardening | done (2026-10-31) | See "Task 7" below. |
 | 8 Frameworks, research questions and hypotheses, ontologies | done (2026-10-31) | See "Task 8" below. |
 | 8b File upload beyond PDFs (ontology snapshots) | done (2026-10-31), live Drive not tested | See "Task 8b" below. |
-| 9 Claude chat connector: OAuth for MCP, upload link | built (2026-10-31); live claude.ai test below | See "Task 9" below. |
+| 9 Claude chat connector: OAuth for MCP, upload link | done (2026-10-31), tested live from the claude.ai chat | See "Task 9" below. |
 
 ## Task 0. Baseline against real services
 
@@ -484,6 +484,15 @@ Update at the end of every task. For each: what changed, what was tested for rea
   - On the approval page, Chrome follows the redirect to a real local callback with the code and state under the page's CSP.
   - Public and mobile 9/9; the CLI end to end. Screenshot reviewed.
 
+**Tested live (2026-10-31, deployed hub, the claude.ai chat)**
+- The owner added the custom connector in claude.ai with the run.app URL. Claude discovered the OAuth endpoints from the 401, registered itself, the owner approved on the hub's page, and the connection appeared in `hub oauth`.
+- From the chat, Claude added "A Digital Currency Architecture for Privacy and Owner-Custodianship" (arXiv 2101.05259, DOI 10.3390/fi13050130) in one `save_analysis` call:
+  - 12 fields from sources (authors, year, venue from Crossref and OpenAlex);
+  - 11 fields by Claude (`claude-sonnet-5-5`, with provenance);
+  - FRAMED_BY a framework it extracted (with a location), and three topics;
+  - the PDF copied from arXiv into the owner's Drive and linked (`drive_file_id` set).
+
 **Not tested / open**
-- The live claude.ai connector (next: deploy, then connect from claude.ai).
+- The private-PDF path through the upload link, from the chat.
+- Three `400` replies on `/mcp` during the session did not stop anything; their cause is not logged yet (MCP request bodies are not logged).
 
