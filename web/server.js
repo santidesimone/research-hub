@@ -48,6 +48,7 @@ for (const dir of fs.readdirSync(path.join(__dirname, 'features')).sort()) {
   if (!fs.existsSync(file)) continue;
   const feature = require(file);
   feature.mount(root);
+  if (feature.mountRoot) feature.mountRoot(app); // routes outside BASE (e.g. /.well-known/...)
   registry.features.push(feature.name || dir);
 }
 

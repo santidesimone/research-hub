@@ -66,7 +66,7 @@ const seed = require('../../data/seed_papers.json');
 
   // migrations are discoverable and ordered
   const migrate = require('../core/migrate');
-  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', '010_record_status_from_provenance', '011_frameworks_questions_ontologies', 'personal_001_layer']);
+  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', '010_record_status_from_provenance', '011_frameworks_questions_ontologies', '012_oauth', 'personal_001_layer']);
   // personal layer: separate node, driven by hooks, core untouched
   calls.length = 0;
   require('../features/personal').mount({ get() {}, put() {}, delete() {}, post() {} });
@@ -1297,6 +1297,10 @@ const seed = require('../../data/seed_papers.json');
       await hub(['ontology', 'snapshot', 'ontology:o', 'none']);
       assert.equal(seen[2].method, 'DELETE');
       r = await hub(['ontology', 'snapshot', 'ontology:o', path.join(home, 'missing.ttl')]); assert.equal(r.code, 1); assert.match(r.stderr, /file not found/);
+      reset({ 'GET /api/oauth/grants': [200, { connections: [] }], 'DELETE /api/oauth/grants': [200, { revoked: 1 }] });
+      await hub(['oauth']); await hub(['oauth', 'revoke', 'abc def']); await hub(['oauth', 'revoke-all']);
+      assert.deepEqual(seen.map((x) => [x.method, x.url]), [['GET', '/api/oauth/grants'], ['DELETE', '/api/oauth/grants?id=abc%20def'], ['DELETE', '/api/oauth/grants?all=1']]);
+      r = await hub(['oauth', 'revoke']); assert.equal(r.code, 1); assert.match(r.stderr, /usage: hub oauth/);
 
       // analyze: identity from the argument, everything else from stdin
       reset({ 'POST /api/analysis': (q) => [201, { key: q.body.doi ? 'doi:' + q.body.doi : q.body.key || 'paper:u', created: true }], 'POST /api/papers/file': [200, { file_url: 'https://drive' }] });
@@ -1780,6 +1784,151 @@ const seed = require('../../data/seed_papers.json');
     assert.ok(!calls.some((c) => /delete|billingInfo/i.test(c[1])), 'a soft stop: nothing deleted, billing untouched');
     const failing = async (url, o = {}) => (url.includes('run.googleapis') ? { ok: false, status: 403 } : http(url, o));
     await assert.rejects(() => bg.guard(ev({ costAmount: 6, budgetAmount: 5 }), { env, http: failing, log() {} }), /close research-hub to public traffic: 403/);
+  }
+
+  /* ------------------------------------------------------------ Task 9: OAuth for MCP, the upload link */
+  {
+    const oauth = require('../core/oauth');
+    const crypto = require('crypto');
+    const mem = oauth.memoryStore(); oauth.useStore(mem);
+    const CLAUDE = 'https://claude.ai/api/mcp/auth_callback';
+    // registration: the allow-list
+    const reg = oauth.registerClient({ redirect_uris: [CLAUDE], client_name: 'Claude' });
+    assert.ok(reg.client_id.startsWith('hub_c.') && reg.token_endpoint_auth_method === 'none');
+    assert.equal(oauth.registerClient({ redirect_uris: ['https://evil.example/cb'] }).error, 'invalid_redirect_uri');
+    assert.equal(oauth.registerClient({ redirect_uris: ['https://claude.ai/api/mcp/auth_callback/../x'] }).error, 'invalid_redirect_uri');
+    assert.ok(oauth.registerClient({ redirect_uris: ['http://127.0.0.1:33418/callback'] }).client_id, 'loopback, any port');
+    assert.equal(oauth.registerClient({ redirect_uris: ['http://127.0.0.1:33418/callback#frag'] }).error, 'invalid_redirect_uri', 'no fragments');
+    assert.equal(oauth.registerClient({ redirect_uris: [] }).error, 'invalid_redirect_uri');
+    assert.equal(oauth.registerClient({ redirect_uris: Array(6).fill(CLAUDE) }).error, 'invalid_redirect_uri');
+    assert.deepEqual(oauth.client(reg.client_id), { redirect_uris: [CLAUDE], client_name: 'Claude' });
+    const [cp, cm] = reg.client_id.slice(6).split('.');
+    const forged = 'hub_c.' + Buffer.from(JSON.stringify({ r: ['https://evil.example/cb'], n: 'x', t: 1 })).toString('base64url') + '.' + cm;
+    assert.equal(oauth.client(forged), null, 'a client id cannot be altered'); assert.ok(cp);
+    const verifier = crypto.randomBytes(40).toString('base64url');
+    const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+    assert.ok(oauth.pkceOk(verifier, challenge)); assert.ok(!oauth.pkceOk(verifier + 'x', challenge)); assert.ok(!oauth.pkceOk('short', oauth.sha('short')));
+
+    // over HTTP: discovery, the approval page, the token endpoint, /mcp
+    const express = require('express');
+    const appO = express(); appO.set('trust proxy', 1);
+    const oauthF = require('../features/oauth'); const mcpF = require('../features/mcp');
+    const r9 = express.Router(); oauthF.mount(r9); mcpF.mount(r9); require('../features/papers').mount(r9); oauthF.mountRoot(appO); appO.use('/', r9);
+    appO.use((err, _req, res, _next) => res.status(err.status || 500).json({ error: err.message }));
+    const srv9 = await new Promise((ok) => { const x = appO.listen(0, '127.0.0.1', () => ok(x)); });
+    const B9 = `http://127.0.0.1:${srv9.address().port}`;
+    try {
+      const prm = await (await fetch(B9 + '/.well-known/oauth-protected-resource/mcp')).json();
+      assert.deepEqual([prm.resource, prm.authorization_servers], [B9 + '/mcp', [B9]]);
+      const asm = await (await fetch(B9 + '/.well-known/oauth-authorization-server')).json();
+      assert.deepEqual([asm.issuer, asm.authorization_endpoint, asm.token_endpoint, asm.registration_endpoint, asm.code_challenge_methods_supported],
+        [B9, B9 + '/oauth/authorize', B9 + '/oauth/token', B9 + '/oauth/register', ['S256']]);
+      const anon = await fetch(B9 + '/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      assert.equal(anon.status, 401);
+      assert.equal(anon.headers.get('www-authenticate'), `Bearer resource_metadata="${B9}/.well-known/oauth-protected-resource/mcp"`, 'the 401 is how a client discovers OAuth');
+      const rr = await fetch(B9 + '/oauth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redirect_uris: [CLAUDE], client_name: 'Claude' }) });
+      assert.equal(rr.status, 201); const cid = (await rr.json()).client_id;
+      assert.equal((await fetch(B9 + '/oauth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redirect_uris: ['https://evil.example/cb'] }) })).status, 400);
+
+      const az = (q) => fetch(B9 + '/oauth/authorize?' + new URLSearchParams(q), { redirect: 'manual' });
+      const good = { response_type: 'code', client_id: cid, redirect_uri: CLAUDE, code_challenge: challenge, code_challenge_method: 'S256', state: 'st8', resource: B9 + '/mcp' };
+      assert.equal((await az({ ...good, client_id: 'nope' })).status, 400);
+      assert.equal((await az({ ...good, redirect_uri: 'https://claude.ai/other' })).status, 400, 'never redirects to an unregistered address');
+      assert.equal((await az({ ...good, redirect_uri: 'http://127.0.0.1:9/cb' })).status, 400, 'allowed in general, but not registered by this client');
+      const noPkce = await az({ ...good, code_challenge: '' });
+      assert.equal(noPkce.status, 302); assert.match(noPkce.headers.get('location'), /^https:\/\/claude\.ai\/api\/mcp\/auth_callback\?error=invalid_request.*state=st8/);
+      assert.match((await az({ ...good, resource: 'https://other.example/mcp' })).headers.get('location'), /error=invalid_target/);
+      const pg = await az(good);
+      assert.equal(pg.status, 200);
+      assert.match(pg.headers.get('content-security-policy'), /form-action 'self' https:\/\/claude\.ai/, 'the redirect after approval is allowed by the CSP');
+      const html = await pg.text();
+      assert.match(html, /<strong>Claude<\/strong> wants to use your hub/); assert.ok(!/<script/i.test(html), 'no scripts on the approval page');
+      const sealed = html.match(/name="req" value="([^"]+)"/)[1].replace(/&amp;/g, '&');
+      const approve = (fields, headers = {}) => fetch(B9 + '/oauth/authorize', { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...headers }, body: new URLSearchParams(fields) });
+      const wrong = await approve({ req: sealed, decision: 'allow', owner_token: 'nope' });
+      assert.equal(wrong.status, 401); assert.match(await wrong.text(), /Wrong token/);
+      assert.match((await approve({ req: sealed, decision: 'deny' })).headers.get('location'), /error=access_denied&state=st8/);
+      assert.equal((await approve({ req: sealed.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A')), decision: 'allow', owner_token: 'abc' })).status, 400, 'a tampered request is refused');
+      const ok = await approve({ req: sealed, decision: 'allow', owner_token: 'abc' });
+      assert.equal(ok.status, 302);
+      const back = new URL(ok.headers.get('location'));
+      assert.deepEqual([back.origin + back.pathname, back.searchParams.get('state'), back.searchParams.get('iss')], [CLAUDE, 'st8', B9]);
+      const code = back.searchParams.get('code');
+      // signed in with the session cookie: no token needed
+      const cookie = `__session=${encodeURIComponent(require('../core/auth').sign(Date.now() + 60000))}`;
+      assert.match(await (await az(good).then(() => fetch(B9 + '/oauth/authorize?' + new URLSearchParams(good), { headers: { Cookie: cookie } }))).text(), /You are signed in as the owner/);
+      assert.equal((await approve({ req: sealed, decision: 'allow' }, { Cookie: cookie })).status, 302);
+
+      const tok = (fields) => fetch(B9 + '/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields) });
+      const code2 = new URL((await approve({ req: sealed, decision: 'allow', owner_token: 'abc' })).headers.get('location')).searchParams.get('code');
+      const badPkce = await tok({ grant_type: 'authorization_code', code: code2, redirect_uri: CLAUDE, client_id: cid, code_verifier: crypto.randomBytes(40).toString('base64url') });
+      assert.deepEqual([badPkce.status, (await badPkce.json()).error], [400, 'invalid_grant']);
+      assert.equal((await tok({ grant_type: 'authorization_code', code: code2, redirect_uri: CLAUDE, client_id: cid, code_verifier: verifier })).status, 400, 'a code is tried once, even after a failure');
+      assert.equal((await tok({ grant_type: 'authorization_code', code, redirect_uri: 'http://127.0.0.1:1/x', client_id: cid, code_verifier: verifier })).status, 400);
+      const code3 = new URL((await approve({ req: sealed, decision: 'allow', owner_token: 'abc' })).headers.get('location')).searchParams.get('code');
+      const t1 = await tok({ grant_type: 'authorization_code', code: code3, redirect_uri: CLAUDE, client_id: cid, code_verifier: verifier });
+      assert.equal(t1.status, 200); assert.equal(t1.headers.get('cache-control'), 'no-store');
+      const T1 = await t1.json();
+      assert.deepEqual([T1.token_type, T1.expires_in, T1.scope], ['Bearer', 3600, 'mcp']); assert.ok(T1.access_token.startsWith('hub_at.') && T1.refresh_token.startsWith('hub_rt.'));
+      assert.equal((await tok({ grant_type: 'authorization_code', code: code3, redirect_uri: CLAUDE, client_id: cid, code_verifier: verifier })).status, 400, 'code reuse');
+      const saved = [...mem.grants.values()][0];
+      assert.ok(!JSON.stringify(saved).includes(T1.refresh_token.split('.')[2]), 'only a hash of the refresh token is stored');
+      // expired code
+      const codeOld = await oauth.issueCode({ client_id: cid, redirect_uri: CLAUDE, code_challenge: challenge });
+      for (const v of mem.codes.values()) v.exp = Date.now() - 1;
+      assert.equal((await tok({ grant_type: 'authorization_code', code: codeOld, redirect_uri: CLAUDE, client_id: cid, code_verifier: verifier })).status, 400, 'expired code');
+
+      // the access token works on /mcp, and only there
+      const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+      const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
+      const mcpWith = async (bearerValue) => { const c = new Client({ name: 't9', version: '1' }); await c.connect(new StreamableHTTPClientTransport(new URL(B9 + '/mcp'), { requestInit: { headers: { Authorization: 'Bearer ' + bearerValue } } })); return c; };
+      const c1 = await mcpWith(T1.access_token);
+      assert.ok((await c1.listTools()).tools.some((t) => t.name === 'request_upload'));
+      assert.match(c1.getInstructions(), /give it to the owner so they can drop the PDF there/);
+      assert.equal((await fetch(B9 + '/api/papers/file?key=x', { method: 'DELETE', headers: { Authorization: 'Bearer ' + T1.access_token } })).status, 401, 'an OAuth token is for /mcp only');
+      const c0 = await mcpWith('abc'); assert.ok((await c0.listTools()).tools.length, 'the owner token still works');
+      const tampered = T1.access_token.replace(/\.([^.]+)$/, (m, x) => '.' + (x[0] === 'A' ? 'B' : 'A') + x.slice(1));
+      assert.equal((await fetch(B9 + '/mcp', { method: 'POST', headers: { Authorization: 'Bearer ' + tampered, 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
+      const realNow = Date.now;
+      try { Date.now = () => realNow() + 3601 * 1000; assert.equal(await oauth.verifyAccess(T1.access_token), false, 'expires after an hour'); } finally { Date.now = realNow; }
+
+      // request_upload and upload_url
+      runImpl = async (q, p) => (q.includes('MATCH (p:Paper {key:$key}) RETURN p.file_url') ? (p.key === 'doi:10.1/none' ? [{ file: null }] : p.key === 'doi:10.1/has' ? [{ file: 'https://x/y.pdf' }] : []) : []);
+      const ru = await c1.callTool({ name: 'request_upload', arguments: { key: 'doi:10.1/none' } });
+      assert.deepEqual(JSON.parse(ru.content[0].text), { key: 'doi:10.1/none', upload_url: `${B9}/library/papers?key=doi%3A10.1%2Fnone&upload=1`, has_file: false });
+      assert.match(JSON.parse((await c1.callTool({ name: 'request_upload', arguments: { key: 'doi:10.1/has' } })).content[0].text).note, /replaces it/);
+      assert.ok((await c1.callTool({ name: 'request_upload', arguments: { key: 'doi:10.1/missing' } })).isError);
+      const up = (k) => `https://hub.example/library/papers?key=${k}&upload=1`;
+      const wu = await mcpF.withUpload({ key: 'doi:10.1/none', created: true }, up);
+      assert.deepEqual([wu.upload_url, /attached the PDF in the chat/.test(wu.upload_hint), wu.created], [up('doi:10.1/none'), true, true], 'a paper saved without a file gets the upload link');
+      assert.deepEqual(await mcpF.withUpload({ key: 'doi:10.1/has' }, up), { key: 'doi:10.1/has' }, 'not when it has a file');
+      runImpl = async () => [];
+
+      // refresh: rotated; reusing the old one revokes the connection
+      const t2 = await (await tok({ grant_type: 'refresh_token', refresh_token: T1.refresh_token, client_id: cid })).json();
+      assert.ok(t2.access_token && t2.refresh_token !== T1.refresh_token);
+      assert.ok(await oauth.verifyAccess(t2.access_token));
+      const reuse = await (await tok({ grant_type: 'refresh_token', refresh_token: T1.refresh_token, client_id: cid })).json();
+      assert.match(reuse.error_description, /reused: the connection was revoked/);
+      assert.equal(await oauth.verifyAccess(t2.access_token), false, 'revoked at once');
+      assert.equal((await tok({ grant_type: 'password' })).status, 400);
+
+      // listing and revoking connections (owner only)
+      const code4 = new URL((await approve({ req: sealed, decision: 'allow', owner_token: 'abc' })).headers.get('location')).searchParams.get('code');
+      const T4 = await (await tok({ grant_type: 'authorization_code', code: code4, redirect_uri: CLAUDE, client_id: cid, code_verifier: verifier })).json();
+      const OH9 = { Authorization: 'Bearer abc' };
+      assert.equal((await fetch(B9 + '/api/oauth/grants', { headers: { Authorization: 'Bearer ' + T4.access_token } })).status, 401);
+      const conns = (await (await fetch(B9 + '/api/oauth/grants', { headers: OH9 })).json()).connections;
+      assert.deepEqual(conns.map((x) => x.client_name), ['Claude']);
+      assert.deepEqual(await (await fetch(B9 + '/api/oauth/grants?id=' + conns[0].id, { method: 'DELETE', headers: OH9 })).json(), { revoked: 1 });
+      assert.equal(await oauth.verifyAccess(T4.access_token), false);
+      assert.equal((await fetch(B9 + '/api/oauth/grants?id=nope', { method: 'DELETE', headers: OH9 })).status, 404);
+      // a new owner token invalidates every client id and token
+      process.env.HUB_API_TOKEN = 'rotated-token';
+      assert.equal(oauth.client(cid), null);
+      process.env.HUB_API_TOKEN = 'abc';
+      assert.ok(oauth.client(cid));
+    } finally { srv9.close(); oauth.useStore(null); runImpl = async () => []; }
   }
 
   /* ------------------------------------------------------------ search query building */

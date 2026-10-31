@@ -1190,7 +1190,7 @@
     "/mcp": {
       "post": {
         "operationId": "mcp",
-        "summary": "MCP endpoint (Streamable HTTP, JSON-RPC). Tools: describe_graph, run_cypher, search_papers, get_artifact, add_paper, add_artifact, set_file_link, copy_pdf_to_drive, remove_file_link, set_status",
+        "summary": "MCP endpoint (Streamable HTTP, JSON-RPC). Owner token, or an OAuth access token (see /oauth/*). Without either: 401 with WWW-Authenticate: Bearer resource_metadata=…. Tools: describe_graph, run_cypher, search_papers, get_artifact, add_paper, add_artifact, get_schema, save_analysis, search_items, get_item, set_file_link, copy_pdf_to_drive, request_upload, remove_file_link, set_status",
         "security": [
           {
             "bearerAuth": []
@@ -2386,6 +2386,198 @@
           },
           "404": {
             "description": "No such ontology, or no snapshot"
+          }
+        }
+      }
+    },
+    "/api/oauth/grants": {
+      "get": {
+        "operationId": "listOauthConnections",
+        "summary": "MCP clients connected with OAuth (the claude.ai connector): id, client name, created and last used",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{connections: [{id, client_name, created_at, last_used_at}]}"
+          },
+          "401": {
+            "description": "Owner only"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "revokeOauthConnection",
+        "summary": "Revoke one OAuth connection (?id=) or all of them (?all=1). Its tokens stop working at once.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "all",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{revoked}"
+          },
+          "400": {
+            "description": "Neither id nor all"
+          },
+          "401": {
+            "description": "Owner only"
+          },
+          "404": {
+            "description": "No such connection"
+          }
+        }
+      }
+    },
+    "/oauth/register": {
+      "post": {
+        "operationId": "oauthRegister",
+        "summary": "OAuth dynamic client registration (RFC 7591) for MCP clients. Public clients only; redirect_uris must be in MCP_OAUTH_REDIRECTS or loopback.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "redirect_uris": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "client_name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "redirect_uris"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "{client_id, redirect_uris, token_endpoint_auth_method: none, ...}"
+          },
+          "400": {
+            "description": "{error: invalid_redirect_uri}"
+          }
+        }
+      }
+    },
+    "/oauth/authorize": {
+      "get": {
+        "operationId": "oauthAuthorize",
+        "summary": "The owner approves an MCP client (an HTML page). response_type=code, PKCE S256 required; redirects back with code, state and iss.",
+        "parameters": [
+          {
+            "name": "response_type",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "redirect_uri",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code_challenge",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code_challenge_method",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resource",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HTML approval page"
+          },
+          "302": {
+            "description": "Back to the client with an error"
+          },
+          "400": {
+            "description": "Unknown client or redirect URI (HTML)"
+          }
+        }
+      }
+    },
+    "/oauth/token": {
+      "post": {
+        "operationId": "oauthToken",
+        "summary": "grant_type=authorization_code (code, redirect_uri, client_id, code_verifier) or refresh_token (rotated on use). The access token (1 hour) only works for /mcp.",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{access_token, token_type: Bearer, expires_in, refresh_token, scope}"
+          },
+          "400": {
+            "description": "{error: invalid_grant | unsupported_grant_type}"
+          },
+          "401": {
+            "description": "{error: invalid_client}"
           }
         }
       }

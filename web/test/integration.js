@@ -388,6 +388,35 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
     for (const k of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REFRESH_TOKEN']) delete process.env[k];
   }
 
+  // Task 9: the OAuth store on Neo4j: single-use codes, grants rotated and revoked; never in a backup
+  {
+    const oauth = require('../core/oauth');
+    oauth.useStore(null);
+    const reg = oauth.registerClient({ redirect_uris: ['https://claude.ai/api/mcp/auth_callback'], client_name: 'IT client' });
+    const crypto = require('crypto');
+    const verifier = crypto.randomBytes(40).toString('base64url');
+    const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+    const code = await oauth.issueCode({ client_id: reg.client_id, redirect_uri: 'https://claude.ai/api/mcp/auth_callback', code_challenge: challenge });
+    const ex = { grant_type: 'authorization_code', code, client_id: reg.client_id, redirect_uri: 'https://claude.ai/api/mcp/auth_callback', code_verifier: verifier };
+    const t1 = await oauth.exchange(ex);
+    assert.equal(t1.status, 200, JSON.stringify(t1.body));
+    assert.equal((await oauth.exchange(ex)).status, 400, 'a code works once');
+    assert.ok(await oauth.verifyAccess(t1.body.access_token));
+    const t2 = await oauth.exchange({ grant_type: 'refresh_token', refresh_token: t1.body.refresh_token, client_id: reg.client_id });
+    assert.equal(t2.status, 200);
+    assert.equal((await oauth.exchange({ grant_type: 'refresh_token', refresh_token: t1.body.refresh_token })).status, 400, 'the old refresh token is spent');
+    assert.equal(await oauth.verifyAccess(t2.body.access_token), false, 'and reusing it revoked the connection');
+    const code2 = await oauth.issueCode({ client_id: reg.client_id, redirect_uri: 'https://claude.ai/api/mcp/auth_callback', code_challenge: challenge });
+    const t3 = await oauth.exchange({ ...ex, code: code2 });
+    assert.ok((await oauth.list()).some((g) => g.client_name === 'IT client'));
+    const dump2 = await backup.exportAll();
+    assert.ok(!dump2.nodes.some((n) => n.labels.includes('OAuthGrant') || n.labels.includes('OAuthCode')), 'connections are not part of a backup');
+    await oauth.revokeAll();
+    assert.equal(await oauth.verifyAccess(t3.body.access_token), false);
+    assert.equal((await db.run('MATCH (n:OAuthGrant) RETURN count(n) AS c'))[0].c, 0);
+    await db.exec('MATCH (c:OAuthCode) DELETE c');
+  }
+
   // clean up
   await artifacts.remove(paperKey);
   await db.exec("MATCH (n:Artifact) WHERE n.key STARTS WITH 'method:it-' OR n.key STARTS WITH 'note:it-' OR n.key STARTS WITH 'project:it-' OR n.key STARTS WITH 'usecase:offline-payments-' DETACH DELETE n");

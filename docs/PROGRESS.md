@@ -14,7 +14,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | 7 Hardening | done (2026-10-31) | See "Task 7" below. |
 | 8 Frameworks, research questions and hypotheses, ontologies | done (2026-10-31) | See "Task 8" below. |
 | 8b File upload beyond PDFs (ontology snapshots) | done (2026-10-31), live Drive not tested | See "Task 8b" below. |
-| 9 Claude chat connector: OAuth for MCP, upload link | not started | Requested by the owner 2026-10-31 (F18, S6). |
+| 9 Claude chat connector: OAuth for MCP, upload link | built (2026-10-31); live claude.ai test below | See "Task 9" below. |
 
 ## Task 0. Baseline against real services
 
@@ -426,4 +426,64 @@ Update at the end of every task. For each: what changed, what was tested for rea
 - `santidesimone.com/research-hub` (Firebase rewrite to a service in another project): to decide.
 - The claude.ai chat connector: Task 9.
 - The real budget stop (it would take the hub down); behaviour of the e2-micro under a large library.
+
+## Task 9. Claude chat connector: OAuth for MCP, upload link
+
+**Changed**
+- `web/core/oauth.js` (new): OAuth 2.1 for one owner, public clients with PKCE (S256), no new dependency.
+  - Client ids are stateless (the registered redirect URIs, signed). Redirect URIs come from `MCP_OAUTH_REDIRECTS` (the claude.ai callbacks by default) or loopback.
+  - Codes are single use and last 5 minutes (stored hashed, `(:OAuthCode)`).
+  - Refresh tokens are rotated on every use (`(:OAuthGrant)` keeps only a hash); reusing an old one revokes the connection; 90 days unused, it expires.
+  - Access tokens last 1 hour, work for `/mcp` only, and only while their connection exists.
+  - Everything is signed with a key derived from `HUB_API_TOKEN`, so changing the token revokes it all.
+- `web/features/oauth` (new): discovery documents at the domain root (a new optional `mountRoot` hook in `server.js`), registration, the approval page, the token endpoint, and listing or revoking connections.
+  - The approval page has no scripts. It accepts the owner session or the owner token, with the sign-in failure limit.
+  - Its CSP allows the client's origin in `form-action`, because Chrome checks the redirect after the form.
+- `/mcp`: accepts OAuth access tokens; a 401 carries `WWW-Authenticate: Bearer resource_metadata=…`.
+  - New tool `request_upload`; `add_paper` and `save_analysis` return `upload_url` when a paper has no file.
+  - The instructions tell Claude what to do with a paper shared in the chat.
+- Library: `?key=…&upload=1` shows a drop zone (click or drop, keyboard reachable) that uploads to Drive.
+- Migration `012_oauth` (constraints). `hub oauth [list | revoke <id> | revoke-all]`. Config `MCP_OAUTH_REDIRECTS`, `PUBLIC_URL`.
+- Docs: README, deploy/README (connecting claude.ai, the extra well-known rewrite behind a site proxy), openapi, `_env.example`.
+
+**Tested for real**
+- Offline:
+  - discovery;
+  - the 401 header;
+  - registration (allow-list, loopback, fragments, limits);
+  - forged client ids;
+  - the approval page:
+    - unknown client;
+    - unregistered redirect;
+    - no PKCE;
+    - wrong resource;
+    - no scripts;
+    - CSP;
+    - wrong token;
+    - deny;
+    - tampered request;
+    - session cookie;
+  - the token endpoint:
+    - wrong verifier;
+    - a code tried once even after a failure;
+    - wrong redirect;
+    - code reuse;
+    - expired code;
+    - only hashes stored;
+  - access tokens work on `/mcp` with the real MCP client, and not on the REST API;
+  - tampered and expired access tokens refused;
+  - refresh rotation, and revocation on reuse;
+  - listing and revoking connections;
+  - a new owner token invalidating everything;
+  - `request_upload` and `upload_url`;
+  - the CLI.
+  - Mutation check: 25 of 25 killed (3 survivors on the first pass got tests).
+- Integration on a fresh Neo4j 5: migration 012, the stored flow (single-use code, rotation, reuse revokes, revoke all), and connections are not in a backup.
+- Browser (Chrome): owner 24/24.
+  - New: the drop zone from an upload link, and the approval page.
+  - On the approval page, Chrome follows the redirect to a real local callback with the code and state under the page's CSP.
+  - Public and mobile 9/9; the CLI end to end. Screenshot reviewed.
+
+**Not tested / open**
+- The live claude.ai connector (next: deploy, then connect from claude.ai).
 

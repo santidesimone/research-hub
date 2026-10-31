@@ -22,6 +22,10 @@ GOOGLE_REFRESH_TOKEN=
 # Extra hosts an ontology snapshot may be downloaded from (`hub ontology snapshot <key> https://...`), on top of
 # PDF_FETCH_ALLOWED_HOSTS. Default: none (upload the file instead).
 # SNAPSHOT_FETCH_ALLOWED_HOSTS=spec.edmcouncil.org,www.iso20022.org
+# OAuth for MCP clients (the claude.ai connector): redirect URIs a client may register. Loopback addresses are always allowed.
+# MCP_OAUTH_REDIRECTS=https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback
+# The hub's public address, when a proxy hides it from the request (OAuth metadata and upload links use it)
+# PUBLIC_URL=https://santidesimone.com
 # Largest upload in MB, PDFs and snapshots alike (Cloud Run rejects request bodies over 32 MB)
 # MAX_UPLOAD_MB=30
 

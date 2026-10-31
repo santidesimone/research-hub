@@ -235,6 +235,31 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
     expect(!(await page.isDisabled('details.snapshot .btn-primary')), 'enabled once both are given');
     await page.screenshot({ path: OUT + '/9-ontology-snapshot.png', fullPage: true });
   });
+  await step('the upload link opens a drop zone for the paper', async () => {
+    await page.goto(U + '/library/papers?key=' + encodeURIComponent('doi:10.1007/978-1-4757-0602-4_18') + '&upload=1');
+    await page.waitForSelector('.dropzone');
+    expect((await page.textContent('.dropzone')).includes('Drop the PDF here'), 'drop zone text');
+    await page.focus('.dropzone');
+    expect(await page.evaluate(() => document.activeElement.classList.contains('dropzone')), 'keyboard reachable');
+    await page.screenshot({ path: OUT + '/10-dropzone.png' });
+    await page.goto(U + '/library/papers?key=' + encodeURIComponent('doi:10.1007/978-1-4757-0602-4_18'));
+    await page.waitForSelector('.doc h1');
+    expect(!(await page.$('.dropzone')), 'no drop zone without the link');
+  });
+  await step('OAuth approval page: Chrome follows the redirect back to the client (CSP form-action)', async () => {
+    const reg = await page.evaluate(async (u) => (await fetch(u + '/oauth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redirect_uris: ['http://127.0.0.1:18999/callback'], client_name: 'Browser check' }) })).json(), U);
+    // a stand-in for the MCP client's callback (a redirect after a form post is not intercepted by page.route)
+    const cb = require('http').createServer((_q, r) => r.end('client received the code')); await new Promise((ok) => cb.listen(18999, '127.0.0.1', ok));
+    const q = new URLSearchParams({ response_type: 'code', client_id: reg.client_id, redirect_uri: 'http://127.0.0.1:18999/callback', code_challenge: 'x'.repeat(43), code_challenge_method: 'S256', state: 's1' });
+    await page.goto(U + '/oauth/authorize?' + q);
+    expect((await page.textContent('main')).includes('Browser check'), 'client name shown');
+    expect((await page.textContent('main')).includes('signed in as the owner'), 'the session is recognised');
+    await page.screenshot({ path: OUT + '/11-oauth-approve.png' });
+    await Promise.all([page.waitForURL(/127\.0\.0\.1:18999\/callback/), page.click('button[value=allow]')]);
+    const back = new URL(page.url());
+    expect(back.searchParams.get('code') && back.searchParams.get('state') === 's1', page.url());
+    cb.close();
+  });
   await step('no console or CSP errors', async () => { expect(!problems.length, problems.slice(0, 5).join(' || ')); });
   for (const r of results) console.log(r.join(' | '));
   if (results.some((r) => r[0] !== 'PASS')) process.exitCode = 1; // CI needs a failing exit code

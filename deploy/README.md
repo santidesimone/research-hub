@@ -101,6 +101,11 @@ gcloud compute instances start neo4j-hub --zone $ZONE
 gcloud run services update research-hub --region $REGION --ingress all
 ```
 
+## 4c. Connect the claude.ai chat
+
+In claude.ai: *Settings → Connectors → Add custom connector*, URL `<your hub>/research-hub/mcp` (the run.app URL works). Leave the OAuth client fields empty: the hub supports dynamic registration. Claude opens the hub's approval page; sign in or type the owner token, then *Allow*. Check with `hub oauth`.
+OAuth discovery uses `/.well-known/oauth-protected-resource/research-hub/mcp` and `/.well-known/oauth-authorization-server/research-hub` at the **domain root**. On the run.app URL the app serves them. Behind santidesimone.com, also rewrite `/.well-known/oauth-*/research-hub/**` to the service, and set `PUBLIC_URL=https://santidesimone.com` if the proxy does not pass the original host.
+
 ## 5. Make santidesimone.com/research-hub reach it (transparent proxy)
 
 A **redirect** (301/302) would change the address bar to the run.app URL, so use a **proxy / rewrite**: the request path is forwarded unchanged

@@ -54,15 +54,19 @@ function requireOwner(req, res, next) {
 }
 
 const fails = new Map(); // ip -> timestamps of failed logins
-function login(req, res) {
-  const ip = req.ip;
+// The owner token typed into a form (sign-in, the OAuth approval page), with a limit on failed attempts per address.
+// -> null when it is right, else { status, error }
+function checkToken(ip, value) {
   const recent = (fails.get(ip) || []).filter((t) => Date.now() - t < 10 * 60 * 1000);
-  if (recent.length >= 10) return res.status(429).json({ error: 'Too many attempts. Try again in a few minutes.' });
-  if (!token()) return res.status(503).json({ error: 'Set HUB_API_TOKEN on the server first.' });
-  if (!eq((req.body && req.body.token) || '', token())) {
-    fails.set(ip, [...recent, Date.now()]);
-    return res.status(401).json({ error: 'Wrong token.' });
-  }
+  if (recent.length >= 10) return { status: 429, error: 'Too many attempts. Try again in a few minutes.' };
+  if (!token()) return { status: 503, error: 'Set HUB_API_TOKEN on the server first.' };
+  if (!eq(value || '', token())) { fails.set(ip, [...recent, Date.now()]); return { status: 401, error: 'Wrong token.' }; }
+  return null;
+}
+
+function login(req, res) {
+  const bad = checkToken(req.ip, req.body && req.body.token);
+  if (bad) return res.status(bad.status).json({ error: bad.error });
   const exp = Date.now() + DAYS * 864e5;
   res.cookie(COOKIE, sign(exp), { httpOnly: true, sameSite: 'lax', secure: req.secure, path: BASE || '/', maxAge: DAYS * 864e5 });
   res.json({ owner: true });
@@ -72,4 +76,4 @@ function logout(req, res) {
   res.json({ owner: false });
 }
 
-module.exports = { requireOwner, isOwner, login, logout, sign, verify };
+module.exports = { requireOwner, isOwner, login, logout, sign, verify, checkToken, bearer };

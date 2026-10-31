@@ -243,3 +243,9 @@ pre.json { background: var(--bg-sunken); border: 1px solid var(--border); border
   .topbar .crumb { display: none; }
   .brand { font-size: 17px; }
 }
+
+/* the PDF drop zone (Library, ?upload=1) */
+.dropzone { display: grid; gap: 4px; place-items: center; text-align: center; margin-top: 18px; padding: 28px 16px; border: 2px dashed var(--border-strong); border-radius: var(--radius-m); background: var(--surface); cursor: pointer; }
+.dropzone:focus-visible, .dropzone.over { border-color: var(--accent); background: var(--accent-soft); outline: none; }
+.dropzone.busy { opacity: .6; pointer-events: none; }
+.dropzone p { margin: 6px 0 0; }

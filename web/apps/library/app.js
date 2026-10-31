@@ -37,6 +37,9 @@ class Library {
     this.collections = (S.schema && S.schema.collections) || [];
     this.entities = (S.schema && S.schema.entities) || [];
     this.sel = null;
+    // ?key=…&upload=1 (the link Claude gives after saving a paper): show a drop zone for that paper's PDF
+    const qs = new URLSearchParams(location.search);
+    this.uploadKey = qs.get('upload') === '1' ? qs.get('key') : null;
     this.q = ''; this.status = ''; this.sort = 'new'; this.tab = 'info';
     this.graph = { nodes: [], edges: [] }; this.papers = []; this.personal = {};
     this.loading = true; this.error = null;
@@ -353,6 +356,7 @@ class Library {
       actions.append(delBtn);
     }
     if (actions.children.length) wrap.append(actions);
+    if (isPaper && key === this.uploadKey && where === 'library' && this.mode === 'private' && S.owner) wrap.append(this.dropZone(d));
 
     if (p.summary) info.append(h('p', { class: 'muted', style: { marginTop: '22px', lineHeight: '1.7' } }, p.summary));
     if (p.abstract) info.append(h('div', { class: 'abstract' }, h('div', { class: 'label' }, 'Abstract'), h('p', null, p.abstract)));
@@ -427,6 +431,29 @@ class Library {
         h('a', { class: 'btn btn-primary btn-sm', href: f.url, target: '_blank', rel: 'noopener' }, 'Open file'),
         h('button', { class: 'btn btn-sm', onclick: () => { card.remove(); holder.append(h('iframe', { src: f.url, title: 'File: ' + title })); } }, 'Try to show it here')));
     return [bar, card, holder];
+  }
+  // A large target for the PDF: drop it or choose it; it goes to the owner's Drive, linked to this paper
+  dropZone(d) {
+    const key = d.key;
+    const status = h('p', { class: 'faint', role: 'status' }, d.file ? 'This paper already has a file: a new one replaces it.' : 'It goes to your Google Drive and is linked to this paper.');
+    const send = async (f) => {
+      if (!f) return;
+      if (f.type && f.type !== 'application/pdf') { toast('Only PDF files', 'error'); return; }
+      zone.classList.add('busy'); status.textContent = `Uploading ${f.name}…`;
+      try {
+        await api('/api/papers/file?key=' + keyQuery(key), { method: 'POST', raw: f, headers: { 'Content-Type': 'application/pdf' } });
+        this.uploadKey = null; toast('Uploaded to Drive');
+        const row = this.papers.find((x) => x.key === key); if (row) row.has_file = true;
+        await this.renderDetail(this.detailEl, key, 'library');
+      } catch (e) { status.textContent = e.message; zone.classList.remove('busy'); toast(e.message, 'error'); }
+    };
+    const picker = h('input', { type: 'file', accept: 'application/pdf', class: 'hidden', 'aria-label': 'PDF file', onchange: (e) => send(e.target.files[0]) });
+    const zone = h('div', { class: 'dropzone', tabindex: '0', role: 'button', 'aria-label': 'Drop the PDF here or choose a file',
+      onclick: () => picker.click(), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); picker.click(); } },
+      ondragover: (e) => { e.preventDefault(); zone.classList.add('over'); }, ondragleave: () => zone.classList.remove('over'),
+      ondrop: (e) => { e.preventDefault(); zone.classList.remove('over'); send(e.dataTransfer.files[0]); } },
+    h('strong', null, 'Drop the PDF here'), h('span', { class: 'faint' }, 'or click to choose a file'), status, picker);
+    return zone;
   }
   fileEditor(d) {
     const key = d.key;

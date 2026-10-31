@@ -84,7 +84,10 @@ curl http://localhost:3000/api/query/schema -H "Authorization: Bearer $HUB_API_T
 ./bin/hub search blind signatures      # also: schema, get <key>, add, link, pdf, status, sync-notes, enrich, backup (hub help)
 ```
 
-**Claude (MCP)**: the server exposes `POST <base>/mcp` (Streamable HTTP, bearer token). Tools: `describe_graph`, `run_cypher`, `search_papers`, `get_artifact`, `add_paper`, `add_artifact`, `set_file_link`, `copy_pdf_to_drive`, `remove_file_link`, `set_status`. With Claude Code: `claude mcp add --transport http research-hub http://localhost:3000/mcp --header "Authorization: Bearer $HUB_API_TOKEN"`. For the chat window, see deploy/README.md (it needs a public https address).
+**Claude (MCP)**: the server exposes `POST <base>/mcp` (Streamable HTTP, bearer token). Tools: `describe_graph`, `run_cypher`, `search_papers`, `get_artifact`, `add_paper`, `add_artifact`, `set_file_link`, `copy_pdf_to_drive`, `remove_file_link`, `set_status`. Plus `request_upload` (Task 9). With Claude Code: `claude mcp add --transport http research-hub http://localhost:3000/mcp --header "Authorization: Bearer $HUB_API_TOKEN"`.
+
+**The claude.ai chat (OAuth).** In claude.ai: *Settings → Connectors → Add custom connector*, URL `https://<your hub>/research-hub/mcp`, no client id or secret. Claude finds the hub's OAuth endpoints, opens the hub's approval page (sign in, or type the owner token, then *Allow*) and connects. Its tokens work for `/mcp` only, expire after an hour and are refreshed (rotated) automatically; `hub oauth` lists connections and `hub oauth revoke <id>` or `revoke-all` stops them at once. Changing `HUB_API_TOKEN` also revokes every connection.
+Then drop a paper into the chat: Claude finds the DOI, saves its analysis in one call, and for the file either copies a public PDF (arXiv) into your Drive or, since chat attachments do not reach the hub, replies with an upload link (`…/library/papers?key=…&upload=1`) where you drop the PDF once.
 
 Queries are limited to a single read-only statement without procedure calls, 15 s, 500 rows. This is enforced by a text check, a query-plan check and a read transaction, but Neo4j Community has no read-only user, so treat the token as full access.
 
@@ -311,6 +314,7 @@ Node 18+, nothing to install. `hub config --url <base url> --token <token>` save
 | `hub item rm <key> --yes` | delete (refuses without `--yes`) |
 | `hub item link <key> <rel> <target>` `[--evidence t] [--location p] [--confidence c] [--result r]`, `hub item unlink <key> <rel> <target>` | typed links; `TESTS` (paper to hypothesis) needs `--result supported\|refuted\|mixed\|inconclusive` |
 | `hub vocab iri <concept> <iri \| none>` `[--ontology <key \| none>]` | point a concept at a term in an ontology (`external_iri` and `DEFINED_IN`); nothing is imported |
+| `hub oauth [list \| revoke <id> \| revoke-all]` | MCP clients connected with OAuth (the claude.ai chat connector): list them, or revoke one or all; their tokens stop working at once |
 | `hub ontology snapshot <key> <file \| https-url \| none>` | a frozen copy of an ontology in your Drive (owl, rdf, ttl, jsonld, xml, xsd, json, csv, zip, txt, pdf; at most `MAX_UPLOAD_MB`), recorded with its sha256, size and retrieval date; replaces and trashes the previous one. URLs only from `PDF_FETCH_ALLOWED_HOSTS` or `SNAPSHOT_FETCH_ALLOWED_HOSTS`. Check the license first: the copy is shared by link |
 | `hub analyze <doi \| url \| key \| file.pdf>` `[--deep] [--force] [--model m] [--collection c] < analysis.json` | save an analysis in one call (stdin: `{fields, links, confidence}`; the model from `--model`, the JSON or `HUB_MODEL`). For a PDF, the JSON names the paper (`doi` or `url`) and the file is uploaded to your Drive |
 | `hub audit [--json]` | what is worth reviewing, with counts |

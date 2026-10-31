@@ -41,6 +41,7 @@ const HELP = `hub: research hub client   (${url})
     hub vocab iri <concept> <iri | none> [--ontology <key | none>]   point a concept at a term in an ontology (DEFINED_IN)
     hub ontology snapshot <key> <file | https-url | none>   a frozen copy in your Drive (owl, rdf, ttl, jsonld, xml, xsd,
                                                   json, csv, zip, txt, pdf); replaces the previous one. Check the license first
+    hub oauth [list | revoke <id> | revoke-all]  MCP clients connected with OAuth (the claude.ai connector); revoke stops them at once
 
   Claude's analysis and the audit
     hub analyze <doi | url | key | file.pdf> [--deep] [--force] [--model m] [--collection c]  < analysis.json
@@ -316,6 +317,13 @@ function readNotes(dir) {
   if (cmd === 'item') return itemCommand(args[0], args.slice(1), flags);
   if (cmd === 'analyze') return analyzeCommand(args, flags);
   if (cmd === 'audit') return auditCommand(flags);
+  if (cmd === 'oauth') {
+    const [op = 'list', id] = args;
+    if (op === 'list') return show(await call('GET', '/api/oauth/grants'));
+    if (op === 'revoke' && id) return show(await call('DELETE', '/api/oauth/grants?id=' + enc(id)));
+    if (op === 'revoke-all') return show(await call('DELETE', '/api/oauth/grants?all=1'));
+    fail('usage: hub oauth [list | revoke <id> | revoke-all]');
+  }
   if (cmd === 'ontology') {
     const [sub, key, src] = args;
     if (sub !== 'snapshot' || !key || !src) fail('usage: hub ontology snapshot <ontology key> <file | https-url | none>');

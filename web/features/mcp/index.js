@@ -1,4 +1,5 @@
-// MCP server (Streamable HTTP, stateless) so Claude can use the hub: POST <base>/mcp with Authorization: Bearer <HUB_API_TOKEN>.
+// MCP server (Streamable HTTP, stateless) so Claude can use the hub: POST <base>/mcp with Authorization: Bearer <HUB_API_TOKEN>,
+// or with an OAuth access token (the claude.ai connector; features/oauth). Without either, the 401 says where to get one.
 // Tools call the same code as the REST API. Tools whose feature folder is missing are simply not offered.
 const express = require('express');
 // The MCP SDK uses the Web Crypto global, which Node only provides by default from version 20 (package.json allows 18).
@@ -6,7 +7,9 @@ if (!globalThis.crypto) globalThis.crypto = require('crypto').webcrypto;
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 const { z } = require('zod');
-const { requireOwner } = require('../../core/auth');
+const { requireOwner, isOwner, bearer } = require('../../core/auth');
+const oauth = require('../../core/oauth');
+const { BASE } = require('../../core/env');
 const { run } = require('../../core/db');
 const { schema, fieldsOf, relationsFrom } = require('../../core/schema');
 const artifacts = require('../../core/artifacts');
@@ -59,11 +62,23 @@ const fail = (e) => {
 };
 const safe = (fn) => async (args) => { try { return text(await fn(args)); } catch (e) { return fail(e); } };
 
-function buildServer() {
+// A paper saved without a file gets upload_url: a Library page with a drop zone for its PDF. Files attached in a chat
+// never reach the hub, so this is how the owner adds a private PDF in one step.
+const UPLOAD_HINT = 'This paper has no file yet. If the owner attached the PDF in the chat, give them upload_url: they drop the file there and it goes to their Google Drive, linked to this paper.';
+async function withUpload(result, uploadUrl) {
+  if (!uploadUrl || !result || !result.key) return result;
+  const [p] = await run('MATCH (p:Paper {key:$key}) RETURN p.file_url AS file', { key: result.key });
+  return p && !p.file ? { ...result, upload_url: uploadUrl(result.key), upload_hint: UPLOAD_HINT } : result;
+}
+
+function buildServer({ uploadUrl = null } = {}) {
   const s = new McpServer({ name: 'research-hub', version: pkg.version }, {
     instructions: 'Tools for the owner\'s research hub: a Neo4j knowledge graph with collections (papers, methods, use cases, case studies, frameworks, research questions, hypotheses, ontologies and standards) plus notes and projects. '
       + 'To analyse something, call get_schema for its collection, then save_analysis once with every field you are confident about: it saves directly. '
-      + 'Use search_items and get_item to read collections; call describe_graph before writing Cypher.',
+      + 'Use search_items and get_item to read collections; call describe_graph before writing Cypher. '
+      + 'When the owner shares a paper (a PDF in the chat, a link, a DOI): find its DOI, call get_schema for papers, then save_analysis once (doi, your analysis). '
+      + 'For the file: if there is a public PDF URL on an allow-listed host (arXiv), pass it as file_url with copy_to_drive true, or call copy_pdf_to_drive. '
+      + 'Files attached in the chat do not reach the hub: when the reply has upload_url, give it to the owner so they can drop the PDF there.',
   });
 
   s.registerTool('describe_graph', { description: 'Describe the graph: labels, relationship types, properties, patterns, conventions and example queries. Call this before run_cypher.', inputSchema: {} },
@@ -105,7 +120,7 @@ function buildServer() {
       file_url: z.string().optional().describe('https link to the PDF'), pdf_url: z.string().optional().describe('older name for file_url'),
       copy_to_drive: z.boolean().optional().describe('download the PDF (allow-listed hosts only) and store it in Drive'), overwrite: z.boolean().optional(),
     },
-  }, safe(({ overwrite, ...item }) => artifacts.add('paper', item, { overwrite: Boolean(overwrite) })));
+  }, safe(async ({ overwrite, ...item }) => withUpload(await artifacts.add('paper', item, { overwrite: Boolean(overwrite) }), uploadUrl)));
 
   s.registerTool('add_artifact', {
     description: 'Add a method, note or project (any non-paper type in schema.json). Relation arrays take artifact keys.',
@@ -145,7 +160,7 @@ function buildServer() {
         force: z.boolean().optional().describe('replace values you (Claude) wrote earlier; never touches the owner\'s'),
         file_url: z.string().optional(), copy_to_drive: z.boolean().optional(),
       },
-    }, safe((args) => analysis.save(args)));
+    }, safe(async (args) => (args.collection === 'paper' ? withUpload(await analysis.save(args), uploadUrl) : analysis.save(args))));
 
     s.registerTool('search_items', {
       description: 'List a collection: full-text query, filters (the collection\'s filters from get_schema, e.g. {"kind": "technique", "domain": "payments"}), sort, cursor paging.',
@@ -172,6 +187,18 @@ function buildServer() {
       inputSchema: { key: z.string().describe('Paper key'), pdf_url: z.string() },
     }, safe(async ({ key, pdf_url }) => ({ key, ...(await files.uploadPdf(key, await files.fetchPdf(pdf_url))) })));
 
+    if (uploadUrl) {
+      s.registerTool('request_upload', {
+        description: 'A link where the owner drops a PDF for an existing paper; the file goes to their Google Drive and is linked to the paper. '
+          + 'Use it when the owner attached the PDF in the chat (attachments do not reach the hub) and there is no public PDF URL to copy with copy_pdf_to_drive. Give the owner the returned upload_url.',
+        inputSchema: { key: z.string().describe('Paper key') },
+      }, safe(async ({ key }) => {
+        const [p] = await run('MATCH (p:Paper {key:$key}) RETURN p.file_url AS file', { key });
+        if (!p) throw Object.assign(new Error('No such paper: ' + key), { status: 404 });
+        return { key, upload_url: uploadUrl(key), has_file: Boolean(p.file), note: p.file ? 'The paper already has a file; uploading replaces it (a hub-uploaded one goes to the Drive trash).' : undefined };
+      }));
+    }
+
     s.registerTool('remove_file_link', {
       description: 'Remove the file link from a paper. A Drive file the hub uploaded is moved to the Drive trash.',
       inputSchema: { key: z.string().describe('Paper key') },
@@ -187,12 +214,29 @@ function buildServer() {
   return s;
 }
 
+// The owner token or cookie (requireOwner), or an OAuth access token, which is accepted here and nowhere else.
+// A 401 carries WWW-Authenticate with the protected-resource metadata, which is how an OAuth client discovers the hub.
+async function mcpAuth(req, res, next) {
+  const b = bearer(req);
+  if (oauth.isAccessToken(b)) {
+    try { if (await oauth.verifyAccess(b)) return next(); } catch (e) { return next(e); }
+  }
+  if (config.get().token && !isOwner(req)) {
+    const base = config.get().publicUrl || `${req.protocol}://${req.get('host')}`;
+    res.set('WWW-Authenticate', `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource${BASE}/mcp"`);
+    return res.status(401).json({ error: oauth.isAccessToken(b) ? 'The access token is invalid, expired or revoked.' : 'Sign in required (Bearer token or OAuth).' });
+  }
+  return requireOwner(req, res, next);
+}
+
 module.exports = {
   name: 'mcp',
+  mcpAuth,
+  withUpload,
   toolError: fail,
   mount(app) {
-    app.post('/mcp', requireOwner, express.json({ limit: '2mb' }), async (req, res) => {
-      const server = buildServer();
+    app.post('/mcp', mcpAuth, express.json({ limit: '2mb' }), async (req, res) => {
+      const server = buildServer({ uploadUrl: (key) => `${oauth.baseUrl(req)}/library/papers?key=${encodeURIComponent(key)}&upload=1` });
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       res.on('close', () => { transport.close(); server.close(); });
       try {

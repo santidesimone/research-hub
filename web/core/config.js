@@ -50,6 +50,10 @@ function get(env = process.env) {
     pdfFetchAllowedHosts: (env.PDF_FETCH_ALLOWED_HOSTS || 'arxiv.org,export.arxiv.org,discovery.ucl.ac.uk').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     // hosts an ontology snapshot may be downloaded from, besides the PDF hosts (e.g. spec.edmcouncil.org)
     snapshotFetchAllowedHosts: (env.SNAPSHOT_FETCH_ALLOWED_HOSTS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+    // redirect URIs an MCP client may register for OAuth (the claude.ai connector); loopback addresses are always allowed
+    mcpOauthRedirects: (env.MCP_OAUTH_REDIRECTS || 'https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback').split(',').map((s) => s.trim()).filter(Boolean),
+    // the hub's public address (https://santidesimone.com), when it differs from what the request says (a proxy that rewrites Host)
+    publicUrl: (env.PUBLIC_URL || '').replace(/\/+$/, ''),
     maxUploadBytes: num(env.MAX_UPLOAD_MB, 30) * 1024 * 1024, // Cloud Run rejects request bodies over 32 MB
     publicCacheSeconds: num(env.PUBLIC_CACHE_SECONDS, 60),
     logFormat: env.LOG_FORMAT || (production ? 'json' : 'pretty'),
