@@ -56,6 +56,7 @@ export async function api(path, { method = 'GET', body, raw, headers = {} } = {}
 export const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
 export function toast(message, kind = '') {
+  document.querySelectorAll('.toast').forEach((t) => t.remove()); // one at a time: the newest wins
   const el = h('div', { class: 'toast ' + kind }, message);
   document.body.append(el);
   setTimeout(() => el.remove(), 3500);

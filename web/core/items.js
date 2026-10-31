@@ -35,6 +35,8 @@ const MAX_LIMIT = 100;
 const isSys = (f) => f.by.length === 1 && f.by[0] === 'Sys';
 const kindOf = (f) => (f.type === 'ref' ? 'edge' : f.type === 'object' ? 'json' : 'prop');
 const empty = (v) => v == null || v === '' || (Array.isArray(v) && v.length === 0);
+// An item needs review while it holds values Claude wrote that nobody has accepted; the owner's and the sources' do not.
+const needsReview = (prov) => Object.values(prov || {}).some((p) => p && p.by === 'claude' && p.status === 'auto');
 // The queryable copies of a single object's parts: `<field>__<part>` for each part the schema declares.
 const partNames = (f, spec) => (kindOf(spec) === 'json' && !spec.list ? Object.keys(spec.props || {}).map((k) => `${f}__${k}`) : []);
 function partValues(f, spec, v) {
@@ -242,6 +244,7 @@ async function write(key, input, opts = {}) {
     if (unknown.length > MAX_UNKNOWN) warnings.push(`only the first ${MAX_UNKNOWN} unknown fields were kept`);
     if (unknown.length) warnings.push(`not in the ${c} schema (kept as is): ${unknown.join(', ')}`);
     Object.assign(prov, opts.provenance || {});
+    sets.record_status = needsReview(prov) ? 'auto' : 'reviewed';
 
     for (const [f, spec, targets] of edgeWrites) {
       const rel = safeRel(spec.rel);
@@ -469,4 +472,4 @@ async function list(query = {}) {
   return { collection: c, items, total, next_cursor: more && last ? encodeCursor([last.s, last.key]) : null };
 }
 
-module.exports = { partNames, partValues, COLLECTIONS, READ, get, list, create, update, write, remove, link, unlink, toItem, blocked, reserved, relName, kindOf, isSys, empty, encodeCursor, decodeCursor };
+module.exports = { needsReview, partNames, partValues, COLLECTIONS, READ, get, list, create, update, write, remove, link, unlink, toItem, blocked, reserved, relName, kindOf, isSys, empty, encodeCursor, decodeCursor };

@@ -22,7 +22,7 @@ async function report({ limit = 200 } = {}) {
     const it = items.toItem(row);
     if (!it) continue;
     const head = { key: it.key, title: it.fields.title, collection: it.collection };
-    if (it.record_status !== 'reviewed') lists.unreviewed_items.push(head);
+    if (items.needsReview(it.provenance)) lists.unreviewed_items.push(head);
     for (const [field, p] of Object.entries(it.provenance)) {
       if (p && p.by === 'claude' && p.status === 'auto' && p.confidence === 'low') lists.low_confidence.push({ ...head, field, model: p.model || null, at: p.at || null });
     }
@@ -76,7 +76,7 @@ async function accept(body = {}) {
       prov[f] = { ...prov[f], status: 'reviewed', reviewed_at: at };
       accepted.push(f);
     }
-    const remaining = Object.values(prov).filter((p) => p && p.status === 'auto').length;
+    const remaining = items.needsReview(prov) ? 1 : 0;
     await tx.run(
       `MATCH (n:Artifact {key:$key}) SET n.provenance_json = $prov ${remaining ? '' : ", n.record_status = 'reviewed'"}`,
       { key: body.key, prov: JSON.stringify(prov) });

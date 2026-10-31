@@ -42,6 +42,7 @@ function check(s) {
     const at = `types.${name}`;
     if (!MANAGED.includes(t.managed)) out.push(`${at}: managed must be one of ${MANAGED.join(', ')}`);
     if (!Number.isInteger(t.schema_version) || t.schema_version < 1) out.push(`${at}: schema_version must be a positive integer`);
+    if (t.label_plural != null && (typeof t.label_plural !== 'string' || !t.label_plural.trim())) out.push(`${at}: label_plural must be text`);
     if (t.key_prefix != null && !/^[a-z]+:$/.test(t.key_prefix)) out.push(`${at}: key_prefix looks like "word:"`);
     if (t.managed === 'markdown' && !t.folder) out.push(`${at}: Markdown-managed types need a folder`);
     if (t.collection && !t.fields) out.push(`${at}: collections need fields`);
@@ -188,13 +189,25 @@ function validate(typeName, input = {}, { partial = false } = {}) {
   return { errors, warnings, unknown };
 }
 
-// What the UI needs: labels, colours and which ones are drawn large.
+const FIELD_KEYS = ['type', 'enum', 'list', 'ref', 'rel', 'props', 'min', 'max', 'tier', 'by', 'label', 'help', 'required', 'default'];
+const slugOf = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+// What the UI needs: labels, colours and which ones are drawn large; and for the Library, each collection's fields,
+// layout hints and the relations it can have. This describes the model only, never any data.
 function publicView() {
   const labels = [
-    ...Object.entries(schema.types).map(([name, t]) => ({ name, label: t.label, color: t.color, big: Boolean(t.big) })),
+    ...Object.entries(schema.types).map(([name, t]) => ({ name, label: t.label, plural: t.label_plural || t.label, color: t.color, big: Boolean(t.big) })),
     ...Object.entries(schema.entities).map(([label, e]) => ({ name: label.toLowerCase(), label, color: e.color, big: false })),
   ];
-  return { version: schema.version, labels };
+  const collections = Object.entries(schema.types).filter(([, t]) => t.collection).map(([name, t]) => ({
+    name, label: t.label, plural: t.label_plural || t.label, slug: slugOf(t.label_plural || t.label), schema_version: t.schema_version, managed: t.managed,
+    list_columns: t.list_columns || [], filters: t.filters || [], detail_groups: t.detail_groups || [],
+    fields: Object.fromEntries(Object.entries(fieldsOf(name)).filter(([, f]) => !(f.by.length === 1 && f.by[0] === 'Sys'))
+      .map(([f, spec]) => [f, Object.fromEntries(FIELD_KEYS.filter((k) => spec[k] !== undefined).map((k) => [k, spec[k]]))])),
+    relations: Object.entries(schema.relation_types).filter(([, r]) => r.from.includes(t.label)).map(([rel, r]) => ({ rel, to: r.to, interpretive: Boolean(r.interpretive) })),
+  }));
+  const entities = Object.entries(schema.entities).map(([label, e]) => ({ label, key_prefix: e.key_prefix }));
+  return { version: schema.version, labels, collections, entities };
 }
 
 module.exports = {

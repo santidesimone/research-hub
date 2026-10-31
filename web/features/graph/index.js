@@ -4,7 +4,8 @@ const path = require('path');
 const { marked } = require('marked');
 const matter = require('gray-matter');
 const { run } = require('../../core/db');
-const { publicView } = require('../../core/schema');
+const { publicView, entityLabels, safeLabel } = require('../../core/schema');
+const types = require('../../core/types');
 const migrate = require('../../core/migrate');
 const { CONTENT_DIR } = require('../../core/env');
 const { requireOwner, isOwner } = require('../../core/auth');
@@ -18,6 +19,8 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 
 // The graph view only needs names and a few facts per node; abstracts, bodies and links load when you open a node.
 const GRAPH_PROPS = ['title', 'name', 'year', 'visibility', 'item_type'];
+// Every node the hub shows: items and the vocabulary labels in schema.json.
+const NODES = ['Artifact', ...entityLabels.map(safeLabel)].join('|');
 
 module.exports = {
   name: 'graph',
@@ -28,14 +31,15 @@ module.exports = {
 
     app.get('/api/schema', wrap(async (req, res) => {
       const out = { ...publicView(), features: registry.features };
+      for (const c of out.collections) c.locked = types.get(c.name).locked || []; // fields owner edits may not change (papers: identity and sources)
       if (isOwner(req)) { try { out.migrations = await migrate.applied(); } catch { /* database not reachable yet */ } }
       res.json(out);
     }));
 
     app.get('/api/graph', requireOwner, wrap(async (_req, res) => {
-      const nodes = await run('MATCH (n:Artifact|Person|Concept) RETURN n.key AS key, labels(n) AS labels, properties(n) AS props');
+      const nodes = await run(`MATCH (n:${NODES}) RETURN n.key AS key, labels(n) AS labels, properties(n) AS props`);
       for (const n of nodes) n.props = Object.fromEntries(GRAPH_PROPS.filter((k) => n.props[k] != null).map((k) => [k, n.props[k]]));
-      const edges = await run('MATCH (a:Artifact|Person|Concept)-[r]->(b:Artifact|Person|Concept) RETURN a.key AS `from`, b.key AS `to`, type(r) AS type');
+      const edges = await run(`MATCH (a:${NODES})-[r]->(b:${NODES}) RETURN a.key AS \`from\`, b.key AS \`to\`, type(r) AS type`);
       // revalidate with the ETag instead of re-downloading when nothing changed
       res.set('Cache-Control', 'private, no-cache').vary('Authorization').vary('Cookie');
       res.json({ nodes, edges });
@@ -48,7 +52,7 @@ module.exports = {
       node.file = links.describe(node.props.file_url);
       node.has_file = Boolean(node.file);
       const q = (dir) => run(
-        `MATCH ${dir === 'out' ? '(n {key:$key})-[r]->(m:Artifact|Person|Concept)' : '(m:Artifact|Person|Concept)-[r]->(n {key:$key})'}
+        `MATCH ${dir === 'out' ? `(n {key:$key})-[r]->(m:${NODES})` : `(m:${NODES})-[r]->(n {key:$key})`}
          RETURN type(r) AS type, m.key AS key, labels(m) AS labels, coalesce(m.title, m.name) AS title`, { key });
       const [out, inc] = await Promise.all([q('out'), q('in')]);
       let html = null;

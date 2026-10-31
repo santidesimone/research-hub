@@ -9,7 +9,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | 2 Vocabulary nodes and matcher | done (2026-10-30) | See "Task 2" below. |
 | 3 Generic items API | done (2026-10-30) | See "Task 3" below. |
 | 4 Claude analysis, single-call save, audit | done (2026-10-30) | See "Task 4" below. |
-| 5 Library UI: Collections, forms, audit | not started | |
+| 5 Library UI: Collections, forms, audit | done (2026-10-30) | See "Task 5" below. |
 | 6 CLI, API docs, CI, docs | not started | |
 | 7 Hardening | not started | |
 
@@ -208,3 +208,51 @@ Update at the end of every task. For each: what changed, what was tested for rea
 - Claude cannot write `doi` or `arxiv_id` for papers (source fields). A preprint known only by URL keeps those empty until a source fills them.
 - Paper creation stays two steps (paper writer, then fields). A failure between them leaves a paper without Claude's fields; re-running the analysis fills them.
 - Not run against your own database: migration 009 runs on the next start (additive). Take a `hub backup` first.
+
+## Task 5. Library UI: Collections, shelves, forms, audit
+
+**Changed**
+- `web/apps/library/`: `app.js` keeps the shell, graph and paper view. New modules:
+  - `model.js`: pure logic (routes, form values, change detection, provenance labels).
+  - `view.js`: read-only rendering, values as text only (never HTML).
+  - `forms.js`: generated forms and pickers.
+  - `collections.js`: the generic list and detail.
+  - `audit.js`: the audit view.
+- Collections bar (All, Papers, Methods, Use cases, Case studies, Graph, Audit) and addresses `/library/<collection>?key=..&edit=1`; older `/library?key=` links redirect.
+- Papers: the list, reader, file link, upload and status are unchanged. New: an **Analysis** tab (detail groups, tier badges, Claude/source/you markers with model, confidence and date, low-confidence and ungrounded flags, empty fields, links with evidence), plus Edit, Delete and + New.
+- Methods, use cases, case studies:
+  - **List:** schema list columns and filters (enums, and vocabulary pickers for link fields), sort, search, cursor "load more".
+  - **Detail:** grouped fields, links in and out (notes and projects included), an add-link editor checked against `relation_types`, and remove link.
+- Forms from the schema: text, long text, number with bounds, enum, list editor, object and list-of-object editors, vocabulary type-ahead (new names allowed), and an item picker. An edit PATCHes only the changed fields. A paper's locked fields are shown read-only.
+- Audit view: every bucket with counts, one-click Accept (field, link, vocabulary or whole item) and Edit (opens the form at the field).
+- Server:
+  - `/api/schema` adds `collections` (fields, layout hints, relations, locked fields) and `entities`.
+  - New `GET /api/vocab` (owner-only type-ahead).
+  - `/api/graph` and `/api/artifact` include every vocabulary label (Topic, Domain, Venue ...).
+  - `label_plural` added to the schema.
+- `record_status` reflects provenance: `auto` only while unaccepted Claude values remain. Owner-created items are `reviewed`, and source facts need no review. Migration `010` recomputes it (005 had marked all of your existing data `auto`).
+- Skins: `--node-*` tokens for the new types and vocabulary in both skins, light and dark, plus a test that every schema type and entity has them. New CSS in `base.css` uses tokens only.
+- Shell: one toast at a time (they used to stack on top of each other).
+- `web/test/browser/` (new): `seed.js`, `owner.js` and `public-mobile.js`, with a README. Run against a real hub with `playwright-core` installed outside the repo; not a project dependency.
+- openapi (`/api/vocab`, `/api/schema`), README ("The Library"), `schema/CHANGELOG.md`.
+
+**Tested for real**
+- Offline: `model.js` loaded as an ES module from the suite (routes and round-trips, form values, change detection, provenance labels, safe links), the `/api/schema` collections, `/api/vocab` (owner only, normalised query, limit capped), graph labels, skin tokens, the record_status rule and migration 010. Mutation checks: UI logic and server 27/27; record_status 5/5.
+- **Browser (Playwright 1.47 driving the installed Chrome) against the real server on a throwaway Neo4j 5**, with data that includes two papers analysed live through Crossref and OpenAlex:
+  - **Owner, 15/15:** sign-in through the UI; Collections bar; the paper Analysis tab (provenance markers, tiers, flagged finding, empty fields); status and file link intact; method filter; create a method (list editor, enum, vocabulary type-ahead), checked in the database; edit sends only the changed field (other fields keep their provenance timestamps); add and remove a typed link with the relation picker; delete with confirmation, gone from the database; a case-study structured editor round-trip; audit Accept for a field and for vocabulary; audit Edit focusing the field; the graph with the new node types; an older link redirecting; **no console errors, CSP violations or failed requests**.
+  - **Anonymous, 5/5:** only the public paper and method are listed; the abstract (not whitelisted) never appears; no Analysis tab, forms or audit; only `/api/apps`, `/api/me`, `/api/schema` and `/api/public` are called.
+  - **Mobile (390x844), 4/4:** no horizontal overflow; one-line top bar; the Collections bar scrolls; detail and edit form fit.
+  - Screenshots reviewed by eye (light, dark, mobile). They showed UI bugs that selector checks had missed, all fixed and re-checked:
+    - stray "null", "false" and "0" text, because DOM `append` prints them; one of these, in the paper list, was older than this task;
+    - stacked toasts;
+    - "Edit casestudy";
+    - a top bar that did not fit at 390px;
+    - your own items marked "not reviewed".
+  - Bugs found by the browser runs and fixed: the list did not refresh after a delete, and new vocabulary names were not trimmed. Harness issues: `waitForFunction` is blocked by the hub's CSP (no eval, as intended), so the scripts poll instead; and my test server's restart script was killing a subshell, which left an old server running. That was found and fixed before the final runs.
+- `npm test` and the integration suite (fresh database) pass.
+
+**Not tested / open**
+- No automated browser runs in CI yet (Task 6). The scripts are in `web/test/browser/`.
+- The sticky Save bar on long forms floats slightly above the bottom on small screens (the detail pane's padding); it stays usable.
+- Graph layout and the reader with a real Google Drive file were not re-tested (unchanged code; Drive needs credentials).
+- Not run against your own database. Migration 010 runs on the next start (it only changes `record_status`); take a `hub backup` first.

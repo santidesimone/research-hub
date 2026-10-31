@@ -195,6 +195,28 @@ curl -X POST http://localhost:3000/api/artifacts/case_study -H "Authorization: B
 
 `search_papers` (MCP) and the API use a Neo4j full-text index (`artifact_text`, created by migration `004`) over title, TL;DR, abstract, summary, authors, venue and note text of every type (rebuilt by migration `005`), ranked, with topic matches added. If the index is missing it falls back to a plain scan.
 
+## The Library
+
+Open `/library`. The **Collections bar** has All, Papers, Methods, Use cases, Case studies, Graph and, when you are signed in, Audit. Addresses are shareable: `/library/methods?key=method:snowballing`, `/library/case-studies?key=...&edit=1`, `/library/audit`; older `/library?key=...` links still open the item.
+
+- **Papers:**
+  - The list, PDF reader, file link, upload and your status are unchanged.
+  - The **Analysis** tab shows every schema field grouped as in the schema, with a tier badge and who wrote it: Claude, source or you (hover for model, confidence and date).
+  - It also shows low-confidence values, ungrounded findings, empty fields and links with their evidence.
+- **Methods, use cases, case studies:**
+  - The list shows the schema's columns and filters (vocabulary filters by name), with sort, search and "load more".
+  - The detail shows grouped fields and links in both directions, and lets you add or remove typed links (evidence, location, confidence).
+- **Forms:**
+  - **+ New** and **Edit** use forms generated from the schema: text, numbers, enums, list editors, structured editors (outcomes, actors, key findings ...), vocabulary pickers with type-ahead (a new name is matched or created server-side), and item pickers for links.
+  - An edit sends only the fields you changed, and those become yours (`by: owner`, reviewed).
+  - A paper's DOI, authors and venue come from the source and are read-only.
+- **Audit:** Claude's low-confidence values and links, ungrounded findings, new vocabulary, older schema versions, empty fields and unreviewed items, with one-click **Accept** and **Edit** (opens the form at that field).
+- **Anonymous visitors** see only the public preview: public items and whitelisted fields, with no forms, Analysis tab or audit.
+
+An item counts as "not reviewed" only while it holds Claude values nobody has accepted. Your own values and source facts (Crossref, OpenAlex) need no review.
+
+Browser checks for all of this (Playwright against a real hub; not part of `npm test`) are in `web/test/browser/`.
+
 ## Collections API (`/api/items`)
 
 Papers, methods, use cases and case studies, driven by the fields in `schema/schema.json`. Owner only; keys are URL-encoded (`encodeURIComponent`), because DOI keys contain `/`.

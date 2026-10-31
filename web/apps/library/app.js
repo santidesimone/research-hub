@@ -1,6 +1,14 @@
-// Library: the paper list (master/detail with an Info tab and a PDF Reader tab) and a graph view of everything.
-// Anonymous visitors see the public preview (a static export); the owner sees the private library from the database.
+// Library: the collections (Papers, Methods, Use cases, Case studies, and All), the graph view and the audit.
+// Papers keep their list, PDF reader, file link and status, plus an Analysis tab. The other collections get a generic
+// list and detail built from the schema (collections.js), and every collection gets create / edit forms (forms.js).
+// Addresses: /library/<collection>?key=..[&edit=1], /library/graph, /library/audit, /library/all.
+// Anonymous visitors see the public preview (a static export, whitelisted fields only); the owner sees the database.
 import { h, icon, api, state as S, BASE, cssVar, loadScript, toast } from '../../shell/ui.js';
+import { parseRoute, routePath, collectionOf } from './model.js';
+import { CollectionView, itemDetail } from './collections.js';
+import { AuditView } from './audit.js';
+import { itemForm } from './forms.js';
+import { renderFields, renderLinks } from './view.js';
 
 const STATUS_CLASS = { canonical: 'ok', reading: 'info', 'critique-target': 'warn', active: 'accent' };
 const STATUS_CHOICES = ['to-read', 'reading', 'read', 'canonical', 'critique-target'];
@@ -25,6 +33,9 @@ class Library {
     this.ctx = ctx;
     this.mode = S.owner ? 'private' : 'public';
     this.view = 'list';
+    this.section = 'paper'; this.edit = false; this.focusField = null;
+    this.collections = (S.schema && S.schema.collections) || [];
+    this.entities = (S.schema && S.schema.entities) || [];
     this.sel = null;
     this.q = ''; this.status = ''; this.sort = 'new'; this.tab = 'info';
     this.graph = { nodes: [], edges: [] }; this.papers = []; this.personal = {};
@@ -50,32 +61,54 @@ class Library {
     this.renderBody();
     await this.loadData();
     this.renderBody();
+    // older links (/library?key=..) open the item in its own collection
+    if (this.section === 'all' && this.sel) { const c = this.collOfKey(this.sel); if (c) this.goSection(c.name, { key: this.sel }, true); }
   }
   destroy() {
     document.removeEventListener('keydown', this.onKey);
     if (this.network) this.network.destroy();
   }
   readRoute() {
-    const q = this.ctx.route.query;
-    this.view = q.get('view') === 'graph' ? 'graph' : 'list';
-    this.sel = q.get('key') || null;
+    const r = parseRoute(this.ctx.route.rest || [], this.ctx.route.query, this.collections);
+    if (r.section === 'audit' && !(S.owner && this.mode === 'private')) r.section = 'paper';
+    this.section = r.section; this.sel = r.key; this.edit = r.edit;
+    this.view = r.section === 'graph' ? 'graph' : 'list';
   }
   onRoute(ctx) {
     this.ctx = ctx;
-    const q = ctx.route.query;
-    const view = q.get('view') === 'graph' ? 'graph' : 'list', key = q.get('key') || null;
-    const viewChanged = view !== this.view;
-    this.view = view;
-    if (viewChanged) { this.renderToolbar(); this.renderBody(); return; }
-    if (key !== this.sel) { this.sel = key; this.showSelection(); }
+    const before = this.section, sel = this.sel, edit = this.edit;
+    this.readRoute();
+    if (before !== this.section) { this.renderToolbar(); this.renderBody(); return; }
+    if (sel !== this.sel || edit !== this.edit) { if (this.cview) this.cview.show(); else this.showSelection(); }
   }
   onTheme() { if (this.view === 'graph') this.buildGraph(); }
+  // older call sites: go({view, key}); list views stay in the current collection
   go({ view = this.view, key = this.sel } = {}, replace = false) {
-    const qs = new URLSearchParams();
-    if (view === 'graph') qs.set('view', 'graph');
-    if (key) qs.set('key', key);
-    this.ctx.navigate('/library' + (qs.toString() ? '?' + qs : ''), { replace });
+    const listSection = ['graph', 'audit'].includes(this.section) ? 'paper' : this.section;
+    this.goSection(view === 'graph' ? 'graph' : listSection, { key }, replace);
   }
+  goSection(section, { key = null, edit = false } = {}, replace = false) {
+    if (!edit) this.focusField = null;
+    this.ctx.navigate(routePath({ section, key, edit }, this.collections), { replace });
+  }
+  collOfKey(key) { const n = this.graph.nodes.find((x) => x.key === key); return n ? collectionOf(n.labels, this.collections) : null; }
+  coll(name) { return this.collections.find((c) => c.name === name); }
+  // Open any node where it lives: collection items in their collection, everything else in All.
+  openKey(key, replace = false) {
+    const c = this.collOfKey(key) || (key.startsWith('doi:') || key.startsWith('paper:') ? this.coll('paper') : null);
+    if (this.view === 'graph' && !c) { this.go({ view: 'graph', key }, replace); return; }
+    this.goSection(c ? c.name : 'all', { key }, replace);
+  }
+  editItem(key, field) {
+    const c = this.collOfKey(key) || this.collections.find((x) => key.startsWith(x.name === 'use_case' ? 'usecase:' : x.name === 'case_study' ? 'case:' : x.name + ':')) || this.coll('paper');
+    this.focusField = field || null; this.goSection(c.name, { key, edit: true });
+  }
+  async afterDelete(collName) {
+    await this.loadData();
+    this.goSection(collName, { key: null }, true);
+    if (this.cview) this.cview.reload(); else this.renderBody(); // the list must not show what was just deleted
+  }
+  formCtx() { return { collections: this.collections, entities: this.entities }; }
 
   /* ---------------------------------------------------------------- data */
   derivePapers() {
@@ -118,9 +151,10 @@ class Library {
 
   /* ---------------------------------------------------------------- toolbar */
   renderToolbar() {
-    const seg = (items, cur, on) => h('div', { class: 'seg' }, items.map(([id, label, ic]) => h('button', { class: cur === id ? 'on' : '', onclick: () => on(id) }, ic && icon(ic, 14), label)));
+    const seg = (items, cur, on, cls = '') => h('div', { class: 'seg ' + cls }, items.map(([id, label, ic]) => h('button', { class: cur === id ? 'on' : '', 'data-section': id, onclick: () => on(id) }, ic && icon(ic, 14), label)));
+    const sections = [['all', 'All'], ...this.collections.map((c) => [c.name, c.plural]), ['graph', 'Graph', 'graph'], S.owner && this.mode === 'private' && ['audit', 'Audit']].filter(Boolean);
     this.toolbarEl.replaceChildren(
-      seg([['list', 'Papers', 'list'], ['graph', 'Graph', 'graph']], this.view, (v) => this.go({ view: v })),
+      seg(sections, this.section, (id) => this.goSection(id), 'collbar'),
       h('div', { class: 'spacer' }),
       S.owner && seg([['private', 'Private'], ['public', 'Public preview']], this.mode, (m) => m !== this.mode && this.setMode(m)));
     this.bannerEl.classList.toggle('hidden', this.mode !== 'public');
@@ -130,13 +164,26 @@ class Library {
   renderBody() {
     if (this.network && this.view !== 'graph') { this.network.destroy(); this.network = null; }
     this.bodyEl.replaceChildren();
-    if (this.view === 'graph') this.renderGraphView(); else this.renderListView();
+    this.cview = null;
+    if (this.view === 'graph') return this.renderGraphView();
+    if (this.section === 'audit') return new AuditView(this).mount(this.bodyEl);
+    const c = this.coll(this.section);
+    if (c && c.name !== 'paper' && this.mode === 'private') { this.cview = new CollectionView(this, c); return this.cview.mount(this.bodyEl); }
+    return this.renderListView();
   }
+  // Rows for the list view: papers from /api/papers (private) or the export; other sections from the graph nodes.
+  rows() {
+    if (this.section === 'paper') return this.papers;
+    const c = this.coll(this.section);
+    return this.graph.nodes.filter((n) => n.labels.includes('Artifact') && (!c || n.labels.includes(c.label)))
+      .map((n) => ({ key: n.key, props: n.props, labels: n.labels, topics: [] }));
+  }
+  sectionNoun() { const c = this.coll(this.section); return c ? c.plural.toLowerCase() : 'items'; }
 
   /* ---------------------------------------------------------------- list view */
   filtered() {
     const q = this.q.trim().toLowerCase();
-    const rows = this.papers.filter((p) => {
+    const rows = this.rows().filter((p) => {
       if (this.status && this.statusOf(p.key) !== this.status) return false;
       if (!q) return true;
       return [p.props.title, (p.props.authors || []).join(' '), p.props.venue, p.props.year, (p.topics || []).join(' ')].join(' ').toLowerCase().includes(q);
@@ -150,16 +197,19 @@ class Library {
     this.searchEl = h('input', { class: 'input', type: 'search', placeholder: 'Search title, author, topic, venue', value: this.q,
       oninput: (e) => { this.q = e.target.value; this.renderList(); } });
     const search = h('div', { class: 'searchbox' }, icon('search', 16), this.searchEl);
-    const statuses = [...new Set(this.papers.map((p) => this.statusOf(p.key)).filter(Boolean))].sort();
+    const statuses = [...new Set(this.rows().map((p) => this.statusOf(p.key)).filter(Boolean))].sort();
     const sort = h('select', { class: 'select', onchange: (e) => { this.sort = e.target.value; this.renderList(); } },
       [['new', 'Newest first'], ['old', 'Oldest first'], ['title', 'Title A to Z'], statuses.length && ['status', 'Status']].filter(Boolean).map(([v, l]) => h('option', { value: v, selected: v === this.sort }, l)));
-    const status = statuses.length && h('select', { class: 'select', onchange: (e) => { this.status = e.target.value; this.renderList(); } },
-      h('option', { value: '' }, 'Any status'), statuses.map((s) => h('option', { value: s, selected: s === this.status }, s)));
+    const status = statuses.length ? h('select', { class: 'select', onchange: (e) => { this.status = e.target.value; this.renderList(); } },
+      h('option', { value: '' }, 'Any status'), statuses.map((s) => h('option', { value: s, selected: s === this.status }, s))) : null; // never 0: the DOM would print it
     this.countEl = h('span', { class: 'faint', style: { marginLeft: 'auto', fontSize: '12.5px' } });
     this.listEl = h('ul', { class: 'list', tabindex: '0' });
     this.detailEl = h('div', { class: 'detail' });
+    const canCreate = this.mode === 'private' && S.owner && this.section === 'paper';
     this.bodyEl.append(h('div', { class: 'split' },
-      h('div', { class: 'pane' }, h('div', { class: 'pane-head' }, search, h('div', { class: 'row-flex' }, sort, status, this.countEl)), this.listEl),
+      h('div', { class: 'pane' }, h('div', { class: 'pane-head' },
+        canCreate ? h('div', { class: 'row-flex' }, h('div', { class: 'grow' }, search), h('button', { class: 'btn btn-primary btn-sm', onclick: () => this.goSection('paper', { key: null, edit: true }) }, '+ New')) : search,
+        h('div', { class: 'row-flex' }, sort, status, this.countEl)), this.listEl),
       this.detailEl));
     this.renderList();
     this.showSelection();
@@ -172,10 +222,11 @@ class Library {
       this.countEl.textContent = ''; return;
     }
     const rows = this.filtered();
-    this.countEl.textContent = `${rows.length} of ${this.papers.length} papers`;
+    const all = this.rows().length;
+    this.countEl.textContent = `${rows.length} of ${all} ${this.sectionNoun()}`;
     if (!rows.length) {
       ul.replaceChildren(h('li', { class: 'empty', style: { height: 'auto', padding: '40px 16px' } },
-        this.papers.length ? 'No papers match.' : 'No papers yet. Add one with the API, the CLI (hub add <doi>) or Claude.'));
+        all ? `No ${this.sectionNoun()} match.` : this.section === 'paper' ? 'No papers yet. Add one with + New, the CLI (hub add <doi>) or Claude.' : `Nothing here yet.`));
       return;
     }
     ul.replaceChildren(...rows.map((p) => {
@@ -183,19 +234,21 @@ class Library {
       return h('li', null, h('button', { type: 'button', class: 'item' + (p.key === this.sel ? ' active' : ''), 'data-key': p.key, onclick: () => this.open(p.key) },
         h('div', { class: 't' }, p.props.title),
         h('div', { class: 'a' }, [shortAuthors(p.props), p.props.year].filter(Boolean).join(' · ')),
-        h('div', { class: 'm' }, st && h('span', { class: 'badge ' + (STATUS_CLASS[st] || '') }, st), h('span', { class: 'grow' }, p.props.venue || ''), p.has_file && icon('pdf', 16, 'faint'))));
+        h('div', { class: 'm' }, st && h('span', { class: 'badge ' + (STATUS_CLASS[st] || '') }, st),
+          this.section !== 'paper' && h('span', { class: 'badge outline' }, (this.mainLabel(p.labels || []).plural || '').replace(/s$/, '')),
+          h('span', { class: 'grow' }, p.props.venue || ''), p.has_file && icon('pdf', 16, 'faint'))));
     }));
     const active = ul.querySelector('.item.active');
     if (active) active.scrollIntoView({ block: 'nearest' });
   }
   open(key, { replace = false } = {}) {
-    const node = this.graph.nodes.find((n) => n.key === key);
-    if (this.view === 'list' && node && !node.labels.includes('Paper')) { this.go({ view: 'graph', key }, replace); return; } // non-papers are browsed in the graph
+    if (this.view === 'list' && this.section !== 'all' && this.mode === 'private') { this.openKey(key, replace); return; }
     this.go({ key }, replace);
   }
   onKey(e) {
     if (this.view !== 'list' || !['ArrowDown', 'ArrowUp'].includes(e.key)) return;
     if (['INPUT', 'SELECT', 'TEXTAREA', 'IFRAME'].includes(document.activeElement.tagName)) return;
+    if (this.cview || this.section === 'audit') return;
     const rows = this.filtered(); if (!rows.length) return;
     const i = rows.findIndex((p) => p.key === this.sel);
     const next = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))];
@@ -211,8 +264,9 @@ class Library {
     if (this.loading) { this.detailEl.replaceChildren(h('div', { class: 'center' }, h('span', { class: 'spinner' }))); return; }
     this.listEl.querySelectorAll('.item').forEach((b) => b.classList.toggle('active', b.dataset.key === this.sel));
     const active = this.listEl.querySelector('.item.active'); if (active) active.scrollIntoView({ block: 'nearest' });
-    if (this.sel) this.renderDetail(this.detailEl, this.sel, 'library');
-    else this.detailEl.replaceChildren(h('div', { class: 'empty' }, 'Select a paper from the list'));
+    if (this.edit && this.section === 'paper' && this.mode === 'private') this.renderPaperForm(this.sel);
+    else if (this.sel) this.renderDetail(this.detailEl, this.sel, 'library');
+    else this.detailEl.replaceChildren(h('div', { class: 'empty' }, this.section === 'paper' ? 'Select a paper from the list' : 'Select an item from the list'));
   }
 
   /* ---------------------------------------------------------------- detail */
@@ -222,7 +276,27 @@ class Library {
       h('ul', null, items.map((r) => h('li', null, h('span', { class: 'badge outline' }, relName(r.type)),
         h('a', { onclick: () => this.open(r.key) }, r.title || r.key)))));
   }
+  async renderPaperForm(key) {
+    const coll = this.coll('paper');
+    this.detailEl.replaceChildren(h('div', { class: 'center' }, h('span', { class: 'spinner' })));
+    let item = null;
+    if (key) { try { item = await api('/api/items/' + keyQuery(key)); } catch (e) { this.detailEl.replaceChildren(h('div', { class: 'alert' }, e.message)); return; } }
+    const done = async (res) => { toast(item ? 'Saved' : 'Added'); await this.loadData(); this.goSection('paper', { key: res.key }, true); this.renderList(); this.showSelection(); };
+    this.detailEl.replaceChildren(h('div', { class: 'doc' }, itemForm(coll, item, this.formCtx(), { onDone: done, focus: this.focusField,
+      onCancel: () => this.goSection('paper', { key }, true) })));
+  }
   async renderDetail(container, key, where) {
+    // a collection item (method, use case, case study) opened from All or the graph: the schema-driven page
+    const c = this.mode === 'private' && this.collOfKey(key);
+    if (c && c.name !== 'paper') {
+      container.replaceChildren(h('div', { class: 'center' }, h('span', { class: 'spinner' })));
+      try {
+        const item = await api('/api/items/' + keyQuery(key));
+        if (key !== this.sel) return;
+        container.replaceChildren(itemDetail(this, c, item, { onChanged: () => this.renderDetail(container, key, where) }));
+      } catch (e) { container.replaceChildren(h('div', { class: 'alert' }, e.message)); }
+      return;
+    }
     container.replaceChildren(h('div', { class: 'center' }, h('span', { class: 'spinner' })));
     let d;
     try { d = await this.detail(key); } catch (e) { container.replaceChildren(h('div', { class: 'alert' }, e.message)); return; }
@@ -260,7 +334,17 @@ class Library {
       const href = p.url || (p.doi ? 'https://doi.org/' + p.doi : null);
       if (href) actions.append(h('a', { class: 'btn btn-sm', href, target: '_blank', rel: 'noopener' }, icon('link', 15), p.doi ? 'DOI' : 'Source'));
     }
-    if (where === 'graph' && isPaper) actions.append(h('button', { class: 'btn btn-ghost btn-sm', onclick: () => this.go({ view: 'list', key: d.key }) }, 'Open in library'));
+    if (where === 'graph' && isPaper) actions.append(h('button', { class: 'btn btn-ghost btn-sm', onclick: () => this.goSection('paper', { key: d.key }) }, 'Open in library'));
+    if (isPaper && where === 'library' && this.mode === 'private' && S.owner) {
+      actions.append(h('button', { class: 'btn btn-sm', onclick: () => this.goSection('paper', { key: d.key, edit: true }) }, 'Edit'));
+      const delBtn = h('button', { class: 'btn btn-sm btn-ghost', onclick: () => {
+        if (actions.querySelector('.confirm')) return;
+        delBtn.after(h('span', { class: 'confirm' }, 'Delete for good? ', h('button', { class: 'btn btn-sm danger', onclick: async () => {
+          try { await api('/api/items/' + keyQuery(d.key), { method: 'DELETE' }); toast('Deleted'); await this.afterDelete('paper'); } catch (e) { toast(e.message, 'error'); }
+        } }, 'Delete')));
+      } }, 'Delete');
+      actions.append(delBtn);
+    }
     if (actions.children.length) wrap.append(actions);
 
     if (p.summary) info.append(h('p', { class: 'muted', style: { marginTop: '22px', lineHeight: '1.7' } }, p.summary));
@@ -283,23 +367,43 @@ class Library {
     wrap.append(info);
 
     let setTab = () => {};
-    if (isPaper && where === 'library' && this.mode === 'private' && d.file) {
+    if (isPaper && where === 'library' && this.mode === 'private') {
       const reader = h('div', { class: 'reader hidden' });
+      const analysis = h('div', { class: 'analysis hidden' });
       const tabs = h('div', { class: 'tabs', role: 'tablist' });
       const btn = (id, label) => h('button', { class: 'tab', role: 'tab', 'data-tab': id, onclick: () => setTab(id) }, label);
-      tabs.append(btn('info', 'Info'), btn('reader', 'Reader'));
+      tabs.append(...[btn('info', 'Info'), btn('analysis', 'Analysis'), d.file && btn('reader', 'Reader')].filter(Boolean));
       setTab = (id) => {
+        if (id === 'reader' && !d.file) id = 'info';
         this.tab = id;
         tabs.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === id));
-        info.classList.toggle('hidden', id !== 'info'); reader.classList.toggle('hidden', id !== 'reader');
+        info.classList.toggle('hidden', id !== 'info'); reader.classList.toggle('hidden', id !== 'reader'); analysis.classList.toggle('hidden', id !== 'analysis');
         wrap.style.maxWidth = id === 'reader' ? '1100px' : '';
         if (id === 'reader' && !reader.firstChild) reader.append(...this.readerContent(d.file, p.title)); // created on first view so arrowing through the list does not load every file
+        if (id === 'analysis' && !analysis.firstChild) this.fillAnalysis(analysis, d.key);
       };
-      wrap.insertBefore(tabs, info); wrap.append(reader);
-      setTab(this.tab === 'reader' ? 'reader' : 'info');
+      wrap.insertBefore(tabs, info); wrap.append(analysis, reader);
+      setTab(this.tab);
     }
     container.replaceChildren(wrap);
     container.scrollTop = 0;
+  }
+  // The paper's schema fields, grouped, with who wrote each (Claude / source / you), confidence and ungrounded flags.
+  async fillAnalysis(el, key) {
+    el.append(h('div', { class: 'center' }, h('span', { class: 'spinner' })));
+    try {
+      const item = await api('/api/items/' + keyQuery(key));
+      if (key !== this.sel) return;
+      const coll = this.coll('paper');
+      const reload = () => { el.replaceChildren(); this.fillAnalysis(el, key); };
+      el.replaceChildren(
+        h('div', { class: 'row-flex legendline' }, h('span', { class: 'faint small' }, 'Written by:'), h('span', { class: 'prov prov-claude' }, 'Claude'), h('span', { class: 'prov prov-source' }, 'source'), h('span', { class: 'prov prov-owner' }, 'you'),
+          item.record_status && h('span', { class: 'badge ' + (item.record_status === 'reviewed' ? 'ok' : 'info') }, item.record_status === 'reviewed' ? 'reviewed' : 'not reviewed')),
+        renderFields(item, coll, { onRef: (k) => this.openKey(k), showEmpty: true, skip: ['title'] }),
+        renderLinks(item, { onOpen: (k) => this.openKey(k), onRemove: async (l) => {
+          try { await api(`/api/items/${keyQuery(key)}/links?rel=${encodeURIComponent(l.rel)}&target=${keyQuery(l.key)}`, { method: 'DELETE' }); toast('Link removed'); reload(); } catch (e) { toast(e.message, 'error'); }
+        } }));
+    } catch (e) { el.replaceChildren(h('div', { class: 'alert' }, e.message)); }
   }
   // Google Drive previews embed. Other sites often forbid embedding, so they get an "open" card and an optional try.
   readerContent(f, title) {

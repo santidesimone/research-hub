@@ -1,0 +1,96 @@
+// Browser check (see README.md here). playwright-core is not a project dependency: install it outside the repo and set NODE_PATH.
+const { chromium } = require('playwright-core');
+const U = process.env.HUB_URL || 'http://127.0.0.1:18082', TOK = process.env.HUB_API_TOKEN, OUT = process.env.OUT || require('os').tmpdir();
+const results = [];
+const step = async (name, fn) => { try { await fn(); results.push(['PASS', name]); } catch (e) { results.push(['FAIL', name, e.message.split('\n')[0]]); } };
+const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
+const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;;) { if (await check()) return; if (Date.now() > end) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 150)); } };
+const watch = (page, problems, apis) => {
+  page.on('console', (m) => { if (m.type() === 'error' || /Content Security Policy|Refused to/i.test(m.text())) problems.push(m.text()); });
+  page.on('pageerror', (e) => problems.push('pageerror: ' + e.message));
+  page.on('response', (r) => { if (r.url().includes('/api/')) apis.push(`${r.status()} ${r.request().method()} ${r.url().replace(U, '').split('?')[0]}`); if (r.status() >= 400) problems.push(`HTTP ${r.status()} ${r.url().replace(U, '')}`); });
+};
+const noOverflow = async (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+(async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
+
+  /* anonymous visitor: public preview only */
+  const anon = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+  const p1 = [], a1 = [];
+  watch(anon, p1, a1);
+  await step('anonymous: Library opens on the public preview', async () => {
+    await anon.goto(U + '/library');
+    await anon.waitForSelector('.list .item');
+    expect(await anon.isVisible('.banner'), 'public preview banner');
+    const titles = await anon.$$eval('.list .item .t', (e) => e.map((x) => x.textContent));
+    expect(titles.length === 1 && titles[0] === 'A Public Preprint on Payments', titles.join('|'));
+    const bar = await anon.$$eval('.collbar button', (b) => b.map((x) => x.textContent.trim()));
+    expect(!bar.includes('Audit'), 'no audit for visitors: ' + bar.join('|'));
+    expect(!(await anon.$('button:has-text("+ New")')), 'no create button');
+  });
+  await step('anonymous: detail shows only whitelisted fields', async () => {
+    await anon.click('.item:has-text("A Public Preprint")');
+    await anon.waitForSelector('article.doc h1');
+    const text = await anon.textContent('body');
+    expect(!text.includes('SECRET-ABSTRACT-TEXT'), 'abstract is not public');
+    expect(!(await anon.$('.tab[data-tab=analysis]')) && !(await anon.$('article.doc button:has-text("Edit")')), 'no analysis tab or edit');
+  });
+  await step('anonymous: other collections show only public items', async () => {
+    await anon.click('.collbar button[data-section=method]');
+    await anon.waitForSelector('.list .item');
+    const m = await anon.$$eval('.list .item .t', (e) => e.map((x) => x.textContent));
+    expect(m.length === 1 && m[0] === 'Snowballing', m.join('|'));
+    await anon.click('.collbar button[data-section=all]');
+    await anon.waitForSelector('.list .item');
+    const all = await anon.textContent('.list');
+    expect(!all.includes('PRIVATE-PAPER-TITLE') && !all.includes('Difference in differences') && !all.includes('Lisbon'), 'private items never listed');
+  });
+  await step('anonymous: the audit address falls back to papers', async () => {
+    await anon.goto(U + '/library/audit');
+    await anon.waitForSelector('.list .item');
+    expect(!(await anon.$('.auditbucket')), 'no audit');
+  });
+  await step('anonymous: only public endpoints, no errors', async () => {
+    const used = [...new Set(a1.map((x) => x.split(' ').slice(1).join(' ')))].sort();
+    expect(used.every((u) => ['GET /api/apps', 'GET /api/me', 'GET /api/public', 'GET /api/schema'].includes(u)), used.join(', '));
+    expect(!p1.length, p1.slice(0, 4).join(' || '));
+  });
+
+  /* mobile width, as the owner */
+  const mob = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const p2 = [], a2 = [];
+  watch(mob, p2, a2);
+  await step('mobile: sign in, papers list fits the width', async () => {
+    await mob.goto(U + '/library');
+    await mob.click('button:has-text("Sign in")'); await mob.fill('input[type=password]', TOK); await mob.click('form.modal button[type=submit]');
+    await mob.waitForSelector('.list .item');
+    expect(await noOverflow(mob), 'page wider than the screen');
+    const tb = await mob.$eval('.topbar', (e) => [...e.children].every((c) => { const r = c.getBoundingClientRect(); return r.right <= window.innerWidth + 1 && r.height <= 56; }));
+    expect(tb, 'every top-bar control on screen, one line');
+    expect(!(await mob.$eval('.pane-head', (e) => /(^|\s)0(\s|$)/.test(e.innerText))), 'no stray 0');
+    await mob.waitForSelector('.list .item .t'); await mob.screenshot({ path: OUT + '/m1-list.png' });
+  });
+  await step('mobile: collections bar scrolls to every section', async () => {
+    const box = await mob.$eval('.collbar', (e) => ({ sw: e.scrollWidth, cw: e.clientWidth }));
+    expect(box.sw >= box.cw, 'bar');
+    await mob.click('.collbar button[data-section=case_study]');
+    await mob.waitForURL(/case-studies/);
+    await mob.waitForSelector('.list .item');
+    expect(await noOverflow(mob), 'case studies overflow');
+  });
+  await step('mobile: detail and the edit form are usable', async () => {
+    await mob.click('.item:has-text("Lisbon")');
+    await mob.waitForSelector('article.doc h1');
+    await mob.click('article.doc button:has-text("Edit")');
+    await mob.waitForSelector('form.itemform #f-title');
+    const w = await mob.$eval('#f-title', (e) => e.getBoundingClientRect().right);
+    expect(w <= 390, 'title input inside the screen: ' + w);
+    expect(await noOverflow(mob), 'form overflow');
+    expect((await mob.textContent('form.itemform h2')) === 'Edit case study', 'heading');
+    await mob.screenshot({ path: OUT + '/m2-form.png' });
+    await mob.click('form.itemform button:has-text("Cancel")');
+  });
+  await step('mobile: no console or CSP errors', async () => { expect(!p2.length, p2.slice(0, 4).join(' || ')); });
+  for (const r of results) console.log(r.join(' | '));
+  await browser.close();
+})();

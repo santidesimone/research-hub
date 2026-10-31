@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "description": "Single source of truth for the graph model (spec: docs/SCHEMA_DESIGN.md, history: schema/CHANGELOG.md). Read by the web app: API validation, UI, MCP, migrations, public preview, backup. Types with \"collection\": true are the Library collections; their fields are common_fields plus their own \"fields\". Field keys: type (text, longtext, markdown, integer, date, datetime, url, boolean, enum, object, ref), enum, list, ref (an entity or type label), rel, by (S source, C Claude, Y owner, Sys hub), tier (core, standard, deep), required, default, label, help, min, max, props (for objects).",
+  "description": "Single source of truth for the graph model (spec: docs/SCHEMA_DESIGN.md, history: schema/CHANGELOG.md). Read by the web app: API validation, UI, MCP, migrations, public preview, backup. Types with \"collection\": true are the Library collections; their fields are common_fields plus their own \"fields\". Types may set label_plural (UI). Field keys: type (text, longtext, markdown, integer, date, datetime, url, boolean, enum, object, ref), enum, list, ref (an entity or type label), rel, by (S source, C Claude, Y owner, Sys hub), tier (core, standard, deep), required, default, label, help, min, max, props (for objects).",
   "field_types": ["text", "longtext", "markdown", "integer", "date", "datetime", "url", "boolean", "enum", "object", "ref"],
   "common_fields": {
     "key": { "type": "text", "by": ["Sys"], "tier": "core", "label": "Key" },
@@ -21,6 +21,7 @@
   "types": {
     "paper": {
       "label": "Paper",
+      "label_plural": "Papers",
       "color": "#6366f1",
       "big": true,
       "folder": null,
@@ -83,6 +84,7 @@
     },
     "method": {
       "label": "Method",
+      "label_plural": "Methods",
       "color": "#f59e0b",
       "big": true,
       "folder": "methods",
@@ -121,6 +123,7 @@
     },
     "use_case": {
       "label": "UseCase",
+      "label_plural": "Use cases",
       "color": "#8b5cf6",
       "big": true,
       "folder": null,
@@ -155,6 +158,7 @@
     },
     "case_study": {
       "label": "CaseStudy",
+      "label_plural": "Case studies",
       "color": "#ef4444",
       "big": true,
       "folder": null,
@@ -194,6 +198,7 @@
     },
     "note": {
       "label": "Note",
+      "label_plural": "Notes",
       "color": "#10b981",
       "big": true,
       "folder": "notes",
@@ -204,6 +209,7 @@
     },
     "project": {
       "label": "Project",
+      "label_plural": "Projects",
       "color": "#ec4899",
       "big": true,
       "folder": "projects",

@@ -835,7 +835,8 @@
           "200": {
             "description": "OK"
           }
-        }
+        },
+        "description": "Also returns collections (each collection's fields, list_columns, filters, detail_groups, relations and the fields owner edits may not change) and entities (vocabulary labels and key prefixes), for the Library UI. It describes the model only, never data."
       }
     },
     "/api/artifacts/{type}": {
@@ -2057,6 +2058,55 @@
           },
           "404": {
             "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/vocab": {
+      "get": {
+        "operationId": "vocabLookup",
+        "summary": "Type-ahead over vocabulary nodes (Topic, Domain, Person ...), compared in the matcher's normalised form",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Person, Concept, Topic, Domain, Venue, Organisation or Dataset (any case)"
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 12,
+              "maximum": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{kind, items: [{key, name, aliases, uses}]}"
+          },
+          "400": {
+            "description": "Unknown kind"
+          },
+          "401": {
+            "description": "Owner only"
           }
         }
       }

@@ -66,7 +66,7 @@ const seed = require('../../data/seed_papers.json');
 
   // migrations are discoverable and ordered
   const migrate = require('../core/migrate');
-  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', 'personal_001_layer']);
+  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', '010_record_status_from_provenance', 'personal_001_layer']);
   // personal layer: separate node, driven by hooks, core untouched
   calls.length = 0;
   require('../features/personal').mount({ get() {}, put() {}, delete() {}, post() {} });
@@ -98,6 +98,10 @@ const seed = require('../../data/seed_papers.json');
   for (const s of fs.readdirSync(path.join(__dirname, '..', 'skins'))) {
     const css = fs.readFileSync(path.join(__dirname, '..', 'skins', s, 'skin.css'), 'utf8');
     for (const v of used) assert.ok(css.includes(v + ':'), `skin ${s} is missing ${v}`);
+    // the graph and the Library colour nodes with --node-<type or entity> (types by name, entities lowercased)
+    for (const n of [...Object.keys(schema.types), ...Object.keys(schema.entities).map((l) => l.toLowerCase())]) {
+      assert.equal((css.match(new RegExp(`--node-${n}:`, 'g')) || []).length, 2, `skin ${s} needs --node-${n} for light and dark`);
+    }
   }
 
   /* ------------------------------------------------------------ file links */
@@ -640,13 +644,13 @@ const seed = require('../../data/seed_papers.json');
   assert.ok(mItem.warnings.includes('strengths: expected a list') && mItem.warnings.includes('not in the method schema (kept as is): mood'));
   const mNode = G.get('method:snowball-sampling');
   assert.deepEqual(mNode.props.procedure, ['seed', 'expand']); assert.equal(mNode.props.status, undefined); assert.equal(mNode.props.mood, 'kept');
-  assert.deepEqual([mNode.props.collection, mNode.props.managed, mNode.props.record_status], ['method', 'db', 'auto']);
+  assert.deepEqual([mNode.props.collection, mNode.props.managed, mNode.props.record_status], ['method', 'db', 'reviewed'], 'the owner\'s own item needs no review');
   assert.deepEqual(JSON.parse(mNode.props.provenance_json).kind, { by: 'owner', at: JSON.parse(mNode.props.provenance_json).kind.at, status: 'reviewed' });
   assert.deepEqual(mNode.out.find((e) => e.rel === 'ABOUT').r, { field: 'domain', position: 0, source: 'items', by: 'owner', at: mNode.out[0].r.at });
   assert.equal(resolved.at(-1)[2].by, 'owner', 'vocabulary created by an owner write is flagged by=owner');
   const mGot = await items.get('method:snowball-sampling');
   assert.deepEqual(mGot.fields.domain, [{ key: 'domain:research-methodology', name: 'Research methodology' }]);
-  assert.deepEqual([mGot.fields.kind, mGot.fields.purpose, mGot.extra, mGot.record_status, mGot.collection], ['technique', null, { mood: 'kept' }, 'auto', 'method']);
+  assert.deepEqual([mGot.fields.kind, mGot.fields.purpose, mGot.extra, mGot.record_status, mGot.collection], ['technique', null, { mood: 'kept' }, 'reviewed', 'method']);
   assert.ok(!('record_status' in mGot.fields) && !('provenance' in mGot.fields) && !('mood' in mGot.fields));
   await assert.rejects(() => items.create({ collection: 'method', fields: { title: 'Snowball sampling' } }), (e) => e.status === 409);
   await assert.rejects(() => items.create({ collection: 'note', fields: { title: 'n' } }), (e) => e.status === 400 && /collection must be one of/.test(e.message));
@@ -1038,6 +1042,11 @@ const seed = require('../../data/seed_papers.json');
   assert.ok(!(await audit.report()).unreviewed_items.some((x) => x.key === 'usecase:cross-border-payments'));
   assert.deepEqual(await audit.accept({ vocab: 'topic:zero-knowledge-proof' }), { vocab: 'topic:zero-knowledge-proof', record_status: 'reviewed' });
   assert.ok(!(await audit.report()).vocab_by_claude.some((x) => x.key === 'topic:zero-knowledge-proof'));
+  // only Claude values need review: a paper whose remaining auto values come from Crossref is not listed, and accepting
+  // its one Claude field makes it reviewed
+  G.get('doi:10.9/hybrid').props.record_status = 'auto';
+  assert.ok(!(await audit.report()).unreviewed_items.some((x) => x.key === 'doi:10.9/hybrid'), 'source values do not need review');
+  assert.equal((await audit.accept({ key: 'doi:10.9/none', fields: ['tldr'] })).record_status, 'reviewed', 'source auto values do not hold an item back');
   await assert.rejects(() => audit.accept({}), (e) => e.status === 400);
   await assert.rejects(() => audit.accept({ vocab: 'method:snowball-sampling' }), (e) => e.status === 404);
   await assert.rejects(() => audit.accept({ key: 'doi:10.5555/abc', fields: 'all' }), (e) => e.status === 400);
@@ -1091,6 +1100,18 @@ const seed = require('../../data/seed_papers.json');
   vocab.resolve = realResolve; runImpl = async () => []; txImpl = null;
   crossref.setHttp((url, opts) => fetch(url, opts)); openalex.setHttp((url, opts) => fetch(url, opts));
 
+  /* ------------------------------------------------------------ record_status from provenance, migration 010 */
+  assert.equal(items.needsReview({ a: { by: 'claude', status: 'auto' } }), true);
+  assert.equal(items.needsReview({ a: { by: 'claude', status: 'reviewed' }, b: { by: 'source', status: 'auto' }, c: { by: 'owner', status: 'reviewed' } }), false, 'only unaccepted Claude values need review');
+  assert.equal(items.needsReview(undefined), false);
+  const m010 = require('../migrations/010_record_status_from_provenance');
+  const m10 = [];
+  await m010.up({ run: async (q, p) => { m10.push([q, p]); return q.startsWith('MATCH (n:Method) RETURN') ? [
+    { key: 'method:legacy', p: null, rs: 'auto' }, { key: 'method:claude', p: '{"x":{"by":"claude","status":"auto"}}', rs: 'auto' },
+    { key: 'method:accepted', p: '{"x":{"by":"claude","status":"reviewed"}}', rs: 'auto' }, { key: 'method:broken', p: '{nope', rs: null }] : []; } });
+  assert.deepEqual(m10.find(([q]) => q.startsWith('UNWIND') && q.includes('Method'))[1].rows,
+    [{ key: 'method:legacy', rs: 'reviewed' }, { key: 'method:accepted', rs: 'reviewed' }, { key: 'method:broken', rs: 'reviewed' }], 'only changed items are written; legacy owner data is reviewed');
+
   /* ------------------------------------------------------------ migration 009: object parts */
   const m009 = require('../migrations/009_object_parts');
   const m9 = [];
@@ -1112,6 +1133,85 @@ const seed = require('../../data/seed_papers.json');
   assert.ok(m7w[0].includes('SET n.`actors_json` = r.json REMOVE n.`actors`'), 'copy, then remove, in one statement'); assert.deepEqual(m7w[1].rows, [{ key: 'usecase:x', json: '[{"role":"payer"}]' }]);
   assert.ok(m7.some(([q]) => q.includes('MATCH (n:CaseStudy) WHERE n.`outcomes` IS NOT NULL AND n.`outcomes_json` IS NULL')), 'only nodes not migrated yet');
   assert.ok(!m7.some(([q]) => q.includes('`provenance`')), 'hub-set objects are not fields to migrate');
+
+  {
+  /* ------------------------------------------------------------ Library UI logic (apps/library/model.js, no DOM) */
+  // model.js is a browser ES module with no imports; load its source as one (the package itself is CommonJS)
+  const M = await import('data:text/javascript,' + encodeURIComponent(fs.readFileSync(path.join(__dirname, '..', 'apps', 'library', 'model.js'), 'utf8')));
+  const pubView = publicView();
+  const colls = pubView.collections;
+  assert.deepEqual(colls.map((c) => [c.name, c.slug, c.plural]), [['paper', 'papers', 'Papers'], ['method', 'methods', 'Methods'], ['use_case', 'use-cases', 'Use cases'], ['case_study', 'case-studies', 'Case studies']]);
+  const pc = colls.find((c) => c.name === 'paper');
+  assert.ok(pc.fields.contribution_type.enum.includes('empirical') && pc.fields.authors.ref === 'Person' && !pc.fields.provenance && !pc.fields.key, 'hub-set fields are not offered to the UI');
+  assert.ok(pc.relations.some((r) => r.rel === 'CRITIQUES' && r.interpretive) && !pc.relations.some((r) => r.rel === 'ADDRESSES'));
+  assert.ok(pubView.entities.some((e) => e.label === 'Domain' && e.key_prefix === 'domain:'));
+  assert.deepEqual([pc.list_columns, pc.filters.slice(0, 2), pc.detail_groups.length], [schema.types.paper.list_columns, ['item_type', 'contribution_type'], 4], 'layout hints reach the UI');
+  assert.equal(pubView.labels.find((l) => l.label === 'CaseStudy').plural, 'Case studies');
+  const Q = (s) => new URLSearchParams(s);
+  assert.deepEqual(M.parseRoute(['use-cases'], Q('key=usecase:x&edit=1'), colls), { section: 'use_case', key: 'usecase:x', edit: true });
+  assert.deepEqual(M.parseRoute([], Q(''), colls), { section: 'paper', key: null, edit: false }, 'the Library opens on Papers');
+  assert.deepEqual(M.parseRoute([], Q('key=doi:1'), colls), { section: 'all', key: 'doi:1', edit: false }, 'older links resolve through All');
+  assert.deepEqual(M.parseRoute([], Q('view=graph&key=method:x'), colls).section, 'graph');
+  assert.deepEqual(M.parseRoute(['audit'], Q(''), colls).section, 'audit');
+  assert.deepEqual(M.parseRoute(['nonsense'], Q(''), colls).section, 'all');
+  assert.equal(M.routePath({ section: 'case_study', key: 'case:a/b', edit: true }, colls), '/library/case-studies?key=case%3Aa%2Fb&edit=1');
+  assert.equal(M.routePath({ section: 'graph' }, colls), '/library/graph');
+  for (const r of [{ section: 'method', key: 'method:x', edit: false }, { section: 'audit', key: null, edit: false }]) {
+    const [p0, qs] = M.routePath(r, colls).split('?');
+    assert.deepEqual(M.parseRoute(p0.split('/').slice(2), Q(qs || ''), colls), r, 'routes round-trip');
+  }
+  assert.equal(M.collectionOf(['Artifact', 'UseCase'], colls).name, 'use_case'); assert.equal(M.collectionOf(['Artifact', 'Note'], colls), null);
+  assert.deepEqual(M.provenanceLabel({ by: 'claude', model: 'm1', confidence: 'low', status: 'auto', at: '2026-01-02T03:04:05Z' }), { text: 'Claude', kind: 'claude', low: true, reviewed: false, title: 'm1 · low confidence · 2026-01-02' });
+  assert.equal(M.provenanceLabel({ by: 'claude', confidence: 'low', status: 'reviewed' }).low, false, 'a reviewed value is not flagged');
+  assert.deepEqual([M.provenanceLabel({ by: 'owner' }).text, M.provenanceLabel({ by: 'source' }).kind, M.provenanceLabel(null)], ['you', 'source', null]);
+  assert.deepEqual(M.ungrounded([{ text: 'a', location: 'p. 1' }, { text: 'b' }, { text: 'c', location: '  ' }, null]), [1, 2, 3]);
+  const groups = M.fieldGroups(pc);
+  assert.deepEqual(groups.map((g) => g.label), ['General', 'Bibliographic', 'Classification', 'Content', 'Appraisal']);
+  assert.ok(groups[0].fields.includes('title') && !groups.flatMap((g) => g.fields).includes('record_status'));
+  assert.equal(new Set(groups.flatMap((g) => g.fields)).size, groups.flatMap((g) => g.fields).length, 'every field once');
+  const F = pc.fields;
+  assert.deepEqual([M.fromForm(F.year, ' 2024 '), M.fromForm(F.year, ''), M.fromForm(F.year, 'abc'), M.fromForm(F.title, '  T  ')], [2024, null, 'abc', 'T']);
+  assert.deepEqual(M.fromForm(F.limitations_stated, ['a', ' ', '', 'b ']), ['a', 'b']); assert.equal(M.fromForm(F.limitations_stated, ['']), null);
+  assert.deepEqual(M.fromForm(F.evidence, { type: 'survey', n: '120', source: '', period: '' }), { type: 'survey', n: 120 });
+  assert.equal(M.fromForm(F.evidence, { type: ' ', n: '' }), null, 'an empty object is no value');
+  assert.deepEqual(M.fromForm(F.key_findings, [{ text: 'f', location: '' }, { text: '', location: '' }]), [{ text: 'f' }]);
+  assert.deepEqual(M.fromForm(colls.find((c) => c.name === 'case_study').fields.outcomes, [{ measure: 'm', expected: true }]), [{ measure: 'm', expected: true }]);
+  assert.deepEqual(M.fromForm(F.topics, [{ key: 'topic:a', name: 'A' }, { key: null, name: ' New ' }]), ['topic:a', 'New'], 'known vocabulary by key, new by name');
+  assert.equal(M.fromForm(F.venue, [{ key: 'venue:v', name: 'V' }]), 'venue:v'); assert.equal(M.fromForm(F.venue, []), null);
+  assert.deepEqual(M.toForm(F.topics, [{ key: 'topic:a', name: 'A' }]), [{ key: 'topic:a', name: 'A' }]); assert.deepEqual(M.toForm(F.venue, { key: null, name: 'Text venue' }), [{ key: null, name: 'Text venue' }]);
+  assert.deepEqual([M.toForm(F.evidence, null), M.toForm(F.limitations_stated, null), M.toForm(F.title, null)], [{}, [], '']);
+  const before = { title: 'T', topics: [{ key: 'topic:a', name: 'A' }], venue: { key: null, name: 'Old text' }, evidence: { n: 5, type: 'x' }, year: 2020 };
+  const unchanged = { title: 'T', topics: ['topic:a'], venue: 'Old text', evidence: { type: 'x', n: 5 }, year: 2020 };
+  assert.deepEqual(M.changedFields(F, before, unchanged), {}, 'refs by key, older text by name, objects regardless of key order');
+  assert.deepEqual(M.changedFields(F, before, { ...unchanged, title: 'T2', topics: ['topic:a', 'New'], year: null }), { title: 'T2', topics: ['topic:a', 'New'], year: null });
+  assert.deepEqual(M.changedFields(F, { tldr: null }, { tldr: null, nope: 1 }), {}, 'unknown names are never sent');
+  assert.deepEqual([M.safeHref('https://x.org/a'), M.safeHref('javascript:alert(1)'), M.safeHref('data:text/html,x'), M.safeHref(null)], ['https://x.org/a', null, null, null]);
+  assert.ok(M.isEmpty({ a: '', b: null }) && M.isEmpty([]) && !M.isEmpty({ a: 0 }) && !M.isEmpty(0));
+  assert.deepEqual(['CaseStudy', 'UseCase', 'Paper'].map(M.noun), ['case study', 'use case', 'paper']);
+
+  /* ------------------------------------------------------------ /api/schema collections, /api/vocab */
+  const appS = require('express')();
+  require('../features/graph').mount(appS); require('../features/vocab').mount(appS);
+  appS.use((err, _req, res, _next) => res.status(err.status || 500).json({ error: err.message }));
+  const srvS = await new Promise((ok) => { const x = appS.listen(0, '127.0.0.1', () => ok(x)); });
+  const sBase = `http://127.0.0.1:${srvS.address().port}`;
+  try {
+    const sch = await (await fetch(sBase + '/api/schema')).json();
+    assert.deepEqual(sch.collections.find((c) => c.name === 'paper').locked, ['doi', 'authors', 'venue'], 'the UI learns which fields it may not edit');
+    assert.deepEqual(sch.collections.find((c) => c.name === 'method').locked, []);
+    assert.equal((await fetch(sBase + '/api/vocab?kind=Topic&q=x')).status, 401, 'vocabulary look-up is owner only');
+    let vq;
+    runImpl = async (q, p) => { vq = [q, p]; return [{ key: 'topic:zero-knowledge-proof', name: 'Zero-knowledge proof', aliases: ['ZKP'], uses: 3 }]; };
+    const vr = await (await fetch(sBase + '/api/vocab?kind=topic&q=Zero-Knowledge%20Proofs&limit=500', { headers: { Authorization: 'Bearer abc' } })).json();
+    assert.deepEqual([vr.kind, vr.items[0].key], ['Topic', 'topic:zero-knowledge-proof']);
+    assert.equal(vq[1].q, 'zero knowledge proof', 'searched in the normalised form'); assert.ok(vq[0].includes('MATCH (n:Topic)') && /LIMIT 50$/.test(vq[0].trim()), 'limit capped');
+    assert.equal((await fetch(sBase + '/api/vocab?kind=Paper&q=x', { headers: { Authorization: 'Bearer abc' } })).status, 400);
+    runImpl = async (q) => { vq = [q]; return []; };
+    await fetch(sBase + '/api/graph', { headers: { Authorization: 'Bearer abc' } });
+    assert.ok(vq[0].includes('Topic') && vq[0].includes('Domain') && vq[0].includes('Organisation'), 'the graph includes every vocabulary label');
+    runImpl = async () => [];
+  } finally { srvS.close(); }
+  }
 
   /* ------------------------------------------------------------ search query building */
   assert.equal(q.luceneQuery('Blind sig+nature'), 'blind* AND sig* AND nature*');

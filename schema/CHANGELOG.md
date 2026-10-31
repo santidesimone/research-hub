@@ -2,6 +2,13 @@
 
 Every change to `schema/schema.json`, with the reason. The spec is `docs/SCHEMA_DESIGN.md`. A per-type `schema_version` is raised when that type's fields change. Items below the current version form the audit worklist, so a change is never silently applied to old items.
 
+## v3, Library UI (2026-10-30)
+
+Why: the Library builds its collections, lists, forms and filters from the schema (Task 5).
+
+- Types may set `label_plural` (Papers, Methods, Use cases, Case studies). The Library uses it for the Collections bar and addresses (`/library/case-studies`).
+- `record_status` is now derived from provenance on every write: `auto` while the item holds Claude values nobody has accepted, otherwise `reviewed`. Owner and source values need no review. Migration `010` recomputes it for existing items, because migration `005` had set `auto` on all of them, including the owner's own data.
+
 ## v3, analysis (2026-10-30)
 
 Why: Claude's single-call analysis (Task 4), and the design's competency question 1 (sample size), which must be answerable in plain Cypher.
