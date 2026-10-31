@@ -1213,6 +1213,143 @@ const seed = require('../../data/seed_papers.json');
   } finally { srvS.close(); }
   }
 
+  /* ------------------------------------------------------------ CLI (bin/hub as a child process, fake hub server) */
+  {
+    const http = require('http'); const os = require('os'); const { execFile } = require('child_process');
+    const seen = []; let routes = {};
+    const fake = http.createServer((req, res) => {
+      let body = []; req.on('data', (d) => body.push(d)); req.on('end', () => {
+        const raw = Buffer.concat(body);
+        const rec = { method: req.method, url: req.url, type: req.headers['content-type'] || null, auth: req.headers.authorization, raw };
+        try { rec.body = raw.length && /json/.test(rec.type) ? JSON.parse(raw) : null; } catch { rec.body = null; }
+        seen.push(rec);
+        const hit = Object.entries(routes).find(([k]) => `${req.method} ${req.url.split('?')[0]}` === k || `${req.method} ${req.url}` === k);
+        const [status, out] = hit ? (typeof hit[1] === 'function' ? hit[1](rec) : hit[1]) : [404, { error: 'no route ' + req.url }];
+        res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(out));
+      });
+    });
+    await new Promise((ok) => fake.listen(0, '127.0.0.1', ok));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-cli-'));
+    const env = { ...process.env, HUB_URL: `http://127.0.0.1:${fake.address().port}`, HUB_API_TOKEN: 'cli-token', HOME: home, HUB_MODEL: '' };
+    const hub = (args, { input = '', extraEnv = {} } = {}) => new Promise((resolve) => {
+      const child = execFile(process.execPath, [path.join(__dirname, '..', '..', 'bin', 'hub'), ...args], { env: { ...env, ...extraEnv } }, (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr }));
+      child.stdin.end(input);
+    });
+    const reset = (r) => { seen.length = 0; routes = r; };
+    try {
+      reset({ 'GET /api/items': [200, { items: [{ key: 'method:a', title: 'A', kind: 'technique', domain: [{ key: 'domain:x', name: 'X dom' }] }], total: 1, next_cursor: null }] });
+      let r = await hub(['item', 'list', 'method', '--kind', 'technique', '--sort', '-title', '--limit', '2']);
+      assert.equal(r.code, 0, r.stderr);
+      const u = new URL('http://x' + seen[0].url);
+      assert.deepEqual([seen[0].method, u.pathname, u.searchParams.get('collection'), u.searchParams.get('kind'), u.searchParams.get('sort'), u.searchParams.get('limit')], ['GET', '/api/items', 'method', 'technique', '-title', '2']);
+      assert.equal(seen[0].auth, 'Bearer cli-token');
+      assert.ok(r.stdout.includes('method:a') && r.stdout.includes('X dom') && !r.stdout.includes('domain:x'), 'links read as names');
+      let page = 0;
+      reset({ 'GET /api/items': () => (page++ === 0 ? [200, { items: [{ key: 'k1' }], total: 2, next_cursor: 'c1' }] : [200, { items: [{ key: 'k2' }], total: 2, next_cursor: null }]) });
+      r = await hub(['item', 'list', 'paper', '--all', '--json']);
+      assert.deepEqual(JSON.parse(r.stdout).items.map((x) => x.key), ['k1', 'k2']); assert.equal(new URL('http://x' + seen[1].url).searchParams.get('cursor'), 'c1', '--all follows the cursor');
+      page = 0; r = await hub(['item', 'list', 'paper']);
+      assert.equal(seen.length, 3, 'without --all only the first page'); assert.match(r.stderr, /--all for every page/);
+
+      reset({ 'GET /api/items/doi%3A10.1%2Fx': [200, { key: 'doi:10.1/x', collection: 'paper', record_status: 'auto', fields: { title: 'T', year: 2020, tldr: null, authors: [{ key: 'person:a', name: 'Ada' }], evidence: { n: 5 } },
+        provenance: { title: { by: 'source' }, year: { by: 'owner', status: 'reviewed' }, evidence: { by: 'claude', model: 'm1', confidence: 'low', status: 'auto' } }, links: { out: [{ rel: 'CITES', key: 'doi:2' }], in: [] } }] });
+      r = await hub(['item', 'get', 'doi:10.1/x']);
+      assert.ok(r.stdout.includes('title: T [source]') && r.stdout.includes('year: 2020 [you]') && r.stdout.includes('evidence: {"n":5} [claude, m1, low]') && r.stdout.includes('authors: Ada') && !r.stdout.includes('tldr') && r.stdout.includes('-> CITES doi:2'), r.stdout);
+
+      reset({ 'POST /api/items': [201, { key: 'usecase:u' }] });
+      r = await hub(['item', 'add', 'use_case', '-', '--set', 'status=idea', '--slug', 'u'], { input: '{"title":"U","actors":[{"role":"payer"}]}' });
+      assert.deepEqual(seen[0].body, { collection: 'use_case', fields: { title: 'U', actors: [{ role: 'payer' }], status: 'idea' }, slug: 'u' });
+      r = await hub(['item', 'add', 'use_case', '-'], { input: '[{"title":"U"}]' });
+      assert.equal(r.code, 1); assert.match(r.stderr, /expected a JSON object/);
+      r = await hub(['item', 'add', 'use_case', '-'], { input: '{not json' });
+      assert.equal(r.code, 1); assert.match(r.stderr, /fields: /); assert.equal(seen.length, 1, 'bad JSON sends nothing');
+      reset({ 'PATCH /api/items/method%3Aa': [200, { key: 'method:a', filled: ['year'] }] });
+      r = await hub(['item', 'edit', 'method:a', '--set', 'year=2024', '--set', 'tags=["a","b"]', '--set', 'note=hello world', '--set', 'tldr=null']);
+      assert.deepEqual(seen[0].body, { fields: { year: 2024, tags: ['a', 'b'], note: 'hello world', tldr: null } }, 'values are JSON when they parse, text otherwise');
+      r = await hub(['item', 'edit', 'method:a']); assert.equal(r.code, 1); assert.match(r.stderr, /nothing to change/);
+      r = await hub(['item', 'edit', 'method:a', '--set', 'oops']); assert.equal(r.code, 1); assert.match(r.stderr, /--set needs field=value/);
+      reset({ 'DELETE /api/items/method%3Aa': [200, { deleted: 'method:a' }] });
+      r = await hub(['item', 'rm', 'method:a']);
+      assert.equal(r.code, 1); assert.match(r.stderr, /add --yes/); assert.equal(seen.length, 0, 'nothing deleted without --yes');
+      r = await hub(['item', 'rm', 'method:a', '--yes']); assert.equal(seen[0].method, 'DELETE');
+      reset({ 'PUT /api/items/method%3Aa/links': [200, { created: true }], 'DELETE /api/items/method%3Aa/links': [200, { deleted: 1 }] });
+      await hub(['item', 'link', 'method:a', 'ADDRESSES', 'usecase:u', '--evidence', 'why', '--confidence', 'high']);
+      assert.deepEqual(seen[0].body, { rel: 'ADDRESSES', target: 'usecase:u', evidence: 'why', confidence: 'high' });
+      await hub(['item', 'unlink', 'method:a', 'ADDRESSES', 'usecase:u']);
+      assert.equal(seen[1].url, '/api/items/method%3Aa/links?rel=ADDRESSES&target=usecase%3Au');
+      r = await hub(['item', 'frobnicate']); assert.equal(r.code, 1); assert.match(r.stderr, /list \| get \| add/);
+
+      // analyze: identity from the argument, everything else from stdin
+      reset({ 'POST /api/analysis': (q) => [201, { key: q.body.doi ? 'doi:' + q.body.doi : q.body.key || 'paper:u', created: true }], 'POST /api/papers/file': [200, { file_url: 'https://drive' }] });
+      const AJ = JSON.stringify({ fields: { tldr: 't' }, links: [{ rel: 'ABOUT', target: 'x', kind: 'Topic' }], confidence: { tldr: 'high' } });
+      r = await hub(['analyze', 'https://doi.org/10.1/X', '--model', 'm1', '--deep', '--force'], { input: AJ });
+      assert.deepEqual(seen[0].body, { collection: 'paper', model: 'm1', fields: { tldr: 't' }, links: [{ rel: 'ABOUT', target: 'x', kind: 'Topic' }], confidence: { tldr: 'high' }, tier: 'deep', force: true, doi: '10.1/X' });
+      await hub(['analyze', 'https://example.org/p.html'], { input: '{}', extraEnv: { HUB_MODEL: 'env-model' } });
+      assert.deepEqual([seen[1].body.url, seen[1].body.model, seen[1].body.collection], ['https://example.org/p.html', 'env-model', 'paper']);
+      await hub(['analyze', 'usecase:offline'], { input: '{"model":"json-model","fields":{"goal":"g"}}' });
+      assert.deepEqual([seen[2].body.key, seen[2].body.collection, seen[2].body.model], ['usecase:offline', 'use_case', 'json-model'], 'the collection follows the key');
+      r = await hub(['analyze', '10.1/y'], { input: '{}' }); assert.equal(r.code, 1); assert.match(r.stderr, /which model/); assert.equal(seen.length, 3);
+      r = await hub(['analyze', 'just words'], { input: '{}' }); assert.equal(r.code, 1); assert.match(r.stderr, /not a DOI, URL, key or PDF/);
+      const pdf = path.join(home, 'paper.pdf'); fs.writeFileSync(pdf, '%PDF-1.4 test');
+      r = await hub(['analyze', pdf, '--model', 'm'], { input: '{}' }); assert.equal(r.code, 1); assert.match(r.stderr, /needs the paper's "doi" or "url"/);
+      reset({ 'POST /api/analysis': [201, { key: 'doi:10.2/p', created: true }], 'POST /api/papers/file': [200, { file_url: 'https://drive' }] });
+      r = await hub(['analyze', pdf, '--model', 'm'], { input: '{"doi":"10.2/p","fields":{}}' });
+      assert.equal(seen[0].body.doi, '10.2/p');
+      assert.deepEqual([seen[1].url, seen[1].type, seen[1].raw.toString()], ['/api/papers/file?key=doi%3A10.2%2Fp', 'application/pdf', '%PDF-1.4 test'], 'the PDF is uploaded and linked');
+      assert.deepEqual(JSON.parse(r.stdout).file, { file_url: 'https://drive' });
+
+      // audit
+      const prov = (o) => ({ fields: o.fields || {}, provenance: o.provenance });
+      reset({
+        'GET /api/audit': [200, { counts: { low_confidence: 1, unreviewed_items: 2 }, low_confidence: [{ key: 'a', title: 'Item A', field: 'f2' }], unreviewed_items: [{ key: 'a' }, { key: 'b' }] }],
+        'GET /api/items/a': [200, prov({ provenance: { f1: { by: 'claude', status: 'auto', confidence: 'medium' }, f2: { by: 'claude', status: 'auto', confidence: 'low' }, f3: { by: 'owner', status: 'reviewed' }, f4: { by: 'claude', status: 'reviewed' } } })],
+        'GET /api/items/b': [200, prov({ fields: { key_findings: [{ text: 'x' }] }, provenance: { key_findings: { by: 'claude', status: 'auto' }, f5: { by: 'claude', status: 'auto' } } })],
+        'POST /api/audit/accept': [200, { record_status: 'auto' }],
+      });
+      r = await hub(['audit', '--accept-all-unchanged', '--dry-run']);
+      assert.deepEqual(JSON.parse(r.stdout), { accepted: { a: ['f1'], b: ['f5'] }, skipped: { a: ['f2 (low confidence)'], b: ['key_findings (ungrounded)'] }, dry_run: true });
+      assert.ok(!seen.some((x) => x.method === 'POST'), 'a dry run accepts nothing');
+      seen.length = 0;
+      r = await hub(['audit', '--accept-all-unchanged']);
+      assert.deepEqual(seen.filter((x) => x.method === 'POST').map((x) => x.body), [{ key: 'a', fields: ['f1'] }, { key: 'b', fields: ['f5'] }]);
+      assert.equal(new URL('http://x' + seen[0].url).searchParams.get('limit'), '1000');
+      r = await hub(['audit']);
+      assert.ok(r.stdout.includes('low confidence: 1') && r.stdout.includes('a  Item A  f2'), r.stdout);
+
+      // schema of a collection
+      reset({ 'GET /api/schema': [200, publicView()] });
+      r = await hub(['schema', 'case-studies']);
+      assert.ok(/case_type\s+enum\s+core\s+YC\s+deployment\|pilot/.test(r.stdout) && r.stdout.includes('organisations') && r.stdout.includes('Organisation'), r.stdout);
+      r = await hub(['schema', 'gadgets']); assert.equal(r.code, 1); assert.match(r.stderr, /no collection "gadgets" \(paper, method, use_case, case_study\)/);
+    } finally { fake.close(); }
+
+    // every command the CLI handles is in its help and in the README
+    const hubSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'bin', 'hub'), 'utf8');
+    const readme = fs.readFileSync(path.join(__dirname, '..', '..', 'README.md'), 'utf8');
+    const help = hubSrc.slice(hubSrc.indexOf('const HELP'), hubSrc.indexOf('`;', hubSrc.indexOf('const HELP')));
+    const commands = [...hubSrc.matchAll(/cmd === '([a-z-]+)'/g)].map((m) => m[1]).filter((c) => c !== 'help');
+    const subs = [...hubSrc.slice(hubSrc.indexOf('async function itemCommand')).matchAll(/sub === '([a-z]+)'/g)].map((m) => 'item ' + m[1]);
+    assert.ok(commands.length > 15 && subs.length >= 7);
+    for (const c of [...commands, ...subs]) {
+      assert.ok(help.includes('hub ' + c), `help lists "hub ${c}"`);
+      assert.ok(readme.includes('hub ' + c), `README mentions "hub ${c}"`);
+    }
+  }
+
+  /* ------------------------------------------------------------ the API docs match the routes */
+  {
+    const openapi = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'openapi.json'), 'utf8'));
+    const routes = new Set();
+    const toDoc = (p) => (p instanceof RegExp ? p.source.replace(/^\^\\\//, '/').replace(/\\\//g, '/').replace('(.+)', '{key}').replace(/\$$/, '') : String(p).replace(/:([a-z_]+)/gi, '{$1}'));
+    const fakeApp = new Proxy({}, { get: (_t, m) => (m === 'use' ? () => {} : (p) => { if (['get', 'post', 'put', 'patch', 'delete'].includes(m) && toDoc(p).startsWith('/api/')) routes.add(`${m.toUpperCase()} ${toDoc(p)}`); }) });
+    for (const d of fs.readdirSync(path.join(__dirname, '..', 'features'))) require(`../features/${d}`).mount(fakeApp);
+    // /api/ routes only: /healthz, /readyz and /mcp are documented too but mounted outside the feature API
+    const documented = new Set(Object.entries(openapi.paths).filter(([p]) => p.startsWith('/api/')).flatMap(([p, ops]) => Object.keys(ops).filter((m) => ['get', 'post', 'put', 'patch', 'delete'].includes(m)).map((m) => `${m.toUpperCase()} ${p}`)));
+    assert.ok(routes.has('PATCH /api/items/{key}') && routes.has('PUT /api/items/{key}/links') && routes.has('GET /api/vocab'), [...routes].join(', '));
+    assert.deepEqual([...routes].filter((r) => !documented.has(r)).sort(), [], 'every route is in web/openapi.json');
+    assert.deepEqual([...documented].filter((r) => !routes.has(r)).sort(), [], 'openapi.json documents no route that does not exist');
+  }
+
   /* ------------------------------------------------------------ search query building */
   assert.equal(q.luceneQuery('Blind sig+nature'), 'blind* AND sig* AND nature*');
   assert.equal(q.luceneQuery('  '), ''); assert.ok(!/["\\()]/.test(q.luceneQuery('a" (b) \\c')));

@@ -92,5 +92,6 @@ const noOverflow = async (page) => page.evaluate(() => document.documentElement.
   });
   await step('mobile: no console or CSP errors', async () => { expect(!p2.length, p2.slice(0, 4).join(' || ')); });
   for (const r of results) console.log(r.join(' | '));
+  if (results.some((r) => r[0] !== 'PASS')) process.exitCode = 1; // CI needs a failing exit code
   await browser.close();
 })();

@@ -2110,6 +2110,79 @@
           }
         }
       }
+    },
+    "/api/apps": {
+      "get": {
+        "operationId": "listApps",
+        "summary": "The UI apps (web/apps/*/app.json): id, title, description, icon, auth, order",
+        "responses": {
+          "200": {
+            "description": "{apps: [...]}"
+          }
+        }
+      }
+    },
+    "/api/graph": {
+      "get": {
+        "operationId": "graph",
+        "summary": "The whole private graph, slim (key, labels and a few properties per node; edges as from, to, type) for the graph view",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{nodes: [{key, labels, props}], edges: [{from, to, type}]}"
+          },
+          "401": {
+            "description": "Owner only"
+          }
+        }
+      }
+    },
+    "/api/artifact": {
+      "get": {
+        "operationId": "getArtifact",
+        "summary": "Any node by key (item, note, project, vocabulary) with its links in and out, its file link and its Markdown body as HTML",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{key, labels, props, file, has_file, out, in, html}"
+          },
+          "401": {
+            "description": "Owner only"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/logout": {
+      "post": {
+        "operationId": "logout",
+        "summary": "End the browser session (clears the session cookie)",
+        "responses": {
+          "200": {
+            "description": "{ok: true}"
+          }
+        }
+      }
     }
   }
 }

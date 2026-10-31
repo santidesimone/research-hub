@@ -159,5 +159,6 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
   });
   await step('no console or CSP errors', async () => { expect(!problems.length, problems.slice(0, 5).join(' || ')); });
   for (const r of results) console.log(r.join(' | '));
+  if (results.some((r) => r[0] !== 'PASS')) process.exitCode = 1; // CI needs a failing exit code
   await browser.close();
 })();

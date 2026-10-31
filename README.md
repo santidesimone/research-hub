@@ -275,6 +275,43 @@ curl -H "$H" -H "Content-Type: application/json" -X POST http://127.0.0.1:3000/a
 - **The audit** (`GET /api/audit`): counts and lists of low-confidence fields and links, empty Core and Standard fields, ungrounded findings, items below their type's `schema_version`, vocabulary Claude created, and unreviewed items. `POST /api/audit/accept` (`{key, fields?, links?}` or `{vocab}`) marks values reviewed, which protects them from re-runs like your own edits.
 - **Single-object fields** (`evidence`, `period`, `threats_to_validity` ...) also keep each part as a plain property for Cypher: `MATCH (p:Paper) WHERE p.evidence__n > 100`.
 
+## Command line (`bin/hub`)
+
+Node 18+, nothing to install. `hub config --url <base url> --token <token>` saves the connection, or set `HUB_URL` and `HUB_API_TOKEN`. `hub help` prints this list.
+
+| Command | What it does |
+|---|---|
+| `hub query "<cypher>"` (or `-f file.cypher`), `--json` / `--csv` | read-only Cypher |
+| `hub schema [collection]` | the graph's labels and relations; with a collection, its fields (type, tier, who fills it, values) |
+| `hub search <text>` | find papers by title, author or venue |
+| `hub get <key>` | one node with its links |
+| `hub add <doi \| file.json \| ->` `[--file <url>] [--copy] [--status s]` | add a paper (a DOI alone is looked up) |
+| `hub link <key> <url>`, `hub unlink <key>`, `hub pdf <key> <file.pdf \| url>` | a paper's file link; `pdf` uploads to your Drive |
+| `hub status <key> <value\|none>` | your personal reading status |
+| `hub drive` | check the Google Drive connection |
+| `hub item list <collection>` `[--q text] [--sort f\|-f] [--limit n] [--all] [--<filter> value]` | list papers, methods, use cases or case studies, filtered by the schema's filters (`--kind technique`, `--domain payments`); `--json`, `--csv` |
+| `hub item get <key>` | every field, with who wrote it (you, Claude, source), and links |
+| `hub item add <collection> [file.json \| -]` `[--set f=v] [--slug s]` | create an item from a JSON object of fields |
+| `hub item edit <key> [file.json \| -]` `[--set field=value ...]` | change only these fields (they become yours); values are JSON when they parse (`--set year=2024`, `--set 'tags=["a"]'`), text otherwise |
+| `hub item rm <key> --yes` | delete (refuses without `--yes`) |
+| `hub item link <key> <rel> <target>` `[--evidence t] [--location p] [--confidence c]`, `hub item unlink <key> <rel> <target>` | typed links |
+| `hub analyze <doi \| url \| key \| file.pdf>` `[--deep] [--force] [--model m] [--collection c] < analysis.json` | save an analysis in one call (stdin: `{fields, links, confidence}`; the model from `--model`, the JSON or `HUB_MODEL`). For a PDF, the JSON names the paper (`doi` or `url`) and the file is uploaded to your Drive |
+| `hub audit [--json]` | what is worth reviewing, with counts |
+| `hub audit --accept-all-unchanged [--dry-run]` | accept every Claude value nobody changed, except low-confidence values and ungrounded findings (listed as skipped) |
+| `hub sync-notes [dir] [--dry-run] [--no-prune]` | push Markdown notes and projects |
+| `hub enrich` | citation edges from OpenAlex |
+| `hub backup [file]`, `hub restore <file>` | the whole graph to and from one JSON file |
+| `hub export`, `hub sync` | papers as CSL JSON; rebuild the public preview |
+| `hub config --url u --token t` | save the connection |
+
+```bash
+echo '{"fields": {"contribution_type": "empirical", "key_findings": [{"text": "...", "location": "p. 4"}]}}' \
+  | ./bin/hub analyze 10.3390/fi13050130 --model claude-opus-5-5
+./bin/hub item list method --kind technique --sort title
+./bin/hub item edit method:snowballing --set level=intermediate
+./bin/hub audit --accept-all-unchanged --dry-run
+```
+
 ## Vocabulary and name matching
 
 People, concepts, topics, domains, venues, organisations and datasets are shared nodes, not strings. Callers pass names; `web/core/vocab.js` `resolve(kind, name, { create, aliases, by, model })` finds the node that name means or creates one (flagged `by: claude` by default) and returns `{ key, name, created, match }`. A match is one of:

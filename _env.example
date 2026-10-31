@@ -39,3 +39,8 @@ GOOGLE_REFRESH_TOKEN=
 
 # ---- Optional: identifies you to OpenAlex and Crossref (polite pools) for `hub enrich` and Claude's analysis (/api/analysis)
 OPENALEX_EMAIL=
+
+# ---- CLI only (bin/hub reads these from your shell, not the server): where the hub is, and the model behind
+# `hub analyze` when --model is not given. HUB_API_TOKEN above is the CLI's token too.
+# HUB_URL=http://127.0.0.1:3000
+# HUB_MODEL=claude-opus-5-5

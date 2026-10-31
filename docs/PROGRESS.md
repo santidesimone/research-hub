@@ -10,7 +10,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | 3 Generic items API | done (2026-10-30) | See "Task 3" below. |
 | 4 Claude analysis, single-call save, audit | done (2026-10-30) | See "Task 4" below. |
 | 5 Library UI: Collections, forms, audit | done (2026-10-30) | See "Task 5" below. |
-| 6 CLI, API docs, CI, docs | not started | |
+| 6 CLI, API docs, CI, docs | done (2026-10-30), CI not run yet | See "Task 6" below. |
 | 7 Hardening | not started | |
 
 ## Task 0. Baseline against real services
@@ -256,3 +256,31 @@ Update at the end of every task. For each: what changed, what was tested for rea
 - The sticky Save bar on long forms floats slightly above the bottom on small screens (the detail pane's padding); it stays usable.
 - Graph layout and the reader with a real Google Drive file were not re-tested (unchanged code; Drive needs credentials).
 - Not run against your own database. Migration 010 runs on the next start (it only changes `record_status`); take a `hub backup` first.
+
+## Task 6. CLI, API docs, CI, docs
+
+**Changed**
+- `bin/hub`:
+  - `hub item list` (filters, `--all`, `--json`/`--csv`), `item get`, `item add`, `item edit` (`--set field=value`, JSON when it parses), and `item rm` (refuses without `--yes`).
+  - `item link` and `item unlink`.
+  - `hub analyze <doi|url|key|file.pdf>`: stdin `{fields, links, confidence}`; `--deep`, `--force`, `--model`/`HUB_MODEL`. For a PDF, the JSON names the paper and the file is uploaded to Drive.
+  - `hub audit`, and `--accept-all-unchanged [--dry-run]`, which accepts Claude values still as written, except low-confidence values and ungrounded findings.
+  - `hub schema [collection]`.
+- Docs that cannot drift: offline tests fail if any `/api/` route is missing from `web/openapi.json` (or documented but gone), or if a CLI command is missing from `hub help` or the README. They found four routes that had never been documented: `/api/apps`, `/api/graph`, `/api/artifact` and `/api/logout`. They are documented now.
+- CI: a new `e2e` job runs the real server on Neo4j, the browser seed (with retries for live Crossref and OpenAlex), the Playwright checks, and `web/test/cli-e2e.js`, uploading the server log and screenshots on failure. The browser scripts now exit non-zero on any failed check, so CI can see failures.
+- README (a command-line section covering every command), `deploy/README.md` (back up before deploying; migrations 005–010; `OPENALEX_EMAIL`; the new MCP tools; Node 20 and 18; the CI jobs), and `_env.example` (`HUB_URL`, `HUB_MODEL` for the CLI).
+
+**Tested for real**
+- Offline: the CLI runs as a child process against a fake hub server. Each command's method, path, query, body (including the raw PDF upload and its content type), output and exit code are checked, including refusals: `rm` without `--yes`, bad or non-object JSON, missing model, bad `--set`, unknown input. Plus the route/openapi and command/help/README checks. Mutation check: 23/23.
+- The e2e job's steps, run locally on a fresh throwaway Neo4j: seed exit 0, owner checks 15/15, public and mobile 9/9, and the CLI end to end passed:
+  - schema, add, a list with a full-text query and a vocabulary filter, edit, get, link and unlink;
+  - an analysis that skips the owner's value;
+  - the audit, accept-all-unchanged as a dry run and for real;
+  - rm with and without `--yes`.
+  - A deliberately failing browser run (wrong token) exits 1.
+- `npm test` and the integration suite (fresh database) pass. `docker build .` succeeds and the image still refuses weak production settings.
+- The workflow file parses (js-yaml): three jobs with the steps in order.
+
+**Not tested / open**
+- **CI itself has not run.** Nothing has been pushed (that needs the owner's go-ahead). The acceptance "CI green" is open until the first push. Risks to watch on the first run: Chrome at `/usr/bin/google-chrome` on the runner, and live Crossref and OpenAlex availability for the seed.
+- `hub analyze file.pdf` upload: only the offline test (fake server) covered it; the real Drive needs credentials.

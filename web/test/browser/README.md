@@ -2,7 +2,7 @@
 
 Playwright scripts that drive a real Chrome against a running hub: the owner's flows (sign-in, collections, the paper Analysis tab, create / edit / link / delete, structured editors, the audit, the graph), an anonymous visitor (public whitelist only), and a 390px mobile viewport. They fail on any console error, CSP violation or failed request.
 
-They are not part of `npm test` and not a project dependency. To run them:
+They are not part of `npm test` and not a project dependency. CI runs them in the `e2e` job (`.github/workflows/ci.yml`), followed by `web/test/cli-e2e.js` (the real CLI against the same hub). To run them:
 
 ```bash
 # 1. a THROWAWAY Neo4j and a hub on it (the seed writes data)

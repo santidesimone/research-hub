@@ -70,6 +70,14 @@ Public links are the trade-off you chose: anyone who has a file's URL can open i
 NEO4J_URI=bolt://10.x.x.x:7687 ./deploy/deploy.sh
 ```
 
+**Before deploying a new version, take a backup** (`hub backup`, step 7). Each start applies any new graph migrations once, in order (`web/migrations/`, recorded on the `SchemaMeta` node; `GET /api/schema` lists them). Version 0.7.0 brings 005 to 010:
+- methods move into the database (005);
+- vocabulary matching fields and indexes (006, 008);
+- objects in `<field>_json` and queryable parts (007, 009);
+- `record_status` from provenance (010).
+
+They only add or copy data, but they do change it, so back up first. Set `OPENALEX_EMAIL` (a secret or plain env var) so Crossref and OpenAlex put Claude's analyses in their polite pools.
+
 Open the printed URL (`.../research-hub/`). First start applies the graph migrations. `.../research-hub/healthz` says the process is up; `.../research-hub/readyz` also checks the database.
 Sign in with the token, then load data from your computer: `hub add 10.1007/978-1-4757-0602-4_18 --file https://arxiv.org/pdf/...`, or `python scripts/seed.py` with `HUB_URL` set to the deployed address.
 `MIN_INSTANCES=0` in front of the command lets it scale to zero (cheaper, slower first request). Check Drive with `hub drive`.
@@ -135,12 +143,25 @@ The MCP endpoint is `https://santidesimone.com/research-hub/mcp` (Streamable HTT
 - **Claude Code**: `claude mcp add --transport http research-hub https://santidesimone.com/research-hub/mcp --header "Authorization: Bearer <token>"`
 - **Claude chat window (custom connector)**: add the URL in Connectors. The chat app signs in with OAuth or an admin-entered fixed header, depending on your plan; this server accepts the bearer token only (no OAuth server yet). If your plan only offers OAuth, that is the next piece to build.
 
-Tools offered: `describe_graph`, `run_cypher` (read-only), `search_papers`, `get_artifact`, `add_paper`, `add_artifact`, `set_file_link`, `copy_pdf_to_drive`, `remove_file_link`, `set_status`.
+Tools offered:
+- **Analysis:** `get_schema`, then `save_analysis`. One call saves an analysis directly, with provenance; it never overwrites your edits.
+- **Collections:** `search_items` and `get_item`.
+- **Graph:** `describe_graph` and `run_cypher` (read-only), plus `search_papers` and `get_artifact`.
+- **Writes:** `add_paper`, `add_artifact`, `set_file_link`, `copy_pdf_to_drive`, `remove_file_link` and `set_status`.
+
+The image runs Node 20. If you run the server yourself on Node 18, it still works; the MCP endpoint provides the Web Crypto global it needs.
+
+Review what Claude saved in the Library's **Audit** view or with `hub audit` (and `hub audit --accept-all-unchanged`).
 Large PDFs cannot travel through chat. Give Claude a URL (`copy_pdf_to_drive` with an arXiv/UCL link), or upload with `hub pdf` from your computer.
 
 ## CI/CD (optional)
 
-`.github/workflows/ci.yml` runs the offline tests and an integration test against a real Neo4j container on every push. `deploy/cloudbuild.yaml` builds and deploys on a Cloud Build trigger (see the comment at the top of that file).
+`.github/workflows/ci.yml` runs on every push:
+- **test:** the offline tests, and the integration test against a real Neo4j container.
+- **e2e:** the real server on Neo4j, Playwright browser checks of the Library (owner, anonymous visitor, mobile width) and the CLI end to end. The seed analyses two papers through the live Crossref and OpenAlex APIs.
+- **image:** the Docker build.
+
+On failure, the e2e job uploads the server log and screenshots. `deploy/cloudbuild.yaml` builds and deploys on a Cloud Build trigger (see the comment at the top of that file).
 
 ## Security checklist
 

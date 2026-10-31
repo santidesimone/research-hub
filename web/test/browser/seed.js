@@ -18,8 +18,13 @@ const DATA = [
 ];
 (async () => {
   for (const [path, body] of DATA) {
-    const res = await fetch(U + path, { method: 'POST', headers: H, body: JSON.stringify(body) });
-    console.log(res.status, path, (await res.json()).key);
-    if (res.status >= 300) process.exitCode = 1;
+    let res, out;
+    for (let attempt = 1; attempt <= 3; attempt++) { // Crossref and OpenAlex are live services: retry a hiccup
+      try { res = await fetch(U + path, { method: 'POST', headers: H, body: JSON.stringify(body) }); out = await res.json(); } catch (e) { res = { status: 0 }; out = { error: e.message }; }
+      if (res.status > 0 && res.status < 300) break;
+      await new Promise((r) => setTimeout(r, 2000 * attempt));
+    }
+    console.log(res.status, path, out.key || out.error);
+    if (!(res.status > 0 && res.status < 300)) process.exitCode = 1;
   }
 })();

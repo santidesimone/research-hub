@@ -16,7 +16,7 @@ const HELP = `hub: research hub client   (${url})
 
   Query
     hub query "<cypher>" | -f file.cypher        read-only Cypher; add --json or --csv
-    hub schema                                    labels, relationships, conventions
+    hub schema [collection]                       labels, relationships, conventions; or a collection's fields
     hub search <text>                             find papers
     hub get <key>                                 one artifact with its links
 
@@ -30,8 +30,24 @@ const HELP = `hub: research hub client   (${url})
     hub status <key> <value|none>                 set your personal status
     hub drive                                     check the Google Drive connection
 
+  Collections (paper, method, use_case, case_study)
+    hub item list <collection> [--q text] [--sort f|-f] [--limit n] [--all] [--<filter> value]   e.g. --kind technique
+    hub item get <key>                            every field, with who wrote it (you, Claude, source)
+    hub item add <collection> [file.json | -]     create from {"title": ...} (a JSON object of fields)
+    hub item edit <key> [file.json | -] [--set field=value ...]   only these fields change (and become yours)
+    hub item rm <key> --yes                       delete
+    hub item link <key> <rel> <target> [--evidence t] [--location p] [--confidence low|medium|high]
+    hub item unlink <key> <rel> <target>
+
+  Claude's analysis and the audit
+    hub analyze <doi | url | key | file.pdf> [--deep] [--force] [--model m] [--collection c]  < analysis.json
+                                                  save an analysis in one call: stdin is {fields, links, confidence};
+                                                  a PDF needs the paper's doi or url in that JSON and is uploaded to Drive
+    hub audit [--json]                            what is worth reviewing, with counts
+    hub audit --accept-all-unchanged [--dry-run]  accept Claude's values that nobody changed (not low-confidence or ungrounded)
+
   Notes, citations, backup
-    hub sync-notes [dir=./content] [--dry-run] [--no-prune]   push Markdown notes/methods/projects to the hub
+    hub sync-notes [dir=./content] [--dry-run] [--no-prune]   push Markdown notes and projects to the hub
     hub enrich                                    add citation edges from OpenAlex
     hub backup [file]                             save the whole graph to one JSON file
     hub restore <file>                            merge a backup back in (never deletes)
@@ -73,7 +89,7 @@ function printResult(r, flags) {
   console.error(`\n${r.count} row${r.count === 1 ? '' : 's'}${r.truncated ? ' (truncated to ' + r.rows.length + ')' : ''}`);
 }
 
-const BOOL_FLAGS = new Set(['json', 'csv', 'copy', 'dry-run', 'no-prune', 'help']);
+const BOOL_FLAGS = new Set(['json', 'csv', 'copy', 'dry-run', 'no-prune', 'help', 'all', 'yes', 'deep', 'force', 'accept-all-unchanged']);
 function parse(argv) {
   const flags = {}, rest = [];
   for (let i = 0; i < argv.length; i++) {
@@ -81,6 +97,7 @@ function parse(argv) {
     if (a.startsWith('--')) {
       const k = a.slice(2);
       if (BOOL_FLAGS.has(k)) flags[k] = true;
+      else if (k === 'set') (flags.set = flags.set || []).push(argv[++i]); // repeatable: --set a=1 --set b=2
       else { const next = argv[i + 1]; if (next === undefined || next.startsWith('--')) flags[k] = true; else { flags[k] = next; i++; } }
     } else if (a === '-f') flags.f = argv[++i];
     else rest.push(a);
@@ -89,6 +106,160 @@ function parse(argv) {
 }
 const stdin = () => new Promise((r) => { let s = ''; process.stdin.on('data', (d) => (s += d)); process.stdin.on('end', () => r(s)); });
 const enc = encodeURIComponent;
+
+// A JSON object from a file, from '-', or from piped stdin; {} when nothing is piped.
+async function readJson(src, what) {
+  let text = '';
+  if (src && src !== '-') { if (!fs.existsSync(src)) fail(`file not found: ${src}`); text = fs.readFileSync(src, 'utf8'); }
+  else if (src === '-' || !process.stdin.isTTY) text = await stdin();
+  if (!text.trim()) return {};
+  try { const v = JSON.parse(text); if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('expected a JSON object'); return v; }
+  catch (e) { return fail(`${what}: ${e.message}`); }
+}
+// --set field=value: JSON when it parses (numbers, lists, objects, null), text otherwise
+function parseSets(list) {
+  const out = {};
+  for (const s of list || []) {
+    const i = String(s).indexOf('=');
+    if (i < 1) fail(`--set needs field=value, got "${s}"`);
+    const raw = s.slice(i + 1);
+    try { out[s.slice(0, i)] = JSON.parse(raw); } catch { out[s.slice(0, i)] = raw; }
+  }
+  return out;
+}
+// list cells: links read as their names
+const flat = (v) => (Array.isArray(v) ? v.map(flat).join(', ') : v && typeof v === 'object' && 'name' in v ? v.name : v);
+const LIST_FLAGS = new Set(['q', 'sort', 'limit', 'cursor', 'all', 'json', 'csv']);
+const KEY_COLLECTION = { 'method:': 'method', 'usecase:': 'use_case', 'case:': 'case_study' };
+
+// What `hub analyze <thing>` was given -> { doi | url | key | pdf }
+function identify(thing) {
+  const t = String(thing).trim();
+  const doi = t.replace(/^(doi:|https?:\/\/(dx\.)?doi\.org\/)/i, '');
+  if (/^10\.\d+\/\S+$/.test(doi)) return { doi };
+  if (/^https?:\/\//i.test(t)) return { url: t };
+  if (/\.pdf$/i.test(t)) { if (!fs.existsSync(t)) fail(`file not found: ${t}`); return { pdf: t }; }
+  if (/^[a-z_]+:\S+$/i.test(t)) return { key: t };
+  return fail(`not a DOI, URL, key or PDF file: ${t}`);
+}
+async function itemCommand(sub, args, flags) {
+  const usage = (u) => fail('usage: hub item ' + u);
+  if (sub === 'list') {
+    const c = args[0] || usage('list <collection> [--q text] [--sort f] [--limit n] [--all]');
+    const qs = new URLSearchParams({ collection: c });
+    for (const [k, v] of Object.entries(flags)) if (!LIST_FLAGS.has(k) && v !== true) qs.set(k, v); // schema filters
+    for (const k of ['q', 'sort', 'limit', 'cursor']) if (flags[k] && flags[k] !== true) qs.set(k, flags[k]);
+    const rows = [];
+    let r;
+    do { r = await call('GET', '/api/items?' + qs); rows.push(...r.items); if (r.next_cursor) qs.set('cursor', r.next_cursor); } while (flags.all && r.next_cursor);
+    if (flags.json) return show({ ...r, items: rows });
+    const columns = [...new Set(['key', 'title', ...rows.flatMap((x) => Object.keys(x)).filter((k) => !['updated_at'].includes(k))])];
+    const flatRows = rows.map((x) => Object.fromEntries(columns.map((k) => [k, flat(x[k])])));
+    printResult({ columns, rows: flatRows, count: rows.length, truncated: false }, flags);
+    if (!flags.all && r.next_cursor) console.error(`${r.total} in all; --all for every page`);
+    return;
+  }
+  if (sub === 'get') {
+    const it = await call('GET', '/api/items/' + enc(args[0] || usage('get <key>')));
+    if (flags.json) return show(it);
+    console.log(`${it.key}  (${it.collection}, ${it.record_status || 'no status'})`);
+    for (const [f, v] of Object.entries(it.fields)) {
+      if (v == null || (Array.isArray(v) && !v.length)) continue;
+      const p = it.provenance[f];
+      const who = p ? ` [${[p.by === 'owner' ? 'you' : p.by, p.model, p.confidence, p.status === 'reviewed' && p.by !== 'owner' ? 'reviewed' : null].filter(Boolean).join(', ')}]` : '';
+      console.log(`  ${f}: ${typeof v === 'object' && !Array.isArray(v) && !('name' in v) ? JSON.stringify(v) : Array.isArray(v) && v.some((x) => x && typeof x === 'object' && !('name' in x)) ? JSON.stringify(v) : flat(v)}${who}`);
+    }
+    for (const l of it.links.out.filter((x) => !x.field)) console.log(`  -> ${l.rel} ${l.key}${l.evidence ? `  "${l.evidence}"` : ''}`);
+    for (const l of it.links.in) console.log(`  <- ${l.rel} ${l.key}`);
+    return;
+  }
+  if (sub === 'add') {
+    const c = args[0] || usage('add <collection> [file.json | -]');
+    const fields = { ...(await readJson(args[1], 'fields')), ...parseSets(flags.set) };
+    return show(await call('POST', '/api/items', { collection: c, fields, ...(flags.slug ? { slug: flags.slug } : {}) }));
+  }
+  if (sub === 'edit') {
+    const key = args[0] || usage('edit <key> [file.json | -] [--set field=value ...]');
+    const fields = { ...(flags.set && !args[1] ? {} : await readJson(args[1], 'fields')), ...parseSets(flags.set) };
+    if (!Object.keys(fields).length) fail('nothing to change: pass a JSON file, - for stdin, or --set field=value');
+    return show(await call('PATCH', '/api/items/' + enc(key), { fields }));
+  }
+  if (sub === 'rm') {
+    const key = args[0] || usage('rm <key> --yes');
+    if (!flags.yes) fail(`this deletes ${key} for good; add --yes to confirm`);
+    return show(await call('DELETE', '/api/items/' + enc(key)));
+  }
+  if (sub === 'link' || sub === 'unlink') {
+    const [key, rel, target] = args;
+    if (!key || !rel || !target) usage(`${sub} <key> <rel> <target>`);
+    if (sub === 'unlink') return show(await call('DELETE', `/api/items/${enc(key)}/links?rel=${enc(rel)}&target=${enc(target)}`));
+    const body = { rel, target };
+    for (const k of ['evidence', 'location', 'confidence']) if (flags[k] && flags[k] !== true) body[k] = flags[k];
+    return show(await call('PUT', `/api/items/${enc(key)}/links`, body));
+  }
+  return usage('list | get | add | edit | rm | link | unlink');
+}
+async function analyzeCommand(args, flags) {
+  const id = identify(args[0] || fail('usage: hub analyze <doi | url | key | file.pdf> < analysis.json'));
+  const input = await readJson(args[1], 'analysis JSON');
+  const model = (flags.model !== true && flags.model) || input.model || process.env.HUB_MODEL || fail('which model did the analysis? pass --model, "model" in the JSON, or set HUB_MODEL');
+  const body = { collection: flags.collection || input.collection || (id.key && Object.entries(KEY_COLLECTION).find(([p]) => id.key.startsWith(p))?.[1]) || 'paper',
+    model, fields: input.fields || {}, links: input.links || [] };
+  if (input.confidence) body.confidence = input.confidence;
+  if (flags.deep) body.tier = 'deep';
+  if (flags.force) body.force = true;
+  if (id.pdf) {
+    if (!input.doi && !input.url && !input.key) fail('a PDF needs the paper\'s "doi" or "url" (or "key") in the analysis JSON');
+    Object.assign(body, input.doi ? { doi: input.doi } : input.url ? { url: input.url } : { key: input.key });
+  } else Object.assign(body, id);
+  const out = await call('POST', '/api/analysis', body);
+  if (id.pdf) {
+    try { out.file = await call('POST', '/api/papers/file?key=' + enc(out.key), undefined, { raw: fs.readFileSync(id.pdf), headers: { 'Content-Type': 'application/pdf' } }); }
+    catch (e) { out.file_error = e.message; }
+  }
+  return show(out);
+}
+// Claude values nobody changed: still by=claude and auto, minus low-confidence values and ungrounded findings.
+function unchangedFields(item) {
+  const ungrounded = (item.fields.key_findings || []).some((k) => !k || typeof k !== 'object' || !String(k.location || '').trim());
+  const accept = [];
+  const skip = [];
+  for (const [f, p] of Object.entries(item.provenance || {})) {
+    if (!p || p.by !== 'claude' || p.status !== 'auto') continue;
+    if (p.confidence === 'low') skip.push(`${f} (low confidence)`);
+    else if (f === 'key_findings' && ungrounded) skip.push(`${f} (ungrounded)`);
+    else accept.push(f);
+  }
+  return { accept, skip };
+}
+async function auditCommand(flags) {
+  const r = await call('GET', '/api/audit?limit=1000');
+  if (flags['accept-all-unchanged']) {
+    const report = { accepted: {}, skipped: {}, dry_run: Boolean(flags['dry-run']) };
+    for (const { key } of r.unreviewed_items) {
+      const { accept, skip } = unchangedFields(await call('GET', '/api/items/' + enc(key)));
+      if (accept.length) { if (!flags['dry-run']) await call('POST', '/api/audit/accept', { key, fields: accept }); report.accepted[key] = accept; }
+      if (skip.length) report.skipped[key] = skip;
+    }
+    return show(report);
+  }
+  if (flags.json) return show(r);
+  const name = (x) => x.title || x.name || x.key;
+  for (const [k, n] of Object.entries(r.counts)) {
+    console.log(`${k.replace(/_/g, ' ')}: ${n}`);
+    for (const x of (r[k] || []).slice(0, 5)) console.log(`  ${x.key}  ${name(x)}${x.field ? '  ' + x.field : ''}${x.rel ? '  ' + x.rel + ' -> ' + x.target : ''}`);
+    if (n > 5) console.log('  ...');
+  }
+}
+async function schemaCommand(c, flags) {
+  if (!c) return show(await call('GET', '/api/query/schema'));
+  const s = await call('GET', '/api/schema');
+  const coll = s.collections.find((x) => x.name === c || x.slug === c) || fail(`no collection "${c}" (${s.collections.map((x) => x.name).join(', ')})`);
+  if (flags.json) return show(coll);
+  const rows = Object.entries(coll.fields).map(([f, x]) => ({ field: f, type: x.type + (x.list ? '[]' : ''), tier: x.tier, by: x.by.join(''), values: x.enum ? x.enum.join('|') : x.ref || (x.props ? Object.keys(x.props).join(',') : '') }));
+  table(['field', 'type', 'tier', 'by', 'values'], rows);
+  console.error(`\nby: S source, C Claude, Y you. Filters: ${coll.filters.join(', ')}. Locked for edits: ${(coll.locked || []).join(', ') || 'none'}`);
+}
 
 // Markdown files -> [{ path, meta, body }] (the hub turns them into nodes; see web/core/notes.js).
 function readNotes(dir) {
@@ -129,7 +300,10 @@ function readNotes(dir) {
     const cypher = flags.f ? fs.readFileSync(flags.f, 'utf8') : args.join(' ') || (await stdin());
     return printResult(await call('POST', '/api/query', { cypher }), flags);
   }
-  if (cmd === 'schema') return show(await call('GET', '/api/query/schema'));
+  if (cmd === 'schema') return schemaCommand(args[0], flags);
+  if (cmd === 'item') return itemCommand(args[0], args.slice(1), flags);
+  if (cmd === 'analyze') return analyzeCommand(args, flags);
+  if (cmd === 'audit') return auditCommand(flags);
   if (cmd === 'search') {
     const r = await call('POST', '/api/query', { cypher: "MATCH (p:Paper) WHERE toLower(p.title + ' ' + coalesce(p.venue,'') + ' ' + reduce(s='', a IN p.authors | s + ' ' + a)) CONTAINS $q RETURN p.key AS key, p.year AS year, p.title AS title ORDER BY year DESC LIMIT 50", params: { q: args.join(' ').toLowerCase() } });
     return printResult(r, flags);
