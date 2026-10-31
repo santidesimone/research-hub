@@ -7,10 +7,12 @@
 
 const META = 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token';
 
-// The budget notification, from a Pub/Sub CloudEvent. -> { cost, budget } or null if it is not one
-function parse(cloudEvent) {
+// The budget notification -> { cost, budget }, or null if it is not one. A plain exported function gets the Pub/Sub
+// message itself ({data: base64}); one registered as a CloudEvent gets {data: {message: {data}}}. Accept both.
+function parse(ev) {
   try {
-    const data = JSON.parse(Buffer.from(cloudEvent.data.message.data, 'base64').toString());
+    const b64 = ev && ev.data && typeof ev.data === 'object' ? ev.data.message.data : ev.data;
+    const data = JSON.parse(Buffer.from(b64, 'base64').toString());
     if (typeof data.costAmount !== 'number' || typeof data.budgetAmount !== 'number') return null;
     return { cost: data.costAmount, budget: data.budgetAmount };
   } catch { return null; }

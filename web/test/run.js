@@ -1763,6 +1763,7 @@ const seed = require('../../data/seed_papers.json');
     const ev = (o) => ({ data: { message: { data: Buffer.from(JSON.stringify(o)).toString('base64') } } });
     assert.deepEqual(bg.parse(ev({ costAmount: 1.2, budgetAmount: 5 })), { cost: 1.2, budget: 5 });
     assert.equal(bg.parse({ data: { message: { data: 'bm90IGpzb24=' } } }), null);
+    assert.deepEqual(bg.parse({ data: Buffer.from('{"costAmount":5,"budgetAmount":5}').toString('base64') }), { cost: 5, budget: 5 }, 'the Pub/Sub message as a plain function receives it');
     assert.equal(bg.parse(ev({ budgetAmount: 5 })), null);
     assert.equal(bg.overBudget({ cost: 4.99, budget: 5 }), false); assert.equal(bg.overBudget({ cost: 5, budget: 5 }), true);
     assert.equal(bg.overBudget({ cost: 1, budget: 0 }), false, 'a zero budget never stops anything');
