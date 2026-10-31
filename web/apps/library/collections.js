@@ -110,6 +110,39 @@ export class CollectionView {
   }
 }
 
+// An ontology's optional snapshot: a frozen copy in Drive. Shared by link like every upload, so the owner confirms the
+// license allows it before uploading; a snapshot older than the record's version says so.
+function snapshotPanel(item, onChanged) {
+  const snap = item.fields.snapshot;
+  const current = item.fields.version;
+  const stale = snap && snap.version && current && snap.version !== current;
+  const file = h('input', { type: 'file', 'aria-label': 'Snapshot file' });
+  const ok = h('input', { type: 'checkbox', id: 'snap-license' });
+  const go = h('button', { type: 'button', class: 'btn btn-sm btn-primary', disabled: true }, 'Upload snapshot');
+  const ready = () => { go.disabled = !(ok.checked && file.files && file.files.length); };
+  ok.addEventListener('change', ready); file.addEventListener('change', ready);
+  go.addEventListener('click', async () => {
+    const f = file.files[0];
+    go.disabled = true;
+    try {
+      await api(`/api/ontologies/snapshot?key=${encodeURIComponent(item.key)}&name=${encodeURIComponent(f.name)}`, { method: 'POST', raw: f, headers: { 'Content-Type': 'application/octet-stream' } });
+      toast('Snapshot stored in your Drive'); onChanged && onChanged();
+    } catch (e) { toast(e.message, 'error'); ready(); }
+  });
+  const remove = snap && h('button', { type: 'button', class: 'btn btn-sm btn-ghost', onclick: async () => {
+    try { await api(`/api/ontologies/snapshot?key=${encodeURIComponent(item.key)}`, { method: 'DELETE' }); toast('Snapshot removed'); onChanged && onChanged(); } catch (e) { toast(e.message, 'error'); }
+  } }, 'Remove snapshot');
+  return h('details', { class: 'meta snapshot', open: Boolean(stale) },
+    h('summary', null, snap ? `Snapshot${snap.version ? ' of ' + snap.version : ''}` : 'Snapshot (none)'),
+    snap && h('p', { class: 'small' }, h('a', { href: snap.file_url, target: '_blank', rel: 'noopener noreferrer' }, 'Open the copy'),
+      ` · retrieved ${String(snap.retrieved_at || '').slice(0, 10)} · ${Math.round((snap.size_bytes || 0) / 1024)} KB · sha256 ${String(snap.sha256 || '').slice(0, 12)}…`),
+    stale && h('p', { class: 'flag stale' }, `This snapshot is of version ${snap.version}; the record now says ${current}.`),
+    h('p', { class: 'faint small' }, 'A snapshot is a frozen copy in your Google Drive, shared by link like every upload. Only keep one if the resource\'s license allows it.'),
+    h('div', { class: 'row-flex' }, file),
+    h('label', { class: 'row-flex small', for: 'snap-license' }, ok, 'I checked the license: a copy may be kept and shared by link'),
+    h('div', { class: 'actions' }, go, remove));
+}
+
 // The full item page: header, actions, grouped fields with provenance, links and the add-link editor.
 export function itemDetail(lib, coll, item, { onChanged, skip = [], compact = false } = {}) {
   const wrap = h('article', { class: 'doc' });
@@ -134,6 +167,7 @@ export function itemDetail(lib, coll, item, { onChanged, skip = [], compact = fa
   wrap.append(renderLinks(item, { onOpen: open, onRemove: async (l) => {
     try { await api(`/api/items/${encodeURIComponent(item.key)}/links?rel=${encodeURIComponent(l.rel)}&target=${encodeURIComponent(l.key)}`, { method: 'DELETE' }); toast('Link removed'); onChanged && onChanged(); } catch (e) { toast(e.message, 'error'); }
   } }));
+  if (coll.name === 'ontology') wrap.append(snapshotPanel(item, onChanged));
   if (coll.relations.length) {
     wrap.append(h('details', { class: 'meta' }, h('summary', null, 'Add a link'), linkForm(coll, item, lib.formCtx(), { onDone: () => { toast('Linked'); onChanged && onChanged(); } })));
   }

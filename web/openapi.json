@@ -2285,6 +2285,110 @@
           }
         }
       }
+    },
+    "/api/ontologies/snapshot": {
+      "post": {
+        "operationId": "snapshotOntology",
+        "summary": "Store a frozen copy of an ontology or standard in the owner's Drive (shared by link: check the license first); replaces and trashes the previous snapshot",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Allowed types, by the file name's extension: pdf, owl, rdf, ttl, jsonld, xml, xsd, json, csv, zip, txt. At most MAX_UPLOAD_MB (default 30); larger files stay links. The record's snapshot field gets file_url, drive_file_id, retrieved_at, version (the record's current version), sha256, size_bytes and mime. A URL is downloaded only from PDF_FETCH_ALLOWED_HOSTS or SNAPSHOT_FETCH_ALLOWED_HOSTS.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "ontology:..."
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "file name with its extension (e.g. fibo.ttl), when sending the file as the body"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "description": "https, from an allow-listed host"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "{key, snapshot, replaced_drive_file?}"
+          },
+          "400": {
+            "description": "Not an ontology, a type that is not allowed, or a host that is not allowed"
+          },
+          "401": {
+            "description": "Owner only"
+          },
+          "404": {
+            "description": "No such item"
+          },
+          "413": {
+            "description": "Over the size limit: store a link instead"
+          },
+          "503": {
+            "description": "Drive is not set up"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "removeOntologySnapshot",
+        "summary": "Remove an ontology's snapshot and move its Drive file to the trash",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "ontology:..."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{key, removed, trashed_drive_file?}"
+          },
+          "401": {
+            "description": "Owner only"
+          },
+          "404": {
+            "description": "No such ontology, or no snapshot"
+          }
+        }
+      }
     }
   }
 }

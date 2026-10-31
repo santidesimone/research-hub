@@ -165,7 +165,7 @@ const seed = require('../../data/seed_papers.json');
   });
   const PDF = Buffer.from('%PDF-1.4 test');
   const up = await drive.upload('A/B: "Title"?', PDF);
-  assert.deepEqual(up, { id: 'FILE1', url: 'https://drive.google.com/file/d/FILE1/view' });
+  assert.deepEqual(up, { id: 'FILE1', url: 'https://drive.google.com/file/d/FILE1/view', mime: 'application/pdf' }, 'a PDF by default, as before');
   const start = net.find((c) => c[1].includes('uploadType=resumable'));
   assert.equal(start[2].headers.Authorization, 'Bearer AT'); assert.equal(JSON.parse(start[2].body).name, 'A B Title.pdf'); assert.deepEqual(JSON.parse(start[2].body).parents, ['FOLDER1']);
   assert.deepEqual(JSON.parse(net.find((c) => c[1].includes('/permissions'))[2].body), { role: 'reader', type: 'anyone', allowFileDiscovery: false });
@@ -1288,6 +1288,15 @@ const seed = require('../../data/seed_papers.json');
       await hub(['vocab', 'iri', 'concept:x', 'none', '--ontology', 'none']);
       assert.deepEqual(seen[2].body, { external_iri: null, defined_in: null });
       r = await hub(['vocab', 'list']); assert.equal(r.code, 1); assert.match(r.stderr, /usage: hub vocab iri/);
+      reset({ 'POST /api/ontologies/snapshot': [201, { key: 'ontology:o' }], 'DELETE /api/ontologies/snapshot': [200, { removed: true }] });
+      const onto = path.join(home, 'fibo.ttl'); fs.writeFileSync(onto, '@prefix a: <b> .');
+      await hub(['ontology', 'snapshot', 'ontology:o', onto]);
+      assert.deepEqual([seen[0].url, seen[0].type, seen[0].raw.toString()], ['/api/ontologies/snapshot?key=ontology%3Ao&name=fibo.ttl', 'application/octet-stream', '@prefix a: <b> .']);
+      await hub(['ontology', 'snapshot', 'ontology:o', 'https://spec.example.org/fibo.owl']);
+      assert.deepEqual(seen[1].body, { url: 'https://spec.example.org/fibo.owl' });
+      await hub(['ontology', 'snapshot', 'ontology:o', 'none']);
+      assert.equal(seen[2].method, 'DELETE');
+      r = await hub(['ontology', 'snapshot', 'ontology:o', path.join(home, 'missing.ttl')]); assert.equal(r.code, 1); assert.match(r.stderr, /file not found/);
 
       // analyze: identity from the argument, everything else from stdin
       reset({ 'POST /api/analysis': (q) => [201, { key: q.body.doi ? 'doi:' + q.body.doi : q.body.key || 'paper:u', created: true }], 'POST /api/papers/file': [200, { file_url: 'https://drive' }] });
@@ -1666,6 +1675,86 @@ const seed = require('../../data/seed_papers.json');
     assert.ok(typeof mcp8.toolError === 'function');
     const mcpSrc = fs.readFileSync(path.join(__dirname, '..', 'features', 'mcp', 'index.js'), 'utf8');
     assert.ok(mcpSrc.includes("rules: collection === 'paper' ? [...ANALYSIS_RULES, PAPER_EXTRACT] : ANALYSIS_RULES") && mcpSrc.includes('extract: z.object('));
+  }
+
+  /* ------------------------------------------------------------ Task 8b: uploads beyond PDFs, ontology snapshots */
+  {
+    const crypto = require('crypto');
+    const net8 = []; let snapN = 0;
+    const J8 = (obj, status = 200, headers = {}) => ({ ok: status < 300, status, headers: { get: (k) => headers[k.toLowerCase()] ?? null }, json: async () => obj, clone() { return this; } });
+    drive._reset();
+    drive.setHttp(async (url, opts = {}) => {
+      net8.push([opts.method || 'GET', url, opts]);
+      if (url.startsWith('https://oauth2.googleapis.com/token')) return J8({ access_token: 'AT', expires_in: 3600 });
+      if (url.includes('/drive/v3/files?q=')) return J8({ files: [{ id: 'FOLDER1' }] });
+      if (url.includes('uploadType=resumable')) { snapN++; return J8({}, 200, { location: `https://upload.example/snap${snapN}` }); }
+      if (url.startsWith('https://upload.example/snap')) return J8({ id: 'SNAP' + url.split('snap')[1] });
+      if (url.includes('/permissions')) return J8({ id: 'perm' });
+      if (url.includes('/drive/v3/files/') && opts.method === 'PATCH') return J8({});
+      throw new Error('unexpected request ' + url);
+    });
+    // the type allow-list and the size cap
+    await assert.rejects(() => drive.upload('x', Buffer.from('MZ'), { ext: 'exe' }), (e) => e.status === 400 && /Only these file types/.test(e.message));
+    await assert.rejects(() => drive.upload('x', Buffer.alloc(0), { ext: 'ttl' }), (e) => e.status === 400);
+    const ttl = await drive.upload('FIBO 2024Q4', Buffer.from('@prefix fibo: <https://spec.edmcouncil.org/fibo/> .'), { ext: 'ttl' });
+    const start8 = net8.find((c) => c[1].includes('uploadType=resumable'));
+    assert.deepEqual([JSON.parse(start8[2].body).name, JSON.parse(start8[2].body).mimeType, start8[2].headers['X-Upload-Content-Type'], ttl.mime], ['FIBO 2024Q4.ttl', 'text/turtle', 'text/turtle', 'text/turtle']);
+    assert.equal(net8.find((c) => c[1].startsWith('https://upload.example/'))[2].headers['Content-Type'], 'text/turtle');
+    process.env.MAX_UPLOAD_MB = '0.00002'; // about 20 bytes
+    await assert.rejects(() => drive.upload('big', Buffer.alloc(100, 1), { ext: 'zip' }), (e) => e.status === 413 && /upload limit \(MAX_UPLOAD_MB\)\. Store a link/.test(e.message));
+    delete process.env.MAX_UPLOAD_MB;
+    assert.deepEqual(Object.keys(drive.FILE_TYPES).sort(), ['csv', 'json', 'jsonld', 'owl', 'pdf', 'rdf', 'ttl', 'txt', 'xml', 'xsd', 'zip']);
+
+    // snapshots over HTTP, against the in-memory graph
+    runImpl = aRun; txImpl = aTx;
+    G.set('ontology:fibo', { labels: ['Artifact', 'Ontology'], props: { key: 'ontology:fibo', title: 'FIBO', collection: 'ontology', version: '2024Q4' }, out: [] });
+    G.set('method:not-onto', { labels: ['Artifact', 'Method'], props: { key: 'method:not-onto', title: 'M', collection: 'method' }, out: [] });
+    const appO = require('express')();
+    require('../features/ontologies').mount(appO);
+    appO.use((err, _req, res, _next) => res.status(err.status || 500).json({ error: err.message }));
+    const srvO = await new Promise((ok) => { const x = appO.listen(0, '127.0.0.1', () => ok(x)); });
+    const oBase = `http://127.0.0.1:${srvO.address().port}`;
+    const OH = { Authorization: 'Bearer abc' };
+    const post = (key, name, body, type = 'application/octet-stream') => fetch(`${oBase}/api/ontologies/snapshot?key=${encodeURIComponent(key)}${name ? '&name=' + encodeURIComponent(name) : ''}`, { method: 'POST', headers: { ...OH, 'Content-Type': type }, body });
+    const fileBody = Buffer.from('<rdf:RDF>fibo</rdf:RDF>');
+    try {
+      assert.equal((await fetch(`${oBase}/api/ontologies/snapshot?key=ontology:fibo`, { method: 'POST' })).status, 401);
+      net8.length = 0;
+      const r1 = await post('ontology:fibo', 'fibo.rdf', fileBody);
+      assert.equal(r1.status, 201);
+      const s1 = (await r1.json()).snapshot;
+      assert.deepEqual({ ...s1, retrieved_at: 0 }, { file_url: 'https://drive.google.com/file/d/SNAP2/view', drive_file_id: 'SNAP2', retrieved_at: 0, version: '2024Q4',
+        sha256: crypto.createHash('sha256').update(fileBody).digest('hex'), size_bytes: fileBody.length, mime: 'application/rdf+xml' });
+      assert.ok(!Number.isNaN(Date.parse(s1.retrieved_at)));
+      const oNode = G.get('ontology:fibo').props;
+      assert.deepEqual(JSON.parse(oNode.snapshot_json), s1); assert.equal(oNode.snapshot__sha256, s1.sha256, 'the checksum is queryable');
+      assert.equal(JSON.parse(oNode.provenance_json).snapshot.by, 'owner');
+      const r2 = await (await post('ontology:fibo', 'fibo-v2.ttl', Buffer.from('@prefix x: <y> .'))).json();
+      assert.equal(r2.replaced_drive_file, 'SNAP2', 'a new snapshot replaces the previous one');
+      assert.ok(net8.some((c) => c[0] === 'PATCH' && c[1].includes('/files/SNAP2')), 'and trashes it');
+      assert.equal((await post('ontology:fibo', 'fibo.exe', fileBody)).status, 400);
+      assert.match((await (await post('ontology:fibo', null, fileBody)).json()).error, /Name the file with one of these extensions/);
+      assert.match((await (await post('ontology:fibo', 'x.pdf', fileBody)).json()).error, /File is not a PDF/);
+      assert.match((await (await post('method:not-onto', 'x.ttl', fileBody)).json()).error, /is a method, not an ontology/);
+      const byUrl = await fetch(`${oBase}/api/ontologies/snapshot?key=ontology:fibo`, { method: 'POST', headers: { ...OH, 'Content-Type': 'application/json' }, body: JSON.stringify({ url: 'https://evil.example/fibo.owl' }) });
+      assert.equal(byUrl.status, 400); assert.match((await byUrl.json()).error, /url host not allowed .*SNAPSHOT_FETCH_ALLOWED_HOSTS/);
+      delete process.env.GOOGLE_REFRESH_TOKEN;
+      assert.equal((await post('ontology:fibo', 'fibo.ttl', fileBody)).status, 503, 'Drive not set up: a clear 503');
+      process.env.GOOGLE_REFRESH_TOKEN = 'rt';
+      const realWrite = items.write; items.write = async () => { throw new Error('db down'); };
+      net8.length = 0;
+      try { assert.equal((await post('ontology:fibo', 'fibo.ttl', fileBody)).status, 500); } finally { items.write = realWrite; }
+      assert.ok(net8.some((c) => c[0] === 'PATCH' && /\/files\/SNAP\d+/.test(c[1])), 'a failed write trashes the upload: no public file the graph does not know');
+      // remove, and deleting the ontology trashes its snapshot
+      const del = await (await fetch(`${oBase}/api/ontologies/snapshot?key=ontology:fibo`, { method: 'DELETE', headers: OH })).json();
+      assert.deepEqual(del, { key: 'ontology:fibo', removed: true, trashed_drive_file: r2.snapshot.drive_file_id });
+      assert.equal(G.get('ontology:fibo').props.snapshot_json, undefined);
+      assert.equal((await fetch(`${oBase}/api/ontologies/snapshot?key=ontology:fibo`, { method: 'DELETE', headers: OH })).status, 404);
+      const r3 = await (await post('ontology:fibo', 'fibo.ttl', fileBody)).json();
+      net8.length = 0;
+      await items.remove('ontology:fibo');
+      assert.ok(net8.some((c) => c[0] === 'PATCH' && c[1].includes('/files/' + r3.snapshot.drive_file_id)), 'deleting the ontology trashes its snapshot');
+    } finally { srvO.close(); runImpl = async () => []; txImpl = null; }
   }
 
   /* ------------------------------------------------------------ search query building */

@@ -48,6 +48,8 @@ function get(env = process.env) {
     openalexEmail: env.OPENALEX_EMAIL || '', // identifies the hub to OpenAlex and Crossref (their polite pools)
     skin: env.HUB_SKIN || 'paper',
     pdfFetchAllowedHosts: (env.PDF_FETCH_ALLOWED_HOSTS || 'arxiv.org,export.arxiv.org,discovery.ucl.ac.uk').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+    // hosts an ontology snapshot may be downloaded from, besides the PDF hosts (e.g. spec.edmcouncil.org)
+    snapshotFetchAllowedHosts: (env.SNAPSHOT_FETCH_ALLOWED_HOSTS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     maxUploadBytes: num(env.MAX_UPLOAD_MB, 30) * 1024 * 1024, // Cloud Run rejects request bodies over 32 MB
     publicCacheSeconds: num(env.PUBLIC_CACHE_SECONDS, 60),
     logFormat: env.LOG_FORMAT || (production ? 'json' : 'pretty'),

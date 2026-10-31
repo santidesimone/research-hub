@@ -13,7 +13,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | 6 CLI, API docs, CI, docs | done (2026-10-30), CI not run yet | See "Task 6" below. |
 | 7 Hardening | done (2026-10-31) | See "Task 7" below. |
 | 8 Frameworks, research questions and hypotheses, ontologies | done (2026-10-31) | See "Task 8" below. |
-| 8b File upload beyond PDFs (ontology snapshots) | not started | Addendum: `docs/ADDENDUM_frameworks_questions_ontologies.md` |
+| 8b File upload beyond PDFs (ontology snapshots) | done (2026-10-31), live Drive not tested | See "Task 8b" below. |
 
 ## Task 0. Baseline against real services
 
@@ -368,3 +368,44 @@ Update at the end of every task. For each: what changed, what was tested for rea
 **Not tested / open**
 - Ontology records for FIBO, ISO 20022 and ETHON were not created from their real pages (addendum, open point 1: Claude should read them when creating the records).
 - No CI run yet (nothing pushed from here).
+
+## Task 8b. File upload beyond PDFs (ontology snapshots)
+
+**Changed**
+- `web/core/drive.js`: `upload(title, buf, {ext})` takes the type from an allow-list (`FILE_TYPES`: pdf, owl, rdf, ttl, jsonld, xml, xsd, json, csv, zip, txt), refuses anything else (400) and empty files, and refuses a file over `MAX_UPLOAD_MB` with 413 "Store a link to it instead". It returns the MIME type too. PDFs behave as before (the default).
+- `web/features/papers/files.js`: the allow-listed download (https only, redirects re-checked, size cap) is now generic (`fetchAllowed`); `fetchPdf` uses it unchanged.
+- `web/features/ontologies` (new):
+  - `POST /api/ontologies/snapshot?key=&name=` with the file as the body, or JSON `{url}` from `PDF_FETCH_ALLOWED_HOSTS` plus the new `SNAPSHOT_FETCH_ALLOWED_HOSTS`;
+  - uploads to Drive and records `snapshot` (file_url, drive_file_id, retrieved_at, the record's version, sha256, size_bytes, mime) as an owner write;
+  - trashes the previous snapshot, and trashes the upload if the graph write fails;
+  - `DELETE` removes the snapshot and trashes the file; deleting the ontology trashes it too (hooks).
+- `hub ontology snapshot <key> <file | https-url | none>`.
+- Library: a Snapshot panel on ontology pages. Upload is disabled until a file is chosen and the license box is ticked (files are shared by link); a snapshot of an older version than the record says so.
+- A request body over a limit now says "For a file, store a link to it instead".
+- Docs: README, `deploy/README.md`, openapi, `_env.example`, `schema/CHANGELOG.md`, and the requirement statuses (F15 to F17, D10 to D13).
+
+**Tested for real**
+- Offline, with the fake Drive layer:
+  - the allow-list (unknown type 400, empty 400), the size cap (413 with the link advice);
+  - the name, MIME type and upload headers for a ttl;
+  - the HTTP endpoint against the in-memory graph:
+    - owner only;
+    - sha256, size and type recorded, with the checksum queryable as `snapshot__sha256`;
+    - the owner as writer;
+    - replacement trashes the previous file;
+    - bad or missing extension, a fake PDF, and a non-ontology key refused;
+    - URL host not allowed, and Drive not set up (503);
+    - a failed graph write trashes the upload;
+    - DELETE, then 404 when there is none;
+    - deleting the ontology trashes its file.
+  - The CLI (file, URL, none, missing file).
+  - Mutation check: 20 of 21 killed. The survivor removes the early `requireConfigured()`, which `upload` repeats with the same 503.
+- Integration on a fresh Neo4j 5: a snapshot written to a real node (the parts queryable), replaced, and trashed when the ontology is deleted, against a fake Drive.
+- Browser (Playwright on Chrome, fresh data):
+  - owner 22/22, including the new panel: the stale-version note, and upload disabled until both a file and the license check are given;
+  - public and mobile 9/9; the CLI end to end; no console or CSP errors. Screenshot reviewed.
+
+**Not tested / open**
+- A real upload to Google Drive (Drive is not configured here; the same open item as D3).
+- A real download of a snapshot from a live host.
+

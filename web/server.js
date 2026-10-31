@@ -71,6 +71,8 @@ root.use('/api', (_req, res) => res.status(404).json({ error: 'No such endpoint'
 app.use(BASE || '/', root);
 app.use((err, req, res, _next) => {
   const status = err.status || (err.type === 'entity.too.large' ? 413 : err.type === 'entity.parse.failed' ? 400 : 500);
+  // too large: say what the limit is and what to do instead (files can always stay links)
+  if (err.type === 'entity.too.large') err.message = `Too large: this request is limited to ${Math.round((err.limit || 0) / 1024)} KB. For a file, store a link to it instead.`;
   if (status === 500) log.error(err.stack || String(err), { id: req.id });
   res.status(status).json({ error: status === 500 && cfg.production ? 'Internal error' : err.message, ...(err.extra || {}), ...(status === 500 ? { request_id: req.id } : {}) });
 });

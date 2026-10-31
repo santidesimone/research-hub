@@ -168,6 +168,7 @@ On failure, the e2e job uploads the server log and screenshots. `deploy/cloudbui
 - In production, unexpected errors reach clients (REST and MCP) only as "Internal error" with a request id; the details go to the log.
 - The public preview is a whitelist: public items and whitelisted fields only. A case study marked `internal` or `confidential` never appears, even with `visibility: public`, and organisations never do.
 - Production start-up refuses a missing or short `HUB_API_TOKEN`, the default Neo4j password and a half-configured Drive. It warns about `TRUST_PROXY=true`, a Neo4j password under 12 characters, a missing `OPENALEX_EMAIL` and `MAX_UPLOAD_MB` above 32.
+- Server-side downloads (PDF copies, ontology snapshots) are https only, from allow-listed hosts (`PDF_FETCH_ALLOWED_HOSTS`, `SNAPSHOT_FETCH_ALLOWED_HOSTS`), with every redirect re-checked. Uploads to Drive accept only the listed file types (pdf, owl, rdf, ttl, jsonld, xml, xsd, json, csv, zip, txt) and are shared by link.
 
 - The UI and API reject everything private without the token; anonymous visitors only get the public preview.
 - `/mcp` and `/api/*` need the token; sessions are a signed cookie (HttpOnly, SameSite=Lax, Secure over https); changes made with the cookie also need an `X-Hub` header.

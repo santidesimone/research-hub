@@ -222,6 +222,19 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
     expect((await page.textContent('section[data-rel="out:USED_BY"]')).includes('Offline retail payments'), 'users');
     expect((await page.textContent('[data-field=urls]')).includes('https://spec.edmcouncil.org/fibo/'), 'links');
   });
+  await step('an ontology snapshot: the license must be confirmed, and an old snapshot says so', async () => {
+    const key = 'ontology%3Afinancial-industry-business-ontology';
+    await api('/api/items/' + key, { method: 'PATCH', body: JSON.stringify({ fields: { version: '2024Q4', snapshot: { file_url: 'https://drive.google.com/file/d/X/view', drive_file_id: 'X', retrieved_at: '2024-01-05T00:00:00Z', version: '2023Q4', sha256: 'ab'.repeat(32), size_bytes: 4096, mime: 'text/turtle' } } }) });
+    await page.reload();
+    await page.waitForSelector('details.snapshot[open]');
+    expect((await page.textContent('details.snapshot .flag.stale')).includes('version 2023Q4; the record now says 2024Q4'), 'stale note');
+    expect(await page.isDisabled('details.snapshot .btn-primary'), 'upload disabled before a file and the license check');
+    await page.setInputFiles('details.snapshot input[type=file]', { name: 'fibo.ttl', mimeType: 'text/turtle', buffer: Buffer.from('@prefix a: <b> .') });
+    expect(await page.isDisabled('details.snapshot .btn-primary'), 'still disabled without the license check');
+    await page.check('#snap-license');
+    expect(!(await page.isDisabled('details.snapshot .btn-primary')), 'enabled once both are given');
+    await page.screenshot({ path: OUT + '/9-ontology-snapshot.png', fullPage: true });
+  });
   await step('no console or CSP errors', async () => { expect(!problems.length, problems.slice(0, 5).join(' || ')); });
   for (const r of results) console.log(r.join(' | '));
   if (results.some((r) => r[0] !== 'PASS')) process.exitCode = 1; // CI needs a failing exit code

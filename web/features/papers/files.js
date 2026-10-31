@@ -14,28 +14,30 @@ const maxBytes = () => config.get().maxUploadBytes;
 const allowedHosts = () => config.get().pdfFetchAllowedHosts;
 
 // Download a PDF so it can be copied to Drive. Only https, only allow-listed hosts, redirects re-checked at every hop.
-async function fetchPdf(url) {
-  const hosts = allowedHosts();
+const fetchPdf = (url) => fetchAllowed(url, { hosts: allowedHosts(), what: 'PDF', field: 'pdf_url', setting: 'PDF_FETCH_ALLOWED_HOSTS' });
+
+// The same rules for any file (ontology snapshots use their own host list).
+async function fetchAllowed(url, { hosts, what = 'file', field = 'url', setting }) {
   let current = url;
   for (let hop = 0; hop < 4; hop++) {
     let u;
-    try { u = new URL(current); } catch { throw new HttpError(400, 'pdf_url is not a valid URL'); }
+    try { u = new URL(current); } catch { throw new HttpError(400, `${field} is not a valid URL`); }
     const host = u.hostname.toLowerCase();
     if (u.protocol !== 'https:' || !hosts.some((h) => host === h || host.endsWith('.' + h))) {
-      throw new HttpError(400, `pdf_url host not allowed (allowed: ${hosts.join(', ')}). Upload the file instead, or set PDF_FETCH_ALLOWED_HOSTS.`);
+      throw new HttpError(400, `${field} host not allowed (allowed: ${hosts.join(', ') || 'none'}). Upload the file instead, or set ${setting}.`);
     }
     const res = await fetch(u, { redirect: 'manual', headers: { 'User-Agent': 'research-hub/0.6' }, signal: AbortSignal.timeout(60000) });
     if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
       current = new URL(res.headers.get('location'), u).toString();
       continue;
     }
-    if (!res.ok) throw new HttpError(502, `Could not download PDF (HTTP ${res.status})`);
-    if (Number(res.headers.get('content-length')) > maxBytes()) throw new HttpError(413, 'PDF too large');
+    if (!res.ok) throw new HttpError(502, `Could not download ${what} (HTTP ${res.status})`);
+    if (Number(res.headers.get('content-length')) > maxBytes()) throw new HttpError(413, `${what} too large: store a link to it instead`);
     const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > maxBytes()) throw new HttpError(413, 'PDF too large');
+    if (buf.length > maxBytes()) throw new HttpError(413, `${what} too large: store a link to it instead`);
     return buf;
   }
-  throw new HttpError(502, 'Too many redirects while downloading PDF');
+  throw new HttpError(502, `Too many redirects while downloading ${what}`);
 }
 
 async function paperRow(key) {
@@ -97,4 +99,4 @@ async function uploadPdf(key, buf) {
   return out;
 }
 
-module.exports = { fetchPdf, setLink, removeLink, uploadPdf, paperRow, trashQuietly, maxBytes };
+module.exports = { fetchPdf, fetchAllowed, setLink, removeLink, uploadPdf, paperRow, trashQuietly, maxBytes };

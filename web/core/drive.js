@@ -1,4 +1,4 @@
-// Google Drive as the file store. The hub keeps only links: this module uploads a PDF to one hub-created Drive folder,
+// Google Drive as the file store. The hub keeps only links: this module uploads a file (a paper's PDF, an ontology snapshot) to one hub-created Drive folder,
 // makes that file readable by anyone with the link, and can move it to the trash again. Plain HTTPS calls, no Google SDK.
 //
 // Auth is your own Google login (a refresh token from bin/drive-auth) with the narrow drive.file scope, which can only
@@ -14,6 +14,11 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const FOLDER_NAME = 'Research Hub PDFs';
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=UTF-8' };
+// What the hub may store in Drive, by extension: PDFs for papers, ontology and data formats for snapshots (D13).
+const FILE_TYPES = {
+  pdf: 'application/pdf', owl: 'application/owl+xml', rdf: 'application/rdf+xml', ttl: 'text/turtle', jsonld: 'application/ld+json',
+  xml: 'application/xml', xsd: 'application/xml', json: 'application/json', csv: 'text/csv', zip: 'application/zip', txt: 'text/plain',
+};
 
 let http = (url, opts) => fetch(url, opts); // replaceable so tests never touch the network
 const setHttp = (fn) => { http = fn; };
@@ -90,7 +95,7 @@ async function ensureFolder() {
 }
 
 /* ---------------------------------------------------------------- files */
-const fileName = (title) => (String(title || 'paper').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'paper') + '.pdf';
+const fileName = (title, ext = 'pdf') => (String(title || 'file').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'file') + '.' + ext;
 
 async function makePublic(id) {
   await ok(await call(`${API}/files/${encodeURIComponent(id)}/permissions`, {
@@ -104,21 +109,27 @@ async function trash(id) {
   await ok(res, 'moving the file to the trash');
 }
 
-// Upload a PDF (resumable upload: works for any size) and share it by link. Returns { id, url }.
-async function upload(title, buf) {
+// Upload a file (resumable upload) and share it by link. ext picks the type from FILE_TYPES; anything else is refused,
+// and so is a file over MAX_UPLOAD_MB (it stays a link). Returns { id, url, mime }.
+async function upload(title, buf, { ext = 'pdf' } = {}) {
+  const mime = FILE_TYPES[ext];
+  if (!mime) throw new HttpError(400, `Only these file types can be stored in Drive: ${Object.keys(FILE_TYPES).join(', ')}`);
+  if (!Buffer.isBuffer(buf) || !buf.length) throw new HttpError(400, 'The file is empty');
+  const max = config.get().maxUploadBytes;
+  if (buf.length > max) throw new HttpError(413, `The file is larger than the ${Math.round(max / 1048576)} MB upload limit (MAX_UPLOAD_MB). Store a link to it instead.`);
   const folder = await ensureFolder();
   const start = await ok(await call(`${UPLOAD}/files?uploadType=resumable&fields=id`, {
     method: 'POST',
-    headers: { ...JSON_HEADERS, 'X-Upload-Content-Type': 'application/pdf', 'X-Upload-Content-Length': String(buf.length) },
-    body: JSON.stringify({ name: fileName(title), parents: [folder], mimeType: 'application/pdf' }),
+    headers: { ...JSON_HEADERS, 'X-Upload-Content-Type': mime, 'X-Upload-Content-Length': String(buf.length) },
+    body: JSON.stringify({ name: fileName(title, ext), parents: [folder], mimeType: mime }),
   }), 'starting the upload');
   const session = start.headers.get('location');
   if (!session) throw new HttpError(502, 'Google Drive: no upload session was returned');
-  const done = await ok(await http(session, { method: 'PUT', headers: { 'Content-Type': 'application/pdf' }, body: buf }), 'uploading the file');
+  const done = await ok(await http(session, { method: 'PUT', headers: { 'Content-Type': mime }, body: buf }), 'uploading the file');
   const { id } = await done.json();
   try { await makePublic(id); }
   catch (e) { await trash(id).catch(() => {}); throw e; } // never leave a private orphan behind
-  return { id, url: links.driveView(id) };
+  return { id, url: links.driveView(id), mime };
 }
 
 // Used by `hub drive`: proves the login works and the folder exists.
@@ -129,4 +140,4 @@ async function check() {
 
 const _reset = () => { token = { value: null, exp: 0, pending: null }; folderCache = null; };
 
-module.exports = { configured, requireConfigured, upload, trash, check, fileName, setHttp, _reset, SCOPE, FOLDER_NAME };
+module.exports = { configured, requireConfigured, upload, trash, check, fileName, setHttp, _reset, SCOPE, FOLDER_NAME, FILE_TYPES };

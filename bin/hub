@@ -39,6 +39,8 @@ const HELP = `hub: research hub client   (${url})
     hub item link <key> <rel> <target> [--evidence t] [--location p] [--confidence low|medium|high] [--result r (TESTS)]
     hub item unlink <key> <rel> <target>
     hub vocab iri <concept> <iri | none> [--ontology <key | none>]   point a concept at a term in an ontology (DEFINED_IN)
+    hub ontology snapshot <key> <file | https-url | none>   a frozen copy in your Drive (owl, rdf, ttl, jsonld, xml, xsd,
+                                                  json, csv, zip, txt, pdf); replaces the previous one. Check the license first
 
   Claude's analysis and the audit
     hub analyze <doi | url | key | file.pdf> [--deep] [--force] [--model m] [--collection c]  < analysis.json
@@ -314,6 +316,15 @@ function readNotes(dir) {
   if (cmd === 'item') return itemCommand(args[0], args.slice(1), flags);
   if (cmd === 'analyze') return analyzeCommand(args, flags);
   if (cmd === 'audit') return auditCommand(flags);
+  if (cmd === 'ontology') {
+    const [sub, key, src] = args;
+    if (sub !== 'snapshot' || !key || !src) fail('usage: hub ontology snapshot <ontology key> <file | https-url | none>');
+    if (src === 'none') return show(await call('DELETE', '/api/ontologies/snapshot?key=' + enc(key)));
+    if (/^https:\/\//i.test(src)) return show(await call('POST', '/api/ontologies/snapshot?key=' + enc(key), { url: src }));
+    if (!fs.existsSync(src)) fail(`file not found: ${src}`);
+    return show(await call('POST', `/api/ontologies/snapshot?key=${enc(key)}&name=${enc(path.basename(src))}`, undefined,
+      { raw: fs.readFileSync(src), headers: { 'Content-Type': 'application/octet-stream' } }));
+  }
   if (cmd === 'vocab') {
     const [sub, concept, iri] = args;
     if (sub !== 'iri' || !concept || !iri) fail('usage: hub vocab iri <concept key> <iri | none> [--ontology <key | none>]');

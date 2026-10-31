@@ -2,6 +2,10 @@
 
 Every change to `schema/schema.json`, with the reason. The spec is `docs/SCHEMA_DESIGN.md`. A per-type `schema_version` is raised when that type's fields change. Items below the current version form the audit worklist, so a change is never silently applied to old items.
 
+## v3, ontology snapshots (2026-10-31)
+
+Why: D11 and D13 (Task 8b). No schema change: the ontology `snapshot` field (`file_url`, `drive_file_id`, `retrieved_at`, `version`, `sha256`, `size_bytes`, `mime`; by Sys and the owner) was already defined in Task 8. It is now filled by `POST /api/ontologies/snapshot` and cleared by `DELETE` (the owner's write, so re-runs never touch it).
+
 ## v3, frameworks, questions, hypotheses, ontologies (2026-10-31)
 
 Why: `docs/ADDENDUM_frameworks_questions_ontologies.md` (requirements F15 to F17, D10, D12; Task 8). A paper's lens, its questions and the hypotheses it tests become queryable; ontologies and standards are referenced, not copied.

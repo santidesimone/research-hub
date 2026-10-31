@@ -358,6 +358,36 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
   await backup.restore(dump);
   assert.equal((await db.run('MATCH (n) RETURN count(n) AS c'))[0].c, before, 'restoring twice changes nothing');
 
+  // Task 8b: an ontology snapshot against a fake Drive, stored on a real node (object parts queryable), replaced, and
+  // trashed when the ontology is deleted
+  {
+    const drive = require('../core/drive');
+    const calls = []; let n = 0;
+    const J = (obj, headers = {}) => ({ ok: true, status: 200, headers: { get: (k) => headers[k.toLowerCase()] ?? null }, json: async () => obj, clone() { return this; } });
+    Object.assign(process.env, { GOOGLE_CLIENT_ID: 'cid', GOOGLE_CLIENT_SECRET: 'sec', GOOGLE_REFRESH_TOKEN: 'rt' });
+    drive._reset();
+    drive.setHttp(async (url, o = {}) => {
+      calls.push([o.method || 'GET', url]);
+      if (url.startsWith('https://oauth2.googleapis.com/token')) return J({ access_token: 'AT', expires_in: 3600 });
+      if (url.includes('/drive/v3/files?q=')) return J({ files: [{ id: 'FOLDER' }] });
+      if (url.includes('uploadType=resumable')) return J({}, { location: `https://upload.example/${++n}` });
+      if (url.startsWith('https://upload.example/')) return J({ id: `IT-SNAP-${stamp}-` + url.split('/').pop() });
+      return J({});
+    });
+    const ontologies = require('../features/ontologies');
+    ontologies.mount({ post() {}, delete() {} }); // the deletion hooks only
+    const okey = (await items.create({ collection: 'ontology', fields: { title: `IT ontology ${stamp}`, version: 'v1' } })).key;
+    const s1 = (await ontologies.snapshot(okey, Buffer.from('@prefix a: <b> .'), 'it.ttl')).snapshot;
+    const [row] = await db.run('MATCH (o:Ontology {key:$k}) RETURN o.snapshot__sha256 AS sha, o.snapshot__drive_file_id AS id, o.snapshot__size_bytes AS size', { k: okey });
+    assert.deepEqual(row, { sha: s1.sha256, id: s1.drive_file_id, size: 16 });
+    const s2 = await ontologies.snapshot(okey, Buffer.from('@prefix a: <c> .'), 'it.ttl');
+    assert.equal(s2.replaced_drive_file, s1.drive_file_id);
+    calls.length = 0;
+    await items.remove(okey);
+    assert.ok(calls.some(([m, u]) => m === 'PATCH' && u.includes(s2.snapshot.drive_file_id)), 'deleting the ontology trashes its snapshot');
+    for (const k of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REFRESH_TOKEN']) delete process.env[k];
+  }
+
   // clean up
   await artifacts.remove(paperKey);
   await db.exec("MATCH (n:Artifact) WHERE n.key STARTS WITH 'method:it-' OR n.key STARTS WITH 'note:it-' OR n.key STARTS WITH 'project:it-' OR n.key STARTS WITH 'usecase:offline-payments-' DETACH DELETE n");

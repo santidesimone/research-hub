@@ -19,7 +19,10 @@ GOOGLE_CLIENT_SECRET=
 GOOGLE_REFRESH_TOKEN=
 # Hosts the server may download PDFs from when you ask it to copy one to Drive (comma separated)
 # PDF_FETCH_ALLOWED_HOSTS=arxiv.org,export.arxiv.org,discovery.ucl.ac.uk
-# Largest upload in MB (Cloud Run rejects request bodies over 32 MB)
+# Extra hosts an ontology snapshot may be downloaded from (`hub ontology snapshot <key> https://...`), on top of
+# PDF_FETCH_ALLOWED_HOSTS. Default: none (upload the file instead).
+# SNAPSHOT_FETCH_ALLOWED_HOSTS=spec.edmcouncil.org,www.iso20022.org
+# Largest upload in MB, PDFs and snapshots alike (Cloud Run rejects request bodies over 32 MB)
 # MAX_UPLOAD_MB=30
 
 # ---- Web server

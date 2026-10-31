@@ -2,7 +2,7 @@
 
 Owner and sole user: Santiago De Simone. Purpose: a personal research hub where papers, methods, use cases and case studies live in a knowledge graph with rich metadata, so connections can be browsed and queried, and Claude can add and analyse material quickly.
 
-Status key: **Built** (in the current code), **Planned** (in `docs/BUILD_BRIEF.md`, with task number), **Open** (undecided or unverified). Statuses as of 2026-10-31, after Tasks 0 to 7; what was tested for real, per task, is in `docs/PROGRESS.md`. F15 to F17 and D10 to D13 come from `docs/ADDENDUM_frameworks_questions_ontologies.md`.
+Status key: **Built** (in the current code), **Planned** (in `docs/BUILD_BRIEF.md`, with task number), **Open** (undecided or unverified). Statuses as of 2026-10-31, after Tasks 0 to 8b; what was tested for real, per task, is in `docs/PROGRESS.md`. F15 to F17 and D10 to D13 come from `docs/ADDENDUM_frameworks_questions_ontologies.md`.
 
 ## 1\. Functional
 
@@ -22,9 +22,9 @@ Status key: **Built** (in the current code), **Planned** (in `docs/BUILD_BRIEF.m
 | F12 | Backup and restore of the whole library (merge by key, never deletes). | Neo4j is the only copy | Built (round trip of every type verified in T7) |
 | F13 | Audit view: low-confidence fields, empty Core/Standard fields, findings without a location, items on an old schema version. Optional; never blocks use. | Errors by Claude must be findable | Built (T4, T5) |
 | F14 | Reader shows a linked PDF (embedded Drive preview, or a file card for other links). | Read without leaving the app | Built |
-| F15 | Store Frameworks (theoretical and conceptual) as their own items, link papers, questions and projects to them. | A paper's lens should be queryable ("every paper using path dependence"), not buried in text | Planned (T8) |
-| F16 | Store Research questions and Hypotheses, with the result of each test recorded on the link between a paper and a hypothesis. | One hypothesis can be supported by one paper and contradicted by another; this gives a supported-versus-contradicted view without full Claim nodes | Planned (T8) |
-| F17 | Store Ontologies and standards (e.g. FIBO modules, the ISO 20022 data dictionary, ETHON) as descriptive records with pointers to where they live. | These are large, externally maintained, living resources; the hub must reference them, not copy their contents | Planned (T8) |
+| F15 | Store Frameworks (theoretical and conceptual) as their own items, link papers, questions and projects to them. | A paper's lens should be queryable ("every paper using path dependence"), not buried in text | Built (T8) |
+| F16 | Store Research questions and Hypotheses, with the result of each test recorded on the link between a paper and a hypothesis. | One hypothesis can be supported by one paper and contradicted by another; this gives a supported-versus-contradicted view without full Claim nodes | Built (T8) |
+| F17 | Store Ontologies and standards (e.g. FIBO modules, the ISO 20022 data dictionary, ETHON) as descriptive records with pointers to where they live. | These are large, externally maintained, living resources; the hub must reference them, not copy their contents | Built (T8) |
 
 ## 2\. Data
 
@@ -39,10 +39,10 @@ Status key: **Built** (in the current code), **Planned** (in `docs/BUILD_BRIEF.m
 | D7 | **Provenance on every field** written by Claude (by, date, model, confidence, status); owner edits are never overwritten. | Trust and auditability without a review gate | Built (T3, T4) |
 | D8 | Shared vocabulary nodes (Topic, Concept, Domain, Person, Venue, Organisation, Dataset); the server matches names to existing nodes. | Connections need shared nodes, not strings | Built (T2) |
 | D9 | Bibliographic facts come from sources (Crossref, OpenAlex), not from Claude. | Accuracy and speed | Built (T4; verified against the live services) |
-| D10 | An ontology record stores descriptive metadata and URLs only. The ontology's classes and terms are never imported into the graph. | Avoid flooding the graph and duplicating a maintained source | Planned (T8) |
-| D11 | An ontology record may carry an optional snapshot (a frozen copy in the owner's Drive) with version, retrieval date and checksum. Default is no snapshot. | Ontologies change between versions; frozen copies matter only for those relied on | Planned (T8b) |
-| D12 | A Concept may carry an external_iri pointing at a specific term in an ontology. | Connect own concepts to standard vocabularies without importing them | Planned (T8) |
-| D13 | The Drive upload path accepts more than PDFs (owl, rdf, ttl, jsonld, xml, xsd, json, csv, zip), with a size cap; items over the cap stay link-only. Public-by-link sharing is applied as for PDFs, and the UI warns to check a resource's license before storing a snapshot. | Support ontology snapshots | Planned (T8b) |
+| D10 | An ontology record stores descriptive metadata and URLs only. The ontology's classes and terms are never imported into the graph. | Avoid flooding the graph and duplicating a maintained source | Built (T8) |
+| D11 | An ontology record may carry an optional snapshot (a frozen copy in the owner's Drive) with version, retrieval date and checksum. Default is no snapshot. | Ontologies change between versions; frozen copies matter only for those relied on | Built (T8b); live Drive test Open |
+| D12 | A Concept may carry an external_iri pointing at a specific term in an ontology. | Connect own concepts to standard vocabularies without importing them | Built (T8) |
+| D13 | The Drive upload path accepts more than PDFs (owl, rdf, ttl, jsonld, xml, xsd, json, csv, zip), with a size cap; items over the cap stay link-only. Public-by-link sharing is applied as for PDFs, and the UI warns to check a resource's license before storing a snapshot. | Support ontology snapshots | Built (T8b); live Drive test Open |
 
 ## 3\. Access and security
 
