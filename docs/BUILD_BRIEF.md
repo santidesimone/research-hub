@@ -63,7 +63,7 @@ Source and full detail: `docs/ADDENDUM_frameworks_questions_ontologies.md` (requ
 - Ontology intake: the owner or Claude supplies a URL; Claude reads the page and fills the descriptive fields; the server validates that URLs are https and stores them without fetching. iri is normalised; parent and part_of are resolved.
 - Concept external_iri and DEFINED_IN (optional fields; no import).
 - UI: extend the Collections bar with Frameworks, Questions and hypotheses, Ontologies and standards. With seven collections the bar groups the less-used ones under a "More" menu. Detail views show linked items (e.g. a hypothesis lists the tests with results as a small table; a framework lists papers framing on it; an ontology shows its modules and users).
-- Before starting: confirm the Ontology `urls` field (its role values, By and Tier were lost in the addendum's Word source) and the open points in the addendum, section 6.
+- Ontology `urls` (its row was damaged in the addendum's Word source), decided: a list of {role, url}, roles docs, spec, download, repository, other; by C/Y; Core. Open points in the addendum, section 6, are settled while building.
 - Acceptance: CRUD for all four types; TESTS results derive hypothesis status (offline and integration tests, including a hypothesis supported by one paper and refuted by another giving mixed); a framework page lists all papers using it; the stablecoin example (addendum, section 5) can be created end to end; backup and restore round-trips the new labels and relations.
 
 ## Task 8b. Generalise file upload beyond PDFs

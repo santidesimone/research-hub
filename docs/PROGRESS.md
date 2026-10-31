@@ -12,7 +12,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | 5 Library UI: Collections, forms, audit | done (2026-10-30) | See "Task 5" below. |
 | 6 CLI, API docs, CI, docs | done (2026-10-30), CI not run yet | See "Task 6" below. |
 | 7 Hardening | done (2026-10-31) | See "Task 7" below. |
-| 8 Frameworks, research questions and hypotheses, ontologies | not started | Addendum: `docs/ADDENDUM_frameworks_questions_ontologies.md`. Confirm the Ontology `urls` field first |
+| 8 Frameworks, research questions and hypotheses, ontologies | not started | Addendum: `docs/ADDENDUM_frameworks_questions_ontologies.md`. Ontology `urls` decided (see the brief) |
 | 8b File upload beyond PDFs (ontology snapshots) | not started | Addendum: `docs/ADDENDUM_frameworks_questions_ontologies.md` |
 
 ## Task 0. Baseline against real services

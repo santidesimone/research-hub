@@ -246,7 +246,7 @@ Source: `docs/ADDENDUM_frameworks_questions_ontologies.md` (requirements F15 to 
 | kind | enum ontology, data_dictionary, standard, taxonomy | Y/C | Core |
 | publisher | link to Organisation | C/Y | Core |
 | iri | text (base namespace; the stable machine identifier) | C/Y | Core |
-| urls | list of {role, url}; roles include docs, spec, download | not recorded | not recorded |
+| urls | list of {role: docs, spec, download, repository, other; url} | C/Y | Core |
 | parent | link to another Ontology (e.g. a FIBO module to FIBO), via PART_OF | C/Y | Standard |
 | version, version_date | text, date | C/Y | Standard |
 | scope | text (what it models) | C | Standard |
@@ -259,7 +259,7 @@ Source: `docs/ADDENDUM_frameworks_questions_ontologies.md` (requirements F15 to 
 | how_i_use_it | text | Y | Standard |
 | snapshot | optional {file_url, drive_file_id, retrieved_at, version, sha256, size_bytes, mime} | Sys/Y | Deep |
 
-`urls`: the addendum's table row was damaged in its Word source; the full list of roles and this field's By and Tier must be confirmed before Task 8.
+`urls`: the addendum's table row was damaged in its Word source. Decided by the owner (2026-10-31): roles docs, spec, download, repository, other; filled by Claude or the owner; Core.
 
 Rules (D10, D11): an ontology record stores descriptive metadata and URLs only. URLs are stored, never fetched on read, and the ontology's contents (classes, properties) are never imported. A snapshot is a frozen copy in the owner's Drive, created only on request (Task 8b); `sha256` and `retrieved_at` let the UI show "snapshot older than the current version" when `version` differs.
 

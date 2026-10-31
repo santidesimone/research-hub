@@ -87,7 +87,9 @@ Notes: "theoretical" means borrowed from existing theory; "conceptual" means the
 
 > **Note on `urls` (damaged in the source).** In the Word file this row is cut at the `|` characters inside its type:
 > the cells read only "urls", "list of `{role: docs", "spec", "download". The remaining role values (if any), the closing
-> part of the type (presumably a `url` per entry), and this field's By and Tier are lost. Confirm them before Task 8.
+> part of the type (presumably a `url` per entry), and this field's By and Tier are lost.
+> **Decided by the owner (2026-10-31):** a list of `{role, url}` with roles docs, spec, download, repository, other;
+> filled by Claude or the owner (C/Y); tier Core.
 
 Rules: URLs are stored, never fetched on read. The snapshot is created only on request. sha256 and retrieved_at let the UI show "snapshot older than the current version" when version differs. The ontology's contents (classes, properties) are not stored.
 
