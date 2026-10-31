@@ -474,8 +474,19 @@
               "medium",
               "high"
             ]
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "supported",
+              "refuted",
+              "mixed",
+              "inconclusive"
+            ],
+            "description": "TESTS only, required there"
           }
-        }
+        },
+        "description": "A typed link. Relations with their own properties (TESTS: result) take them here too."
       },
       "AnalysisInput": {
         "type": "object",
@@ -585,6 +596,33 @@
           },
           "copy_to_drive": {
             "type": "boolean"
+          },
+          "extract": {
+            "type": "object",
+            "description": "Papers only. What the paper contains: each entry is matched to an existing item by its exact title (or text, acronym, alias) or created by Claude, then linked. Questions and hypotheses created this way get origin: extracted. A hypothesis status is derived from all TESTS results.",
+            "properties": {
+              "frameworks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "description": "{title or name, framework_kind, ...framework fields, evidence?, location?, confidence?}: linked paper FRAMED_BY framework"
+                }
+              },
+              "research_questions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "description": "{text, kind, ...}: linked question ASKED_IN paper"
+                }
+              },
+              "hypotheses": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "description": "{statement, direction, ..., result (supported|refuted|mixed|inconclusive), evidence, location, confidence}: linked paper TESTS hypothesis"
+                }
+              }
+            }
           }
         }
       },
@@ -643,6 +681,10 @@
               "type": "object"
             },
             "description": "ungrounded findings and interpretive links without a location"
+          },
+          "extracted": {
+            "type": "object",
+            "description": "{frameworks, research_questions, hypotheses: [{key, created, linked}], skipped}"
           }
         }
       }
@@ -2107,6 +2149,66 @@
           },
           "401": {
             "description": "Owner only"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "setConceptIri",
+        "summary": "Point a Concept at a term in an ontology: external_iri and a DEFINED_IN link to the Ontology record (nothing is imported)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "concept:..."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "external_iri": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "absolute IRI; null removes it"
+                  },
+                  "defined_in": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "ontology:... key; null removes the link"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{key, external_iri, defined_in}"
+          },
+          "400": {
+            "description": "Not a concept, or not an absolute IRI"
+          },
+          "401": {
+            "description": "Owner only"
+          },
+          "404": {
+            "description": "No such concept or ontology"
           }
         }
       }

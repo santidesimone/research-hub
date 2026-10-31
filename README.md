@@ -197,7 +197,7 @@ curl -X POST http://localhost:3000/api/artifacts/case_study -H "Authorization: B
 
 ## The Library
 
-Open `/library`. The **Collections bar** has All, Papers, Methods, Use cases, Case studies, Graph and, when you are signed in, Audit. Addresses are shareable: `/library/methods?key=method:snowballing`, `/library/case-studies?key=...&edit=1`, `/library/audit`; older `/library?key=...` links still open the item.
+Open `/library`. The **Collections bar** has All, Papers, Methods, Use cases, Case studies, Graph and, when you are signed in, Audit. **More** holds Frameworks, Questions and hypotheses (one entry that switches between research questions and hypotheses) and Ontologies and standards. Addresses are shareable: `/library/methods?key=method:snowballing`, `/library/case-studies?key=...&edit=1`, `/library/audit`; older `/library?key=...` links still open the item.
 
 - **Papers:**
   - The list, PDF reader, file link, upload and your status are unchanged.
@@ -212,6 +212,14 @@ Open `/library`. The **Collections bar** has All, Papers, Methods, Use cases, Ca
   - A paper's DOI, authors and venue come from the source and are read-only.
 - **Audit:** Claude's low-confidence values and links, ungrounded findings, new vocabulary, older schema versions, empty fields and unreviewed items, with one-click **Accept** and **Edit** (opens the form at that field).
 - **Anonymous visitors** see only the public preview: public items and whitelisted fields, with no forms, Analysis tab or audit.
+
+**Frameworks, research questions, hypotheses, ontologies** (`docs/ADDENDUM_frameworks_questions_ontologies.md`):
+- A paper, question, project or case study is `FRAMED_BY` a framework, and a framework's page lists everything framed by it.
+- A hypothesis is `DERIVED_FROM` a framework and `ANSWERS` a question. Papers test it (`TESTS`, with a result: supported, refuted, mixed or inconclusive).
+- **Hypothesis status is derived from all the tests:** one paper supporting and one refuting give "mixed". If you set the status yourself, that stands until you clear it.
+- Questions and hypotheses take their title from their text when none is given.
+- An ontology or standard is a descriptive record: name, acronym, IRI, https links (stored, never fetched), publisher, version and licence. It can be `PART_OF` another (a FIBO module) and `USED_BY` use cases, case studies, papers and projects. Its classes and terms are never imported.
+- A concept can point at a term in an ontology: `hub vocab iri concept:x <iri> --ontology ontology:y`.
 
 An item counts as "not reviewed" only while it holds Claude values nobody has accepted. Your own values and source facts (Crossref, OpenAlex) need no review.
 
@@ -272,6 +280,12 @@ curl -H "$H" -H "Content-Type: application/json" -X POST http://127.0.0.1:3000/a
   - Other items are linked only by key or exact title, never created from a name.
   - Interpretive links (builds_on, critiques, contradicts, supports, replicates) need the justifying passage as `evidence`.
 - **Every finding needs a location.** Findings without one are saved but come back in `flagged` and appear in the audit.
+- **What a paper contains** goes in `extract`:
+  - the frameworks it uses;
+  - the research questions it states;
+  - the hypotheses it tests, each with its result, the passage and a location.
+
+  Each is matched to an existing item by its exact title, or created (questions and hypotheses get `origin: extracted`), then linked (`FRAMED_BY`, `ASKED_IN`, `TESTS`). A tested hypothesis without a result or a passage is not created.
 - **The audit** (`GET /api/audit`): counts and lists of low-confidence fields and links, empty Core and Standard fields, ungrounded findings, items below their type's `schema_version`, vocabulary Claude created, and unreviewed items. `POST /api/audit/accept` (`{key, fields?, links?}` or `{vocab}`) marks values reviewed, which protects them from re-runs like your own edits.
 - **Single-object fields** (`evidence`, `period`, `threats_to_validity` ...) also keep each part as a plain property for Cypher: `MATCH (p:Paper) WHERE p.evidence__n > 100`.
 
@@ -294,7 +308,8 @@ Node 18+, nothing to install. `hub config --url <base url> --token <token>` save
 | `hub item add <collection> [file.json \| -]` `[--set f=v] [--slug s]` | create an item from a JSON object of fields |
 | `hub item edit <key> [file.json \| -]` `[--set field=value ...]` | change only these fields (they become yours); values are JSON when they parse (`--set year=2024`, `--set 'tags=["a"]'`), text otherwise |
 | `hub item rm <key> --yes` | delete (refuses without `--yes`) |
-| `hub item link <key> <rel> <target>` `[--evidence t] [--location p] [--confidence c]`, `hub item unlink <key> <rel> <target>` | typed links |
+| `hub item link <key> <rel> <target>` `[--evidence t] [--location p] [--confidence c] [--result r]`, `hub item unlink <key> <rel> <target>` | typed links; `TESTS` (paper to hypothesis) needs `--result supported\|refuted\|mixed\|inconclusive` |
+| `hub vocab iri <concept> <iri \| none>` `[--ontology <key \| none>]` | point a concept at a term in an ontology (`external_iri` and `DEFINED_IN`); nothing is imported |
 | `hub analyze <doi \| url \| key \| file.pdf>` `[--deep] [--force] [--model m] [--collection c] < analysis.json` | save an analysis in one call (stdin: `{fields, links, confidence}`; the model from `--model`, the JSON or `HUB_MODEL`). For a PDF, the JSON names the paper (`doi` or `url`) and the file is uploaded to your Drive |
 | `hub audit [--json]` | what is worth reviewing, with counts |
 | `hub audit --accept-all-unchanged [--dry-run]` | accept every Claude value nobody changed, except low-confidence values and ungrounded findings (listed as skipped) |

@@ -295,6 +295,14 @@ All of these go into `relations` in `schema/schema.json`, the safeRel allow-list
 
 Worked example these must support: the stablecoin research question in the addendum, section 5.
 
+### Implementation decisions (Task 8)
+
+- `publisher` links an ontology to an Organisation through a new relation, **PUBLISHED_BY**. The addendum names the field but no relation.
+- `title` stays required for every item. For questions and hypotheses it is derived from `text` or `statement` when not given; a framework's and an ontology's `name` is their `title`.
+- The Collections bar shows the four original collections, with Frameworks, Questions and hypotheses (one entry), and Ontologies and standards under "More".
+- The owner can override a hypothesis's status (addendum, open point 3). The override stands until the owner clears it; then the status is derived again.
+- Links to other items by name (an ontology's `parent`, an analysis's frameworks) match an exact title, acronym or alias, and are never guessed. An analysis creates frameworks, questions and hypotheses only from full entries in `extract`, never from a bare link name.
+
 ### Out of scope (addendum)
 
 Full ontology querying (a triple store or the Neo4j RDF plugin).

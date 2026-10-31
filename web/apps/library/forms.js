@@ -1,7 +1,7 @@
 // Create/edit forms generated from the schema: one widget per field type. Saving an edit sends only the changed fields,
 // so only those become {by: owner, status: reviewed}.
 import { h, api, toast } from '../../shell/ui.js';
-import { fieldGroups, fromForm, toForm, changedFields, noun } from './model.js';
+import { fieldGroups, fromForm, toForm, changedFields, createFields, noun } from './model.js';
 import { tierBadge, provBadge } from './view.js';
 
 const debounce = (fn, ms = 200) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
@@ -118,7 +118,9 @@ export function itemForm(coll, item, ctx, { onDone, onCancel, focus } = {}) {
       const spec = coll.fields[f];
       if (!spec) continue;
       const value = item ? item.fields[f] : spec.default ?? null;
-      const head = h('div', { class: 'field-head' }, h('label', { class: 'field-name', for: `f-${f}` }, spec.label || f, spec.required && ' *'), tierBadge(spec.tier), item && provBadge(item.provenance[f]));
+      const derivedTitle = f === 'title' && coll.title_from; // a question's or hypothesis's title comes from its text when left empty
+      const head = h('div', { class: 'field-head' }, h('label', { class: 'field-name', for: `f-${f}` }, spec.label || f, spec.required && !derivedTitle && ' *'), tierBadge(spec.tier), item && provBadge(item.provenance[f]),
+        derivedTitle && h('span', { class: 'faint small' }, `optional: taken from the ${(coll.fields[coll.title_from].label || coll.title_from).toLowerCase()}`));
       if (locked.has(f)) {
         sec.append(h('div', { class: 'field locked', 'data-field': f }, head, h('div', { class: 'faint small' }, 'Filled from the source; not editable here.')));
         continue;
@@ -144,7 +146,7 @@ export function itemForm(coll, item, ctx, { onDone, onCancel, focus } = {}) {
         if (!Object.keys(changed).length) { toast('Nothing changed'); onCancel && onCancel(); return; }
         res = await api('/api/items/' + encodeURIComponent(item.key), { method: 'PATCH', body: { fields: changed } });
       } else {
-        const fields = Object.fromEntries(Object.entries(values).filter(([, v]) => v !== null));
+        const fields = createFields(coll.fields, values);
         res = await api('/api/items', { method: 'POST', body: { collection: coll.name, fields } });
       }
       // empty fields are visible on the page already; only surprises are worth a toast
@@ -167,6 +169,20 @@ export function linkForm(coll, item, ctx, { onDone }) {
   const evidence = h('input', { class: 'input', placeholder: 'Evidence: the justifying passage' });
   const location = h('input', { class: 'input', placeholder: 'Location: page or section' });
   const confidence = h('select', { class: 'select' }, ['', 'low', 'medium', 'high'].map((c) => h('option', { value: c }, c || 'confidence')));
+  // relations with their own properties (TESTS: result) ask for them
+  const extras = h('div', { class: 'row-flex' });
+  const extraInputs = {};
+  const setExtras = () => {
+    const r = rels.find((x) => x.rel === rel.value) || {};
+    extras.replaceChildren();
+    for (const k of Object.keys(extraInputs)) delete extraInputs[k];
+    for (const [k, ps] of Object.entries(r.props || {})) {
+      const input = ps.type === 'enum'
+        ? h('select', { class: 'select', 'aria-label': k, required: ps.required || null }, h('option', { value: '' }, k + (ps.required ? ' *' : '')), ps.enum.map((v) => h('option', { value: v }, v)))
+        : h('input', { class: 'input', 'aria-label': k, placeholder: k });
+      extraInputs[k] = input; extras.append(input);
+    }
+  };
   const setTarget = () => {
     const r = rels.find((x) => x.rel === rel.value);
     const kinds = r.to.filter((l) => ctx.entities.some((e) => e.label === l) || ctx.collections.some((c) => c.label === l));
@@ -179,9 +195,9 @@ export function linkForm(coll, item, ctx, { onDone }) {
     };
     kindSel.onchange = make; make();
   };
-  rel.onchange = setTarget;
+  rel.onchange = () => { setTarget(); setExtras(); };
   const err = h('div', { class: 'alert hidden' });
-  const form = h('form', { class: 'linkform' }, h('div', { class: 'row-flex' }, rel, kindSel, holder), h('div', { class: 'row-flex' }, evidence, location, confidence),
+  const form = h('form', { class: 'linkform' }, h('div', { class: 'row-flex' }, rel, kindSel, holder), extras, h('div', { class: 'row-flex' }, evidence, location, confidence),
     err, h('div', { class: 'actions' }, h('button', { type: 'submit', class: 'btn btn-sm btn-primary' }, 'Add link')));
   form.addEventListener('submit', async (e) => {
     e.preventDefault(); err.classList.add('hidden');
@@ -192,10 +208,11 @@ export function linkForm(coll, item, ctx, { onDone }) {
       if (evidence.value.trim()) body.evidence = evidence.value.trim();
       if (location.value.trim()) body.location = location.value.trim();
       if (confidence.value) body.confidence = confidence.value;
+      for (const [k, input] of Object.entries(extraInputs)) if (input.value) body[k] = input.value;
       await api('/api/items/' + encodeURIComponent(item.key) + '/links', { method: 'PUT', body });
       onDone && onDone();
     } catch (ex) { err.textContent = ex.message; err.classList.remove('hidden'); }
   });
-  if (rels.length) setTarget();
+  if (rels.length) { setTarget(); setExtras(); }
   return form;
 }

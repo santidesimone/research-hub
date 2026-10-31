@@ -30,7 +30,7 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
   await db.exec('RETURN 1 AS ok');
   const ran = await migrate.run();
   console.log('migrations applied this run:', ran.join(', ') || '(none, already up to date)');
-  assert.ok((await migrate.applied()).includes('009_object_parts'));
+  assert.ok((await migrate.applied()).includes('011_frameworks_questions_ontologies'));
   await db.exec('CALL db.awaitIndexes(60)');
 
   // paper with a Drive share link: stored canonically, nothing downloaded
@@ -259,6 +259,69 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
     for (const k of mine) await items.remove(k).catch(() => artifacts.remove(k));
     await db.exec('MATCH (n) WHERE (n:Topic OR n:Dataset OR n:Organisation OR n:Venue OR n:Person OR n:Concept) AND n.norm CONTAINS $tag DETACH DELETE n', { tag });
     crossref.setHttp((url, o) => fetch(url, o)); openalex.setHttp((url, o) => fetch(url, o));
+  }
+
+  // Task 8: the addendum's worked example end to end, its competency questions in plain Cypher, and a backup round trip
+  {
+    const T8 = (x) => `${x} ${tag}`;
+    const mk = async (collection, fields) => (await items.create({ collection, fields })).key;
+    const fw = { tsm: await mk('framework', { title: T8('Two-sided market theory'), framework_kind: 'theoretical' }),
+      pd: await mk('framework', { title: T8('Path dependence'), framework_kind: 'theoretical' }),
+      dd: await mk('framework', { title: T8('Diamond-Dybvig bank-run model'), framework_kind: 'theoretical' }) };
+    const q = await mk('research_question', { text: T8('Why do stablecoins struggle to replace card payments?'), kind: 'explanatory', status: 'open' });
+    const q2 = await mk('research_question', { text: T8('Do merchants price stablecoin payments differently?'), kind: 'descriptive', status: 'open' });
+    for (const f of Object.values(fw)) await items.link(q, { rel: 'FRAMED_BY', target: f });
+    const h = {
+      h1: await mk('hypothesis', { statement: T8('Adoption requires simultaneous merchant and consumer growth'), direction: 'positive' }),
+      h2: await mk('hypothesis', { statement: T8('Entrenched interchange and acquiring relationships raise switching costs'), direction: 'positive' }),
+      h3: await mk('hypothesis', { statement: T8('Redemption risk reduces trust in stablecoins'), direction: 'negative' }),
+    };
+    for (const [hk, f] of [[h.h1, fw.tsm], [h.h2, fw.pd], [h.h3, fw.dd]]) { await items.link(hk, { rel: 'DERIVED_FROM', target: f }); await items.link(hk, { rel: 'ANSWERS', target: q }); }
+    const p1 = await mk('paper', { title: T8('Stablecoin adoption in retail payments'), year: 2024 });
+    const p2 = await mk('paper', { title: T8('One-sided growth of stablecoin acceptance'), year: 2025 });
+    await items.link(p1, { rel: 'FRAMED_BY', target: fw.tsm });
+    await items.link(p1, { rel: 'TESTS', target: h.h1, result: 'supported', evidence: 'joint growth in table 3', location: 'p. 9' });
+    await items.link(p2, { rel: 'TESTS', target: h.h1, result: 'refuted', evidence: 'merchant-led adoption', location: 's. 4' });
+    await items.link(p1, { rel: 'TESTS', target: h.h2, result: 'supported', evidence: 'switching costs', location: 'p. 11' });
+    await items.link(q, { rel: 'ADDRESSED_BY', target: p1 });
+    const fibo = await mk('ontology', { title: T8('Financial Industry Business Ontology'), acronym: T8('FIBO'), kind: 'ontology', iri: 'https://spec.edmcouncil.org/fibo/ontology/', urls: [{ role: 'docs', url: 'https://spec.edmcouncil.org/fibo/' }] });
+    const fnd = await mk('ontology', { title: T8('FIBO Foundations'), kind: 'ontology', parent: T8('FIBO') });
+    const unused = await mk('ontology', { title: T8('An ontology nobody uses'), kind: 'taxonomy' });
+    const uc = await mk('use_case', { title: T8('Shared legal-entity vocabulary'), goal: 'one vocabulary for counterparties' });
+    await items.link(fibo, { rel: 'USED_BY', target: uc });
+
+    const statusOf = async (k) => (await items.get(k)).fields.status;
+    assert.deepEqual([await statusOf(h.h1), await statusOf(h.h2), await statusOf(h.h3)], ['mixed', 'supported', 'untested'], 'statuses derived from the TESTS results');
+    assert.ok((await items.get(fnd)).fields.parent.key === fibo, 'a module is PART_OF its ontology, found by acronym');
+    const C = async (cypher, params) => (await query.readOnly(cypher, { tag, ...params })).rows;
+    assert.deepEqual((await C('MATCH (p:Paper)-[:FRAMED_BY]->(:Framework {key: $f}) RETURN p.key AS key', { f: fw.tsm })).map((r) => r.key), [p1], 'papers using a given framework');
+    assert.deepEqual((await C(`MATCH (hy:Hypothesis)<-[t:TESTS]-(:Paper) WHERE hy.title ENDS WITH $tag WITH hy, collect(DISTINCT t.result) AS rs
+       WHERE 'supported' IN rs AND 'refuted' IN rs RETURN hy.key AS key, hy.status AS status`)), [{ key: h.h1, status: 'mixed' }], 'hypotheses with conflicting test results');
+    assert.deepEqual((await C(`MATCH (rq:ResearchQuestion {status: 'open'}) WHERE rq.title ENDS WITH $tag AND NOT (rq)-[:ADDRESSED_BY]->(:Paper) RETURN rq.key AS key`)).map((r) => r.key), [q2], 'open questions no paper addresses');
+    assert.deepEqual((await C('MATCH (o:Ontology) WHERE o.title ENDS WITH $tag AND NOT (o)-[:USED_BY]->() AND NOT ()-[:PART_OF]->(o) AND NOT (o)-[:PART_OF]->() RETURN o.key AS key')).map((r) => r.key), [unused], 'ontologies used by no item');
+    assert.deepEqual((await C('MATCH (:Ontology)-[:USED_BY]->(u:UseCase) WHERE u.title ENDS WITH $tag RETURN u.key AS key')).map((r) => r.key), [uc], 'use cases that reference an ontology');
+    assert.deepEqual((await items.list({ collection: 'hypothesis', q: 'redemption trust ' + tag })).items.map((x) => x.key), [h.h3], 'statements are in the full-text index');
+
+    // backup -> delete -> restore keeps the new labels, relations, TESTS results and derived statuses
+    const mine8 = [...Object.values(fw), q, q2, ...Object.values(h), p1, p2, fibo, fnd, unused, uc];
+    const pick8 = (d) => {
+      const keys = new Set(mine8);
+      const nodes = d.nodes.filter((n) => keys.has(n.props.key)).map((n) => ({ labels: [...n.labels].sort(), props: n.props })).sort((a, b) => (a.props.key < b.props.key ? -1 : 1));
+      const rels = d.rels.filter((r) => keys.has(r.from) && keys.has(r.to)).sort((a, b) => (`${a.from}|${a.type}|${a.to}` < `${b.from}|${b.type}|${b.to}` ? -1 : 1));
+      return { nodes, rels };
+    };
+    const dump8 = await backup.exportAll();
+    const before8 = pick8(dump8);
+    const labels8 = new Set(before8.nodes.flatMap((n) => n.labels));
+    for (const l of ['Framework', 'ResearchQuestion', 'Hypothesis', 'Ontology']) assert.ok(labels8.has(l), `backup covers ${l}`);
+    const types8 = new Set(before8.rels.map((r) => r.type));
+    for (const t of ['FRAMED_BY', 'DERIVED_FROM', 'ANSWERS', 'TESTS', 'ADDRESSED_BY', 'USED_BY', 'PART_OF']) assert.ok(types8.has(t), `backup covers ${t}`);
+    assert.ok(before8.rels.some((r) => r.type === 'TESTS' && r.props.result === 'refuted'));
+    await db.exec('UNWIND $keys AS k MATCH (n {key: k}) DETACH DELETE n', { keys: mine8 });
+    await backup.restore(dump8);
+    assert.deepEqual(pick8(await backup.exportAll()), before8, 'identical after backup, delete and restore');
+    assert.equal(await statusOf(h.h1), 'mixed');
+    for (const k of mine8) await items.remove(k).catch(() => {});
   }
 
   // notes sync: upsert, edges to the paper and a concept, prune; methods are skipped and never pruned

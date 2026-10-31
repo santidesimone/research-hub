@@ -157,6 +157,71 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
     await page.waitForURL(/\/library\/use-cases\?key=/);
     await page.waitForSelector('article.doc h1:has-text("Offline retail payments")');
   });
+  // Task 8: More menu, questions and hypotheses, derived status, TESTS from a paper, frameworks and ontologies
+  await step('More lists frameworks, questions and hypotheses, ontologies', async () => {
+    await page.goto(U + '/library/papers');
+    await page.click('.moremenu summary');
+    const entries = await page.$$eval('.moremenu .menu-list button', (b) => b.map((x) => x.textContent.trim()));
+    expect(JSON.stringify(entries) === JSON.stringify(['Frameworks', 'Questions and hypotheses', 'Ontologies and standards']), entries.join('|'));
+    await page.click('.moremenu .menu-list button:has-text("Frameworks")');
+    await page.waitForURL(/\/library\/frameworks/);
+    expect((await page.textContent('.moremenu summary')).includes('Frameworks'), 'the menu shows where you are');
+  });
+  await step('a framework page lists the papers and questions framed by it', async () => {
+    await page.click('.item:has-text("Two-sided market theory")');
+    await page.waitForSelector('section[data-rel="in:FRAMED_BY"]');
+    const framed = await page.textContent('section[data-rel="in:FRAMED_BY"]');
+    expect(framed.includes('Owner-Custodianship') && framed.includes('Why do stablecoins struggle'), framed);
+    expect((await page.textContent('section[data-rel="in:DERIVED_FROM"]')).includes('Adoption requires'), 'hypotheses derived from it');
+  });
+  await step('questions and hypotheses switch; a hypothesis shows its tests and a derived, mixed status', async () => {
+    await page.goto(U + '/library/research-questions');
+    await page.waitForSelector('.groupswitch');
+    await page.click('.groupswitch button[data-section=hypothesis]');
+    await page.waitForURL(/\/library\/hypotheses/);
+    await page.click('.item:has-text("Adoption requires")');
+    await page.waitForSelector('section[data-rel="in:TESTS"] table');
+    const head = await page.textContent('section[data-rel="in:TESTS"] .label');
+    expect(/1 supported/.test(head) && /1 refuted/.test(head), head);
+    expect((await page.$$('section[data-rel="in:TESTS"] .badge.res-supported')).length === 1 && (await page.$$('section[data-rel="in:TESTS"] .badge.res-refuted')).length === 1, 'result badges');
+    expect((await page.textContent('[data-field=status] .field-value')).trim() === 'mixed', 'status');
+    expect((await page.textContent('[data-field=status] .prov')).includes('derived'), 'marked as derived');
+    await page.screenshot({ path: OUT + '/6-hypothesis.png' });
+  });
+  await step('create a hypothesis from the form: the title comes from the statement', async () => {
+    await page.click('button:has-text("+ New")');
+    await page.waitForSelector('form.itemform [data-field=statement] textarea');
+    await page.fill('[data-field=statement] textarea', 'Redemption risk reduces trust in stablecoins');
+    await page.selectOption('[data-field=direction] select', 'negative');
+    await page.click('form.itemform button[type=submit]');
+    await page.waitForSelector('article.doc h1:has-text("Redemption risk reduces trust in stablecoins")');
+    const it = await api('/api/items/hypothesis%3Aredemption-risk-reduces-trust-in-stablecoins');
+    expect(it.fields.status === 'untested' && it.fields.origin === 'own' && it.fields.direction === 'negative', JSON.stringify(it.fields));
+  });
+  await step('a paper adds a TESTS link with its result, and the hypothesis status follows', async () => {
+    await page.goto(U + '/library/papers?key=' + encodeURIComponent('doi:10.1007/978-1-4757-0602-4_18'));
+    await page.click('.tab[data-tab=analysis]');
+    await page.waitForSelector('.analysis section[data-rel="out:TESTS"]');
+    await page.click('.analysis summary:has-text("Add a link")');
+    await page.selectOption('.analysis .linkform select >> nth=0', 'TESTS');
+    await page.selectOption('.analysis .linkform select[aria-label=result]', 'refuted');
+    await page.click('.analysis .linkform .picker input'); await page.fill('.analysis .linkform .picker input', 'Redemption');
+    await page.waitForSelector('.analysis .linkform .suggest li button');
+    await page.click('.analysis .linkform .suggest li button');
+    await page.fill('.analysis .linkform input[placeholder^=Evidence]', 'trust held despite the risk');
+    await page.click('.analysis .linkform button[type=submit]');
+    await page.waitForSelector('.analysis section[data-rel="out:TESTS"] tr[data-key="hypothesis:redemption-risk-reduces-trust-in-stablecoins"]');
+    const it = await api('/api/items/hypothesis%3Aredemption-risk-reduces-trust-in-stablecoins');
+    expect(it.fields.status === 'refuted', it.fields.status);
+  });
+  await step('an ontology page shows its modules and users', async () => {
+    await page.goto(U + '/library/ontologies-and-standards');
+    await page.click('.item:has-text("Financial Industry Business Ontology")');
+    await page.waitForSelector('section[data-rel="in:PART_OF"]');
+    expect((await page.textContent('section[data-rel="in:PART_OF"]')).includes('FIBO Foundations'), 'modules');
+    expect((await page.textContent('section[data-rel="out:USED_BY"]')).includes('Offline retail payments'), 'users');
+    expect((await page.textContent('[data-field=urls]')).includes('https://spec.edmcouncil.org/fibo/'), 'links');
+  });
   await step('no console or CSP errors', async () => { expect(!problems.length, problems.slice(0, 5).join(' || ')); });
   for (const r of results) console.log(r.join(' | '));
   if (results.some((r) => r[0] !== 'PASS')) process.exitCode = 1; // CI needs a failing exit code

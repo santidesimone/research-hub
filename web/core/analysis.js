@@ -4,7 +4,8 @@
 // writes typed links with their evidence, and reports what was filled, skipped, still empty and flagged.
 // Safety rules: empty beats wrong (nothing is guessed: unknown link targets are skipped, not created), and every finding
 // needs a location (findings without one are saved but flagged "ungrounded" and listed by the audit).
-const { schema, fieldsOf, keyPrefix, safeRel, entityLabels } = require('./schema');
+const { schema, fieldsOf, keyPrefix, safeRel, entityLabels, relTargets } = require('./schema');
+const hypotheses = require('./hypotheses');
 const { HttpError } = require('./errors');
 const db = require('./db');
 const items = require('./items');
@@ -20,7 +21,10 @@ const TIERS = { standard: ['core', 'standard'], deep: ['core', 'standard', 'deep
 const MAX_LINKS = 200;
 const MAX_FIELDS = 300;
 const OPEN_ACCESS = { gold: 'gold', green: 'green', closed: 'closed' }; // OpenAlex's hybrid, bronze, diamond have no equivalent: left empty
-const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+const slugify = items.slugify;
+// What a paper analysis may extract (Task 8): the collection each list creates or reuses.
+const EXTRACT = { frameworks: 'framework', research_questions: 'research_question', hypotheses: 'hypothesis' };
+const MAX_EXTRACT = 50;
 const today = () => new Date().toISOString().slice(0, 10);
 
 function check(body) {
@@ -29,6 +33,15 @@ function check(body) {
   if (typeof body.model !== 'string' || !body.model.trim()) throw new HttpError(400, 'model is required (the model that did the analysis)');
   if (body.fields != null && (typeof body.fields !== 'object' || Array.isArray(body.fields))) throw new HttpError(400, 'fields must be an object');
   if (body.links != null && !Array.isArray(body.links)) throw new HttpError(400, 'links must be a list');
+  if (body.extract != null) {
+    if (body.collection !== 'paper') throw new HttpError(400, 'extract is for paper analyses');
+    if (typeof body.extract !== 'object' || Array.isArray(body.extract)) throw new HttpError(400, `extract must be an object with ${Object.keys(EXTRACT).join(', ')}`);
+    for (const [k, v] of Object.entries(body.extract)) {
+      if (!EXTRACT[k]) throw new HttpError(400, `extract.${k} is not one of ${Object.keys(EXTRACT).join(', ')}`);
+      if (!Array.isArray(v)) throw new HttpError(400, `extract.${k} must be a list`);
+      if (v.length > MAX_EXTRACT) throw new HttpError(400, `at most ${MAX_EXTRACT} entries in extract.${k}`);
+    }
+  }
   if (body.tier != null && !TIERS[body.tier]) throw new HttpError(400, 'tier must be standard or deep');
   if ((body.links || []).length > MAX_LINKS) throw new HttpError(400, `at most ${MAX_LINKS} links per analysis`);
   if (Object.keys(body.fields || {}).length > MAX_FIELDS) throw new HttpError(400, `at most ${MAX_FIELDS} fields per analysis`);
@@ -105,38 +118,100 @@ async function findTarget(link, toLabels) {
   return { skip: rows.length ? `"${name}" matches more than one item; pass its key` : `no ${labels.join('/')} titled "${name}"; pass a key` };
 }
 
-async function saveLinks(key, fromLabel, links, { model, force }) {
+// One typed link written by Claude: endpoints and relation properties checked, never over an owner link.
+// -> { done } | { skipped } (and { flagged } when an interpretive link has no location)
+async function saveLink(key, fromLabel, l, { model, force }, label) {
+  if (!l || typeof l !== 'object') return { skipped: { link: label, reason: 'expected {rel, target, ...}' } };
+  const rel = items.relName(l.rel);
+  const spec = schema.relation_types[rel];
+  const targets = relTargets(rel, fromLabel);
+  if (!targets.length) return { skipped: { link: label, rel, reason: `${rel} does not start at a ${fromLabel}` } };
+  if (l.confidence != null && !['low', 'medium', 'high'].includes(l.confidence)) return { skipped: { link: label, rel, reason: 'confidence must be low, medium or high' } };
+  const evidence = typeof l.evidence === 'string' ? l.evidence.trim().slice(0, 2000) : '';
+  if (spec.interpretive && !evidence) return { skipped: { link: label, rel, reason: `${rel} is interpretive: it needs the justifying passage as evidence` } };
+  const own = items.relationProps(rel, l);
+  if (own.error) return { skipped: { link: label, rel, reason: own.error } };
+  const target = await findTarget({ ...l, model }, targets);
+  if (target.skip) return { skipped: { link: label, rel, reason: target.skip } };
+  const [t] = await db.run('MATCH (t {key:$k}) RETURN labels(t) AS labels', { k: target.key });
+  if (!t || !t.labels.some((x) => targets.includes(x))) return { skipped: { link: label, rel, target: target.key, reason: `${rel} cannot point to that` } };
+  const [old] = await db.run(`MATCH (:Artifact {key:$key})-[r:${safeRel(rel)}]->({key:$t}) RETURN properties(r) AS r`, { key, t: target.key });
+  if (old && (old.r.by === 'owner' || old.r.status === 'reviewed' || (old.r.by == null && old.r.source !== 'analysis'))) return { skipped: { link: label, rel, target: target.key, reason: 'owner link' } };
+  if (old && !force) return { skipped: { link: label, rel, target: target.key, reason: 'already linked' } };
+  const location = typeof l.location === 'string' && l.location.trim() ? l.location.trim().slice(0, 200) : null;
+  const props = { evidence: evidence || null, location, confidence: l.confidence || 'medium', ...own.props, by: 'claude', model, at: new Date().toISOString(), status: 'auto', source: 'analysis' };
+  await db.writeTx((tx) => tx.run(`MATCH (n:Artifact {key:$key}), (t {key:$t}) MERGE (n)-[r:${safeRel(rel)}]->(t) SET r += $props`, { key, t: target.key, props }));
+  if (rel === 'TESTS') await hypotheses.recompute([target.key]);
+  return { done: { rel, target: target.key }, ...(spec.interpretive && !location ? { flagged: { link: label, rel, target: target.key, reason: 'ungrounded: interpretive link without a location' } } : {}) };
+}
+
+async function saveLinks(key, fromLabel, links, opts) {
   const done = [];
   const skipped = [];
   const flagged = [];
   for (const [i, l] of links.entries()) {
-    const label = `links[${i}]`;
     try {
-      if (!l || typeof l !== 'object') { skipped.push({ link: label, reason: 'expected {rel, target, ...}' }); continue; }
-      const rel = items.relName(l.rel);
-      const spec = schema.relation_types[rel];
-      if (!spec.from.includes(fromLabel)) { skipped.push({ link: label, rel, reason: `${rel} does not start at a ${fromLabel}` }); continue; }
-      if (l.confidence != null && !['low', 'medium', 'high'].includes(l.confidence)) { skipped.push({ link: label, rel, reason: 'confidence must be low, medium or high' }); continue; }
-      const evidence = typeof l.evidence === 'string' ? l.evidence.trim().slice(0, 2000) : '';
-      if (spec.interpretive && !evidence) { skipped.push({ link: label, rel, reason: `${rel} is interpretive: it needs the justifying passage as evidence` }); continue; }
-      const target = await findTarget({ ...l, model }, spec.to);
-      if (target.skip) { skipped.push({ link: label, rel, reason: target.skip }); continue; }
-      const [t] = await db.run('MATCH (t {key:$k}) RETURN labels(t) AS labels', { k: target.key });
-      if (!t || !t.labels.some((x) => spec.to.includes(x))) { skipped.push({ link: label, rel, target: target.key, reason: `${rel} cannot point to that` }); continue; }
-      const [old] = await db.run(`MATCH (:Artifact {key:$key})-[r:${safeRel(rel)}]->({key:$t}) RETURN properties(r) AS r`, { key, t: target.key });
-      if (old && (old.r.by === 'owner' || old.r.status === 'reviewed' || (old.r.by == null && old.r.source !== 'analysis'))) { skipped.push({ link: label, rel, target: target.key, reason: 'owner link' }); continue; }
-      if (old && !force) { skipped.push({ link: label, rel, target: target.key, reason: 'already linked' }); continue; }
-      const location = typeof l.location === 'string' && l.location.trim() ? l.location.trim().slice(0, 200) : null;
-      const props = { evidence: evidence || null, location, confidence: l.confidence || 'medium', by: 'claude', model, at: new Date().toISOString(), status: 'auto', source: 'analysis' };
-      await db.writeTx((tx) => tx.run(`MATCH (n:Artifact {key:$key}), (t {key:$t}) MERGE (n)-[r:${safeRel(rel)}]->(t) SET r += $props`, { key, t: target.key, props }));
-      done.push({ rel, target: target.key });
-      if (spec.interpretive && !location) flagged.push({ link: label, rel, target: target.key, reason: 'ungrounded: interpretive link without a location' });
+      const r = await saveLink(key, fromLabel, l, opts, `links[${i}]`);
+      if (r.done) done.push(r.done);
+      if (r.skipped) skipped.push(r.skipped);
+      if (r.flagged) flagged.push(r.flagged);
     } catch (e) {
       if (!e.status || e.status >= 500) throw e;
-      skipped.push({ link: label, reason: e.message });
+      skipped.push({ link: `links[${i}]`, reason: e.message });
     }
   }
   return { done, skipped, flagged };
+}
+
+// A paper analysis may extract the frameworks the paper uses, the research questions it states and the hypotheses it
+// tests. Each is matched to an existing item by its exact title (or text, acronym, alias), or created by Claude
+// (questions and hypotheses with origin: extracted), then linked: paper FRAMED_BY framework, question ASKED_IN paper,
+// paper TESTS hypothesis (with result, evidence, location). -> { frameworks, research_questions, hypotheses, skipped, flagged }
+async function extractFromPaper(paperKey, extract, opts) {
+  const report = { frameworks: [], research_questions: [], hypotheses: [], skipped: [], flagged: [] };
+  for (const [list, coll] of Object.entries(EXTRACT)) {
+    for (const [i, entry] of (extract[list] || []).entries()) {
+      const at = `extract.${list}[${i}]`;
+      try {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) { report.skipped.push({ extract: at, reason: 'expected an object of fields' }); continue; }
+        const { result, evidence, location, confidence, name, ...rest } = entry;
+        const fields = items.deriveTitle(coll, { ...rest, ...(rest.title ? {} : name ? { title: name } : {}) });
+        if (typeof fields.title !== 'string' || !fields.title.trim()) { report.skipped.push({ extract: at, reason: `needs ${schema.types[coll].title_from || 'a name'}` }); continue; }
+        // a tested hypothesis needs its result and the passage before anything is written (no untested leftovers)
+        if (list === 'hypotheses') {
+          const why = items.relationProps('TESTS', { result }).error || (typeof evidence === 'string' && evidence.trim() ? null : 'TESTS is interpretive: it needs the justifying passage as evidence');
+          if (why) { report.skipped.push({ extract: at, reason: why }); continue; }
+        }
+        const label = schema.types[coll].label;
+        const found = await items.findByTitle(label, fields.title);
+        if (found.length > 1) { report.skipped.push({ extract: at, reason: `"${fields.title}" matches more than one ${coll}` }); continue; }
+        let key = found[0];
+        let created = false;
+        if (key) {
+          const { title, ...more } = fields; // fill what is empty on the existing item; never rename it
+          if (Object.keys(more).length) await items.write(key, more, opts);
+        } else {
+          key = keyPrefix(coll) + slugify(fields.title);
+          if (await exists(key)) { const { title, ...more } = fields; if (Object.keys(more).length) await items.write(key, more, opts); }
+          else {
+            await items.write(key, fields, { ...opts, create: { collection: coll }, system: schema.types[coll].fields.origin ? { origin: 'extracted' } : {} });
+            created = true;
+          }
+        }
+        const link = list === 'frameworks' ? [paperKey, 'Paper', { rel: 'FRAMED_BY', target: key, evidence, location, confidence }]
+          : list === 'research_questions' ? [key, 'ResearchQuestion', { rel: 'ASKED_IN', target: paperKey, evidence, location, confidence }]
+            : [paperKey, 'Paper', { rel: 'TESTS', target: key, result, evidence, location, confidence }];
+        const r = await saveLink(link[0], link[1], link[2], opts, at);
+        report[list].push({ key, created, linked: Boolean(r.done) });
+        if (r.skipped) report.skipped.push({ extract: at, ...r.skipped });
+        if (r.flagged) report.flagged.push(r.flagged);
+      } catch (e) {
+        if (!e.status || e.status >= 500) throw e;
+        report.skipped.push({ extract: at, reason: e.message });
+      }
+    }
+  }
+  return report;
 }
 
 /* ------------------------------------------------------------------ save */
@@ -166,7 +241,8 @@ async function save(body) {
     ({ key, created, doi } = p);
     warnings.push(...p.warnings);
   } else {
-    if (typeof fields.title !== 'string' || !fields.title.trim()) throw new HttpError(400, `a new ${c} needs a title (or pass key)`);
+    Object.assign(fields, items.deriveTitle(c, fields)); // questions and hypotheses: from their text or statement
+    if (typeof fields.title !== 'string' || !fields.title.trim()) throw new HttpError(400, `a new ${c} needs a ${schema.types[c].title_from || 'title'} (or pass key)`);
     key = keyPrefix(c) + slugify(fields.title);
     if (!(await exists(key))) {
       result = await items.write(key, fields, { ...opts, create: { collection: c } });
@@ -206,6 +282,8 @@ async function save(body) {
   const fromLabel = schema.types[c].label;
   const linked = await saveLinks(key, fromLabel, body.links || [], { model: opts.model, force: opts.force });
   flagged.push(...linked.flagged);
+  const extracted = body.extract ? await extractFromPaper(key, body.extract, { by: 'claude', model: opts.model, confidence: 'medium', force: opts.force }) : null;
+  if (extracted) flagged.push(...extracted.flagged);
 
   const item = await items.get(key);
   const tiers = TIERS[body.tier || 'standard'];
@@ -215,8 +293,9 @@ async function save(body) {
   return {
     key, url: `${config.get().base}/library?key=${encodeURIComponent(key)}`, created,
     filled: result.filled, skipped: result.skipped, links: linked.done, links_skipped: linked.skipped,
+    ...(extracted ? { extracted: { frameworks: extracted.frameworks, research_questions: extracted.research_questions, hypotheses: extracted.hypotheses, skipped: extracted.skipped } } : {}),
     empty_core_standard: empty, warnings, flagged,
   };
 }
 
-module.exports = { save, findTarget, TIERS };
+module.exports = { save, findTarget, saveLink, extractFromPaper, TIERS, EXTRACT };

@@ -36,8 +36,9 @@ const HELP = `hub: research hub client   (${url})
     hub item add <collection> [file.json | -]     create from {"title": ...} (a JSON object of fields)
     hub item edit <key> [file.json | -] [--set field=value ...]   only these fields change (and become yours)
     hub item rm <key> --yes                       delete
-    hub item link <key> <rel> <target> [--evidence t] [--location p] [--confidence low|medium|high]
+    hub item link <key> <rel> <target> [--evidence t] [--location p] [--confidence low|medium|high] [--result r (TESTS)]
     hub item unlink <key> <rel> <target>
+    hub vocab iri <concept> <iri | none> [--ontology <key | none>]   point a concept at a term in an ontology (DEFINED_IN)
 
   Claude's analysis and the audit
     hub analyze <doi | url | key | file.pdf> [--deep] [--force] [--model m] [--collection c]  < analysis.json
@@ -203,7 +204,7 @@ async function itemCommand(sub, args, flags) {
     if (!key || !rel || !target) usage(`${sub} <key> <rel> <target>`);
     if (sub === 'unlink') return show(await call('DELETE', `/api/items/${enc(key)}/links?rel=${enc(rel)}&target=${enc(target)}`));
     const body = { rel, target };
-    for (const k of ['evidence', 'location', 'confidence']) if (flags[k] && flags[k] !== true) body[k] = flags[k];
+    for (const k of ['evidence', 'location', 'confidence', 'result']) if (flags[k] && flags[k] !== true) body[k] = flags[k];
     return show(await call('PUT', `/api/items/${enc(key)}/links`, body));
   }
   return usage('list | get | add | edit | rm | link | unlink');
@@ -313,6 +314,13 @@ function readNotes(dir) {
   if (cmd === 'item') return itemCommand(args[0], args.slice(1), flags);
   if (cmd === 'analyze') return analyzeCommand(args, flags);
   if (cmd === 'audit') return auditCommand(flags);
+  if (cmd === 'vocab') {
+    const [sub, concept, iri] = args;
+    if (sub !== 'iri' || !concept || !iri) fail('usage: hub vocab iri <concept key> <iri | none> [--ontology <key | none>]');
+    const body = { external_iri: iri === 'none' ? null : iri };
+    if (flags.ontology && flags.ontology !== true) body.defined_in = flags.ontology === 'none' ? null : flags.ontology;
+    return show(await call('PATCH', '/api/vocab?key=' + enc(concept), body));
+  }
   if (cmd === 'search') {
     const r = await call('POST', '/api/query', { cypher: "MATCH (p:Paper) WHERE toLower(p.title + ' ' + coalesce(p.venue,'') + ' ' + reduce(s='', a IN p.authors | s + ' ' + a)) CONTAINS $q RETURN p.key AS key, p.year AS year, p.title AS title ORDER BY year DESC LIMIT 50", params: { q: args.join(' ').toLowerCase() } });
     return printResult(r, flags);

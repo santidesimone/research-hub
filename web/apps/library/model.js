@@ -18,6 +18,21 @@ export function routePath({ section, key = null, edit = false }, collections) {
   const s = qs.toString();
   return `/library/${coll ? coll.slug : section}${s ? '?' + s : ''}`;
 }
+// The Collections bar: the main collections in a row, the rest (ui_more) under "More". Collections sharing a ui_group
+// (research questions and hypotheses) are one entry that opens the first and switches between them.
+export function barEntries(collections) {
+  const main = collections.filter((c) => !c.ui_more).map((c) => ({ id: c.name, label: c.plural, members: [c.name] }));
+  const more = [];
+  for (const c of collections.filter((x) => x.ui_more)) {
+    const g = c.ui_group;
+    const same = g && more.find((e) => e.group === g.id);
+    if (same) same.members.push(c.name);
+    else more.push({ id: c.name, label: g ? g.label : c.plural, members: [c.name], group: g ? g.id : null });
+  }
+  return { main, more };
+}
+export const entryOf = (entries, section) => [...entries.main, ...entries.more].find((e) => e.members.includes(section)) || null;
+
 // Which collection a node belongs to, from its labels.
 export const collectionOf = (labels, collections) => (collections.find((c) => (labels || []).includes(c.label)) || null);
 
@@ -107,6 +122,13 @@ function canon(spec, v) {
   const sort = (x) => (Array.isArray(x) ? x.map(sort) : x && typeof x === 'object' ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, sort(x[k])])) : x);
   return sort(v);
 }
+// What a create sends: filled fields only, and never a hub-managed field (by Sys) still at its default. A hypothesis's
+// status left at "untested" must stay the hub's to derive, not become the owner's override.
+export function createFields(specs, values) {
+  return Object.fromEntries(Object.entries(values).filter(([f, v]) => v !== null
+    && !(specs[f] && specs[f].by.includes('Sys') && specs[f].default != null && v === specs[f].default)));
+}
+
 // Only the fields the owner actually changed, so a PATCH marks just those as reviewed.
 export function changedFields(specs, before, after) {
   const out = {};

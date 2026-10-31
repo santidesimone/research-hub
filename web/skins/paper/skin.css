@@ -19,6 +19,7 @@
   --danger: #b3402f; --danger-soft: #f8e3df;
   --node-paper: #c96442; --node-method: #b8893b; --node-note: #5f8f6b; --node-project: #8a6bb5; --node-person: #9b9788; --node-concept: #4f8aa8;
   --node-use_case: #7a6fb0; --node-case_study: #b05a5a; --node-topic: #3f8f9a; --node-domain: #4d7a49; --node-venue: #a19c8c; --node-organisation: #8c7a62; --node-dataset: #7f9a3a;
+  --node-framework: #3d7d74; --node-research_question: #4a6fa5; --node-hypothesis: #8a5a9e; --node-ontology: #a8731a;
   --edge: #d6d2c3; --edge-hi: #c96442; --graph-bg: #fdfcf9;
   --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-heading: "Source Serif 4", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
@@ -47,6 +48,7 @@
   --danger: #e57f6e; --danger-soft: #45282a;
   --node-paper: #d97757; --node-method: #d6a94f; --node-note: #7fb08a; --node-project: #a98fd1; --node-person: #8c8a80; --node-concept: #6fa8c4;
   --node-use_case: #a69be0; --node-case_study: #e08a8a; --node-topic: #6cc0cb; --node-domain: #8fbf86; --node-venue: #9a968a; --node-organisation: #c2ab8c; --node-dataset: #b4cf6b;
+  --node-framework: #6fb5aa; --node-research_question: #8fb0e0; --node-hypothesis: #c39bd6; --node-ontology: #e0b45f;
   --edge: #4b4a45; --edge-hi: #d97757; --graph-bg: #232321;
   --shadow-s: 0 1px 2px rgba(0,0,0,.3);
   --shadow-m: 0 8px 28px rgba(0,0,0,.45);

@@ -4,10 +4,10 @@
 // Addresses: /library/<collection>?key=..[&edit=1], /library/graph, /library/audit, /library/all.
 // Anonymous visitors see the public preview (a static export, whitelisted fields only); the owner sees the database.
 import { h, icon, api, state as S, BASE, cssVar, loadScript, toast } from '../../shell/ui.js';
-import { parseRoute, routePath, collectionOf } from './model.js';
+import { parseRoute, routePath, collectionOf, barEntries, entryOf } from './model.js';
 import { CollectionView, itemDetail } from './collections.js';
 import { AuditView } from './audit.js';
-import { itemForm } from './forms.js';
+import { itemForm, linkForm } from './forms.js';
 import { renderFields, renderLinks } from './view.js';
 
 const STATUS_CLASS = { canonical: 'ok', reading: 'info', 'critique-target': 'warn', active: 'accent' };
@@ -152,11 +152,18 @@ class Library {
   /* ---------------------------------------------------------------- toolbar */
   renderToolbar() {
     const seg = (items, cur, on, cls = '') => h('div', { class: 'seg ' + cls }, items.map(([id, label, ic]) => h('button', { class: cur === id ? 'on' : '', 'data-section': id, onclick: () => on(id) }, ic && icon(ic, 14), label)));
-    const sections = [['all', 'All'], ...this.collections.map((c) => [c.name, c.plural]), ['graph', 'Graph', 'graph'], S.owner && this.mode === 'private' && ['audit', 'Audit']].filter(Boolean);
-    this.toolbarEl.replaceChildren(
-      seg(sections, this.section, (id) => this.goSection(id), 'collbar'),
+    const entries = barEntries(this.collections);
+    const current = entryOf(entries, this.section);
+    const sections = [['all', 'All'], ...entries.main.map((e) => [e.id, e.label]), ['graph', 'Graph', 'graph'], S.owner && this.mode === 'private' && ['audit', 'Audit']].filter(Boolean);
+    const inMore = current && entries.more.includes(current);
+    // "More": a native disclosure, so it opens with the keyboard too; choosing an entry navigates and redraws it closed
+    const more = entries.more.length ? h('details', { class: 'moremenu' + (inMore ? ' on' : '') },
+      h('summary', { 'data-section': 'more' }, inMore ? current.label : 'More', ' ▾'),
+      h('div', { class: 'menu-list' }, entries.more.map((e) => h('button', { type: 'button', class: e === current ? 'on' : '', 'data-section': e.id, onclick: () => this.goSection(e.id) }, e.label)))) : null;
+    this.toolbarEl.replaceChildren(...[
+      seg(sections, inMore ? 'more' : this.section, (id) => this.goSection(id), 'collbar'), more,
       h('div', { class: 'spacer' }),
-      S.owner && seg([['private', 'Private'], ['public', 'Public preview']], this.mode, (m) => m !== this.mode && this.setMode(m)));
+      S.owner && seg([['private', 'Private'], ['public', 'Public preview']], this.mode, (m) => m !== this.mode && this.setMode(m))].filter(Boolean));
     this.bannerEl.classList.toggle('hidden', this.mode !== 'public');
   }
 
@@ -402,7 +409,9 @@ class Library {
         renderFields(item, coll, { onRef: (k) => this.openKey(k), showEmpty: true, skip: ['title'] }),
         renderLinks(item, { onOpen: (k) => this.openKey(k), onRemove: async (l) => {
           try { await api(`/api/items/${keyQuery(key)}/links?rel=${encodeURIComponent(l.rel)}&target=${keyQuery(l.key)}`, { method: 'DELETE' }); toast('Link removed'); reload(); } catch (e) { toast(e.message, 'error'); }
-        } }));
+        } }),
+        // a paper's own links: the frameworks framing it, the hypotheses it tests (with the result), what it builds on
+        h('details', { class: 'meta' }, h('summary', null, 'Add a link'), linkForm(coll, item, this.formCtx(), { onDone: () => { toast('Linked'); reload(); } })));
     } catch (e) { el.replaceChildren(h('div', { class: 'alert' }, e.message)); }
   }
   // Google Drive previews embed. Other sites often forbid embedding, so they get an "open" card and an optional try.

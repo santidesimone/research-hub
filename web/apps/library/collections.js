@@ -1,7 +1,7 @@
 // Generic list + detail for a collection (methods, use cases, case studies), built from the schema: list columns,
 // filters, sorting, grouped fields with provenance, typed links, and create / edit / delete. Owner, private library.
 import { h, icon, api, toast } from '../../shell/ui.js';
-import { isEmpty, noun } from './model.js';
+import { isEmpty, noun, barEntries, entryOf } from './model.js';
 import { renderFields, renderLinks, renderValue } from './view.js';
 import { itemForm, linkForm, picker, vocabSearch } from './forms.js';
 
@@ -24,8 +24,14 @@ export class CollectionView {
     this.countEl = h('span', { class: 'faint small', style: { marginLeft: 'auto' } });
     this.listEl = h('ul', { class: 'list' });
     this.detailEl = h('div', { class: 'detail' });
+    // collections grouped in the bar (questions and hypotheses) switch between each other here
+    const group = entryOf(barEntries(this.lib.collections), c.name);
+    const groupSwitch = group && group.members.length > 1 ? h('div', { class: 'seg groupswitch' }, group.members.map((m) => {
+      const mc = this.lib.collections.find((x) => x.name === m);
+      return h('button', { type: 'button', class: m === c.name ? 'on' : '', 'data-section': m, onclick: () => m !== c.name && this.lib.goSection(m) }, mc.plural);
+    })) : null;
     bodyEl.append(h('div', { class: 'split' },
-      h('div', { class: 'pane' }, h('div', { class: 'pane-head' },
+      h('div', { class: 'pane' }, h('div', { class: 'pane-head' }, groupSwitch,
         h('div', { class: 'row-flex' }, h('div', { class: 'searchbox grow' }, icon('search', 16), this.searchEl),
           h('button', { class: 'btn btn-primary btn-sm', onclick: () => this.lib.goSection(c.name, { key: null, edit: true }) }, '+ New')),
         this.filterEl, h('div', { class: 'row-flex' }, sort, this.countEl)), this.listEl),

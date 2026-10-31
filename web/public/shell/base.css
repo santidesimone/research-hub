@@ -211,6 +211,21 @@ pre.json { background: var(--bg-sunken); border: 1px solid var(--border); border
 .auditlist li { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); }
 .auditlist a { cursor: pointer; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
 
+/* collections under "More", grouped collections, results of tests */
+.moremenu { position: relative; }
+.moremenu summary { list-style: none; cursor: pointer; padding: 8px 12px; border-radius: var(--radius-s); background: var(--surface-2); font-size: 13px; font-weight: 500; color: var(--text-muted); white-space: nowrap; }
+.moremenu summary::-webkit-details-marker { display: none; }
+.moremenu.on summary { background: var(--surface); color: var(--text); box-shadow: var(--shadow-s); }
+.moremenu .menu-list { position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; min-width: 220px; display: grid; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-s); box-shadow: var(--shadow-m); }
+.moremenu .menu-list button { text-align: left; border: 0; background: transparent; padding: 8px 10px; border-radius: var(--radius-s); cursor: pointer; font-size: 13.5px; }
+.moremenu .menu-list button:hover, .moremenu .menu-list button.on { background: var(--surface-2); }
+.groupswitch { width: max-content; max-width: 100%; }
+.badge.res-supported { background: var(--ok-soft); color: var(--ok); }
+.badge.res-refuted { background: var(--danger-soft); color: var(--danger); }
+.badge.res-mixed { background: var(--warn-soft); color: var(--warn); }
+.badge.res-inconclusive { background: var(--surface-2); color: var(--text-muted); }
+.kv.results td { vertical-align: middle; }
+
 @media (max-width: 800px) {
   .toolbar { gap: 8px; }
   .toolbar .collbar { flex: 1 1 100%; }   /* the collections bar gets its own row and scrolls sideways */

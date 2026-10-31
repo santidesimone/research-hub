@@ -11,6 +11,18 @@ const TIERS = ['core', 'standard', 'deep'];
 const BY = ['S', 'C', 'Y', 'Sys'];
 const MATCH_MODES = ['term', 'name', 'person']; // how web/core/vocab.js normalises names of that entity
 const SCALARS = ['text', 'longtext', 'markdown', 'integer', 'date', 'datetime', 'url', 'boolean']; // allowed inside objects
+// An object part is a type name ("text") or a small spec ({type: "enum", enum: [...]}, {type: "url", https: true}).
+const partSpec = (t) => (typeof t === 'string' ? { type: t } : t || {});
+const HTTPS_ONLY = 'must be an https link';
+
+// Which labels a relation may point to from a given label. `pairs` narrows from x to when one relation joins
+// different kinds of things (PART_OF: question to project, ontology to ontology); otherwise any from to any to.
+function relTargetsIn(s, rel, fromLabel) {
+  const r = (s.relation_types || {})[rel];
+  if (!r) return [];
+  if (r.pairs) return r.pairs[fromLabel] || [];
+  return (r.from || []).includes(fromLabel) ? r.to || [] : [];
+}
 
 // -> list of problems (empty when the schema is usable)
 function check(s) {
@@ -31,7 +43,16 @@ function check(s) {
       if (f.type === 'enum' && !(Array.isArray(f.enum) && f.enum.length)) out.push(`${at}: enum needs values`);
       if (f.type === 'ref' && !labels.has(f.ref)) out.push(`${at}: ref ${f.ref} is not an entity or type label`);
       if (f.type === 'ref' && f.rel && !relTypes[f.rel]) out.push(`${at}: rel ${f.rel} is not in relation_types`);
-      if (f.type === 'object') for (const [k, t] of Object.entries(f.props || {})) if (!SCALARS.includes(t)) out.push(`${at}.${k}: unknown type ${t}`);
+      if (f.type === 'object') {
+        for (const [k, t] of Object.entries(f.props || {})) {
+          const ps = partSpec(t);
+          if (![...SCALARS, 'enum'].includes(ps.type)) out.push(`${at}.${k}: unknown type ${ps.type}`);
+          if (ps.type === 'enum' && !(Array.isArray(ps.enum) && ps.enum.length)) out.push(`${at}.${k}: enum needs values`);
+          if (ps.https && ps.type !== 'url') out.push(`${at}.${k}: https applies to url parts only`);
+        }
+      }
+      if (f.https && f.type !== 'url') out.push(`${at}: https applies to url fields only`);
+      if (f.normalize != null && (f.normalize !== 'iri' || f.type !== 'text')) out.push(`${at}: normalize "iri" applies to text fields only`);
       if (f.default != null && badValue(f.type, f.default, f)) out.push(`${at}: default ${JSON.stringify(f.default)} is not a valid value`);
       if (!TIERS.includes(f.tier)) out.push(`${at}: tier must be one of ${TIERS.join(', ')}`);
       if (!Array.isArray(f.by) || !f.by.length || f.by.some((b) => !BY.includes(b))) out.push(`${at}: by must list ${BY.join(', ')}`);
@@ -46,6 +67,9 @@ function check(s) {
     if (t.key_prefix != null && !/^[a-z]+:$/.test(t.key_prefix)) out.push(`${at}: key_prefix looks like "word:"`);
     if (t.managed === 'markdown' && !t.folder) out.push(`${at}: Markdown-managed types need a folder`);
     if (t.collection && !t.fields) out.push(`${at}: collections need fields`);
+    if (t.ui_more != null && typeof t.ui_more !== 'boolean') out.push(`${at}: ui_more must be true or false`);
+    if (t.ui_group != null && !(t.ui_group && /^[a-z_]+$/.test(t.ui_group.id || '') && typeof t.ui_group.label === 'string')) out.push(`${at}: ui_group needs an id and a label`);
+    if (t.title_from != null && !['text', 'longtext'].includes(((t.fields || {})[t.title_from] || {}).type)) out.push(`${at}: title_from must name a text field of this type`);
     checkFields(at + '.fields', t.fields);
     const known = new Set([...Object.keys(s.common_fields || {}), ...Object.keys(t.fields || {})]);
     if (t.collection) {
@@ -61,8 +85,7 @@ function check(s) {
       const id = `${spec.rel}->${spec.ref}`;
       if (seenRefs.has(id)) out.push(`${at}: ${seenRefs.get(id)} and ${f} both link ${id}`);
       seenRefs.set(id, f);
-      const r = relTypes[spec.rel];
-      if (r && t.collection && (!(r.from || []).includes(t.label) || !(r.to || []).includes(spec.ref))) out.push(`${at}.${f}: relation_types.${spec.rel} does not allow ${t.label} -> ${spec.ref}`);
+      if (relTypes[spec.rel] && t.collection && !relTargetsIn(s, spec.rel, t.label).includes(spec.ref)) out.push(`${at}.${f}: relation_types.${spec.rel} does not allow ${t.label} -> ${spec.ref}`);
     }
     for (const p of t.public_props || []) if (!global.has(p)) out.push(`${at}.public_props: ${p} is not in the global public_props whitelist`);
   }
@@ -75,6 +98,15 @@ function check(s) {
   for (const [rel, r] of Object.entries(relTypes)) {
     if (!/^[A-Z][A-Z_]*$/.test(rel)) out.push(`relation_types.${rel}: use UPPER_SNAKE_CASE`);
     for (const l of [...(r.from || []), ...(r.to || [])]) if (!labels.has(l)) out.push(`relation_types.${rel}: unknown label ${l}`);
+    for (const [from, tos] of Object.entries(r.pairs || {})) {
+      if (!(r.from || []).includes(from)) out.push(`relation_types.${rel}.pairs: ${from} is not in from`);
+      for (const l of tos) if (!(r.to || []).includes(l)) out.push(`relation_types.${rel}.pairs.${from}: ${l} is not in to`);
+    }
+    for (const [k, ps] of Object.entries(r.props || {})) {
+      if (!/^[a-z][a-z0-9_]*$/.test(k)) out.push(`relation_types.${rel}.props: ${k} is not lower_snake_case`);
+      if (!['text', 'enum', 'integer'].includes(ps.type)) out.push(`relation_types.${rel}.props.${k}: type must be text, enum or integer`);
+      if (ps.type === 'enum' && !(Array.isArray(ps.enum) && ps.enum.length)) out.push(`relation_types.${rel}.props.${k}: enum needs values`);
+    }
   }
   return out;
 }
@@ -104,6 +136,11 @@ function safeRel(rel) {
   if (!relationTypes.has(rel)) throw new Error(`relationship not in schema: ${rel}`);
   return rel;
 }
+const relTargets = (rel, fromLabel) => relTargetsIn(schema, rel, fromLabel);
+const relAllows = (rel, fromLabel, toLabels) => relTargets(rel, fromLabel).some((l) => toLabels.includes(l));
+// The relations an item of this label can start, with where they may point and their own properties.
+const relationsFrom = (label) => Object.entries(schema.relation_types).filter(([rel]) => relTargets(rel, label).length)
+  .map(([rel, r]) => ({ rel, to: relTargets(rel, label), interpretive: Boolean(r.interpretive), ...(r.props ? { props: r.props } : {}) }));
 
 // Every field of a type: the common ones (collections only) plus its own.
 function fieldsOf(typeName) {
@@ -141,14 +178,17 @@ function badValue(type, v, f = {}) {
     case 'boolean': return typeof v === 'boolean' ? null : 'expected true or false';
     case 'date': return typeof v === 'string' && DATE.test(v) ? null : 'expected a date (YYYY, YYYY-MM or YYYY-MM-DD)';
     case 'datetime': return typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? null : 'expected a date and time';
-    case 'url': return typeof v === 'string' && /^https?:\/\/\S+$/i.test(v) ? null : 'expected an http(s) link';
+    case 'url':
+      if (!(typeof v === 'string' && /^https?:\/\/\S+$/i.test(v))) return 'expected an http(s) link';
+      return f.https && !/^https:\/\//i.test(v) ? HTTPS_ONLY : null;
     case 'enum': return f.enum.includes(v) ? null : `expected one of ${f.enum.join(', ')}`;
     case 'ref': return typeof v === 'string' || (v && typeof v === 'object' && typeof v.name === 'string') ? null : 'expected a name or key';
     case 'object': {
       if (!v || typeof v !== 'object' || Array.isArray(v)) return 'expected an object';
       for (const [k, x] of Object.entries(v)) {
         if (!f.props || !f.props[k]) return `unknown part "${k}" (expected ${Object.keys(f.props || {}).join(', ')})`;
-        if (x != null && badValue(f.props[k], x)) return `${k}: ${badValue(f.props[k], x)}`;
+        const ps = partSpec(f.props[k]);
+        if (x != null && badValue(ps.type, x, ps)) return `${k}: ${badValue(ps.type, x, ps)}`;
       }
       return null;
     }
@@ -180,7 +220,8 @@ function validate(typeName, input = {}, { partial = false } = {}) {
     if (f.list && !Array.isArray(v)) { warnings.push(`${name}: expected a list`); continue; }
     for (const x of f.list ? v : [v]) {
       const bad = badValue(f.type, x, f);
-      if (bad) { warnings.push(`${name}: ${bad}`); break; }
+      // a link that must be https is refused; any other problem is a warning and the value is kept as sent
+      if (bad) { (bad.endsWith(HTTPS_ONLY) ? errors : warnings).push(`${name}: ${bad}`); break; }
     }
   }
   const legacy = new Set(t.props || []);
@@ -189,7 +230,7 @@ function validate(typeName, input = {}, { partial = false } = {}) {
   return { errors, warnings, unknown };
 }
 
-const FIELD_KEYS = ['type', 'enum', 'list', 'ref', 'rel', 'props', 'min', 'max', 'tier', 'by', 'label', 'help', 'required', 'default'];
+const FIELD_KEYS = ['type', 'enum', 'list', 'ref', 'rel', 'props', 'min', 'max', 'tier', 'by', 'label', 'help', 'required', 'default', 'https', 'normalize'];
 const slugOf = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
 // What the UI needs: labels, colours and which ones are drawn large; and for the Library, each collection's fields,
@@ -202,9 +243,10 @@ function publicView() {
   const collections = Object.entries(schema.types).filter(([, t]) => t.collection).map(([name, t]) => ({
     name, label: t.label, plural: t.label_plural || t.label, slug: slugOf(t.label_plural || t.label), schema_version: t.schema_version, managed: t.managed,
     list_columns: t.list_columns || [], filters: t.filters || [], detail_groups: t.detail_groups || [],
+    ui_more: Boolean(t.ui_more), ui_group: t.ui_group || null, title_from: t.title_from || null,
     fields: Object.fromEntries(Object.entries(fieldsOf(name)).filter(([, f]) => !(f.by.length === 1 && f.by[0] === 'Sys'))
       .map(([f, spec]) => [f, Object.fromEntries(FIELD_KEYS.filter((k) => spec[k] !== undefined).map((k) => [k, spec[k]]))])),
-    relations: Object.entries(schema.relation_types).filter(([, r]) => r.from.includes(t.label)).map(([rel, r]) => ({ rel, to: r.to, interpretive: Boolean(r.interpretive) })),
+    relations: relationsFrom(t.label),
   }));
   const entities = Object.entries(schema.entities).map(([label, e]) => ({ label, key_prefix: e.key_prefix }));
   return { version: schema.version, labels, collections, entities };
@@ -212,5 +254,5 @@ function publicView() {
 
 module.exports = {
   schema, check, load, safeLabel, safeRel, entityLabels, typeLabels, publicEntityLabels, orphanLabels, relationTypes,
-  fieldsOf, keyPrefix, managedBy, publicProps, validate, publicView,
+  fieldsOf, keyPrefix, managedBy, publicProps, validate, publicView, relTargets, relAllows, relationsFrom, partSpec,
 };

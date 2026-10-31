@@ -12,7 +12,8 @@
 // (claude, source) only fills empty fields it is allowed to fill (the field's `by`), never touches a field the owner wrote
 // or reviewed (a value with no provenance counts as the owner's), and `force` replaces only values that same writer wrote.
 const neo4j = require('neo4j-driver');
-const { schema, fieldsOf, keyPrefix, validate, safeLabel, safeRel, entityLabels, relationTypes } = require('./schema');
+const { schema, fieldsOf, keyPrefix, validate, safeLabel, safeRel, entityLabels, relationTypes, relTargets } = require('./schema');
+const hypotheses = require('./hypotheses');
 const { HttpError } = require('./errors');
 const db = require('./db');
 const types = require('./types');
@@ -48,7 +49,34 @@ function partValues(f, spec, v) {
     return [`${f}__${k}`, x == null || typeof x === 'object' ? null : x];
   }));
 }
-const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80).replace(/-+$/, '');
+
+// Questions and hypotheses are known by their text: their title is derived from it when none is given.
+function deriveTitle(c, fields) {
+  const from = typeDef(c).title_from;
+  if (!from || (typeof fields.title === 'string' && fields.title.trim()) || typeof fields[from] !== 'string' || !fields[from].trim()) return fields;
+  const t = fields[from].replace(/\s+/g, ' ').trim();
+  return { ...fields, title: t.length <= 120 ? t : t.slice(0, 119).replace(/\s+\S*$/, '') + '…' };
+}
+// An IRI as written in many ways -> one form: no angle brackets or spaces; http(s) IRIs get URL's lower-case scheme and host.
+function normalizeIri(v) {
+  if (typeof v !== 'string') return v;
+  const t = v.trim().replace(/^<|>$/g, '').trim();
+  if (!/^https?:\/\//i.test(t)) return t; // urn:, tag: ... are kept exactly as written
+  try { const u = new URL(t); return `${u.protocol}//${u.host}${u.pathname}${u.search}${u.hash}`; } catch { return t; }
+}
+const normalizeFields = (c, input) => {
+  const out = { ...input };
+  for (const [f, spec] of Object.entries(fieldsOf(c))) if (spec.normalize === 'iri' && out[f] != null) out[f] = normalizeIri(out[f]);
+  return out;
+};
+// Another item named by its title (or acronym, or an alias): exactly one match, or none. Items are never created here.
+async function findByTitle(label, name) {
+  return (await db.run(
+    `MATCH (n:${safeLabel(label)}) WHERE toLower(trim(n.title)) = toLower(trim($name)) OR toLower(trim(coalesce(n.acronym, ''))) = toLower(trim($name))
+       OR any(a IN coalesce(n.aliases, []) WHERE toLower(trim(a)) = toLower(trim($name)))
+     RETURN n.key AS key LIMIT 2`, { name: String(name) })).map((r) => r.key);
+}
 const typeDef = (c) => schema.types[c];
 const codec = (c, f) => (types.get(c).codec || {})[f];
 
@@ -110,7 +138,7 @@ function toItem(row) {
   const known = new Set([...Object.keys(all), ...Object.keys(all).map((f) => `${f}_json`), ...Object.entries(all).flatMap(([f, spec]) => partNames(f, spec)), ...(typeDef(c).props || [])]);
   const p = row.props;
   const extra = Object.fromEntries(Object.entries(p).filter(([k]) => !known.has(k) && !SYSTEM.has(k)));
-  const link = (e) => ({ rel: e.rel, key: e.key, name: e.name, labels: e.labels.filter((l) => l !== 'Artifact'), ...pick(e.r, ['field', 'evidence', 'location', 'confidence', 'by', 'at', 'model', 'status', 'source']) });
+  const link = (e) => ({ rel: e.rel, key: e.key, name: e.name, labels: e.labels.filter((l) => l !== 'Artifact'), ...pick(e.r, ['field', 'evidence', 'location', 'confidence', 'by', 'at', 'model', 'status', 'source', 'result', 'external_iri']) });
   return {
     key: p.key, collection: c, record_status: p.record_status || null, schema_version: p.schema_version ?? null, managed: p.managed || null,
     created_at: p.created_at || null, updated_at: p.updated_at || null,
@@ -147,8 +175,12 @@ async function resolveRefs(spec, value, by, model) {
       if (typeof name !== 'string' || !name.trim()) { warnings.push(`${spec.ref}: expected a name`); continue; }
       const r = await vocab.resolve(spec.ref, name, { by: by === 'owner' ? 'owner' : by, model });
       out.push({ key: r.key });
-    } else {
+    } else if (key || (typeof name === 'string' && /^[a-z_]+:\S/.test(name))) {
       out.push({ key: key || name, check: true }); // another item: by key
+    } else {
+      const found = typeof name === 'string' && name.trim() ? await findByTitle(spec.ref, name) : [];
+      if (found.length === 1) out.push({ key: found[0], check: true });
+      else warnings.push(`${spec.ref} "${name}": ${found.length ? 'more than one match; pass its key' : 'not found (items are linked, never created, from a name)'}`);
     }
   }
   return { targets: out, warnings };
@@ -176,18 +208,19 @@ const rowOf = (rec) => ({ labels: rec.get('labels'), props: db.plain(rec.get('pr
 
 // write(key, input, { by, model, confidence, force, create, provenance }) -> { key, created, filled, skipped, warnings }
 // create: { collection } makes the node first (409 if the key exists). provenance: extra entries to record as given.
-async function write(key, input, opts = {}) {
+async function write(key, rawInput, opts = {}) {
   const by = opts.by || 'owner';
   if (!BY_CODE[by]) throw new HttpError(400, `by must be one of ${Object.keys(BY_CODE).join(', ')}`);
   // confidence: one level for every field, or {field: level}
   const confs = opts.confidence == null ? [] : typeof opts.confidence === 'object' ? Object.values(opts.confidence) : [opts.confidence];
   if (confs.some((x) => !CONFIDENCE.includes(x))) throw new HttpError(400, `confidence must be one of ${CONFIDENCE.join(', ')}`);
   const confidenceOf = (f) => (opts.confidence && typeof opts.confidence === 'object' ? opts.confidence[f] : opts.confidence) || null;
-  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'fields must be an object');
+  if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) throw new HttpError(400, 'fields must be an object');
   const pre = opts.create ? null : (await db.run(READ, { key }))[0];
   if (!opts.create && !pre) throw new HttpError(404, 'No such item');
   const c = opts.create ? collectionCheck(opts.create.collection) : collectionOfLabels(pre.labels);
   if (!c) throw new HttpError(400, `${key} is not a collection item`);
+  const input = normalizeFields(c, rawInput);
   const locked = opts.create || by !== 'owner' ? [] : (types.get(c).locked || []).filter((f) => f in input); // sources still fill them
   if (locked.length) throw new HttpError(400, `${locked.join(', ')} cannot be edited on a ${c}`);
   const fields = specs(c);
@@ -247,6 +280,13 @@ async function write(key, input, opts = {}) {
     if (unknown.length > MAX_UNKNOWN) warnings.push(`only the first ${MAX_UNKNOWN} unknown fields were kept`);
     if (unknown.length) warnings.push(`not in the ${c} schema (kept as is): ${unknown.join(', ')}`);
     Object.assign(prov, opts.provenance || {});
+    if (opts.create) { // schema defaults for what was not given (a hypothesis starts untested, an item's origin is own)
+      for (const [f, spec] of Object.entries(fieldsOf(c))) {
+        if (spec.default != null && kindOf(spec) === 'prop' && !(f in input) && !['visibility', 'record_status'].includes(f)) sets[f] = spec.default;
+      }
+    }
+    // values the hub sets itself (an analysis marks the questions it extracts origin: extracted)
+    for (const [f, v] of Object.entries(opts.system || {})) if (fieldsOf(c)[f] && fieldsOf(c)[f].by.includes('Sys')) sets[f] = v;
     sets.record_status = needsReview(prov) ? 'auto' : 'reviewed';
 
     for (const [f, spec, targets] of edgeWrites) {
@@ -283,11 +323,12 @@ async function create(body) {
   const fields = body.fields;
   if (!fields || typeof fields !== 'object' || Array.isArray(fields)) throw new HttpError(400, 'fields must be an object');
   if (c === 'paper') return createPaper(fields, body);
-  const { errors } = validate(c, fields);
+  const withTitle = deriveTitle(c, fields);
+  const { errors } = validate(c, withTitle);
   if (errors.length) throw new HttpError(400, errors.join('; '));
-  const slug = slugify(body.slug || fields.title);
+  const slug = slugify(body.slug || withTitle.title);
   if (!slug) throw new HttpError(400, 'could not derive a key from the title');
-  return write(keyPrefix(c) + slug, fields, { by: 'owner', create: { collection: c } });
+  return write(keyPrefix(c) + slug, withTitle, { by: 'owner', create: { collection: c } });
 }
 
 // Papers go through the paper writer (DOI lookup, authors as Person nodes, file link); the rest through write().
@@ -339,6 +380,20 @@ async function targetKey(target) {
 }
 
 // body: { rel, target, evidence?, location?, confidence? }
+// A relation's own properties (TESTS has `result`): from the request, checked against relation_types.<rel>.props.
+function relationProps(rel, body) {
+  const props = {};
+  for (const [k, ps] of Object.entries(schema.relation_types[rel].props || {})) {
+    const v = body[k];
+    if (v == null || v === '') { if (ps.required) return { error: `${rel} needs ${k}${ps.enum ? ` (${ps.enum.join(', ')})` : ''}` }; continue; }
+    if (ps.type === 'enum' && !ps.enum.includes(v)) return { error: `${k} must be one of ${ps.enum.join(', ')}` };
+    if (ps.type === 'text' && (typeof v !== 'string' || v.length > 500)) return { error: `${k} must be text of at most 500 characters` };
+    if (ps.type === 'integer' && !Number.isInteger(v)) return { error: `${k} must be a whole number` };
+    props[k] = v;
+  }
+  return { props };
+}
+
 async function link(key, body = {}) {
   const rel = relName(body.rel);
   const spec = schema.relation_types[rel];
@@ -351,14 +406,18 @@ async function link(key, body = {}) {
   const [t] = await db.run('MATCH (t {key:$k}) RETURN labels(t) AS labels', { k: tkey });
   if (!t) throw new HttpError(404, `Target ${tkey} not found`);
   const fromLabel = typeDef(item.collection).label;
-  if (!spec.from.includes(fromLabel) || !t.labels.some((l) => spec.to.includes(l))) {
-    throw new HttpError(400, `${rel} goes from ${spec.from.join('/')} to ${spec.to.join('/')}, not ${fromLabel} to ${t.labels.filter((l) => l !== 'Artifact').join('/')}`);
+  const targets = relTargets(rel, fromLabel);
+  if (!targets.length || !t.labels.some((l) => targets.includes(l))) {
+    throw new HttpError(400, `${rel} goes from ${spec.from.join('/')} to ${(targets.length ? targets : spec.to).join('/')}, not ${fromLabel} to ${t.labels.filter((l) => l !== 'Artifact').join('/')}`);
   }
-  const props = { evidence: body.evidence ?? null, location: body.location ?? null, confidence: body.confidence ?? null, by: 'owner', at: new Date().toISOString(), status: 'reviewed', source: 'items' };
+  const own = relationProps(rel, body);
+  if (own.error) throw new HttpError(400, own.error);
+  const props = { evidence: body.evidence ?? null, location: body.location ?? null, confidence: body.confidence ?? null, ...own.props, by: 'owner', at: new Date().toISOString(), status: 'reviewed', source: 'items' };
   const [row] = await db.writeTx(async (tx) => (await tx.run(
     `MATCH (n:Artifact {key:$key}), (t {key:$tkey}) OPTIONAL MATCH (n)-[old:${safeRel(rel)}]->(t)
      WITH n, t, old IS NULL AS fresh MERGE (n)-[r:${safeRel(rel)}]->(t) SET r += $props RETURN fresh`, { key, tkey, props })).records.map((r) => ({ fresh: r.get('fresh') })));
   await hooks.emit('afterWrite', { key, type: item.collection, input: {}, created: false });
+  if (rel === 'TESTS') await hypotheses.recompute([tkey]);
   return { key, rel, target: tkey, created: Boolean(row && row.fresh) };
 }
 
@@ -371,6 +430,7 @@ async function unlink(key, { rel, target } = {}) {
     { key, target: String(target) })).records.map((x) => ({ n: db.plain(x.get('n')) })));
   if (!row || !row.n) throw new HttpError(404, 'No such link');
   await hooks.emit('afterWrite', { key, type: null, input: {}, created: false });
+  if (r === 'TESTS') await hypotheses.recompute([String(target)]);
   return { key, rel: r, target: String(target), deleted: row.n };
 }
 
@@ -476,4 +536,4 @@ async function list(query = {}) {
   return { collection: c, items, total, next_cursor: more && last ? encodeCursor([last.s, last.key]) : null };
 }
 
-module.exports = { needsReview, partNames, partValues, COLLECTIONS, READ, get, list, create, update, write, remove, link, unlink, toItem, blocked, reserved, relName, kindOf, isSys, empty, encodeCursor, decodeCursor };
+module.exports = { deriveTitle, normalizeIri, findByTitle, relationProps, slugify, needsReview, partNames, partValues, COLLECTIONS, READ, get, list, create, update, write, remove, link, unlink, toItem, blocked, reserved, relName, kindOf, isSys, empty, encodeCursor, decodeCursor };

@@ -12,7 +12,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | 5 Library UI: Collections, forms, audit | done (2026-10-30) | See "Task 5" below. |
 | 6 CLI, API docs, CI, docs | done (2026-10-30), CI not run yet | See "Task 6" below. |
 | 7 Hardening | done (2026-10-31) | See "Task 7" below. |
-| 8 Frameworks, research questions and hypotheses, ontologies | not started | Addendum: `docs/ADDENDUM_frameworks_questions_ontologies.md`. Ontology `urls` decided (see the brief) |
+| 8 Frameworks, research questions and hypotheses, ontologies | done (2026-10-31) | See "Task 8" below. |
 | 8b File upload beyond PDFs (ontology snapshots) | not started | Addendum: `docs/ADDENDUM_frameworks_questions_ontologies.md` |
 
 ## Task 0. Baseline against real services
@@ -316,3 +316,55 @@ Update at the end of every task. For each: what changed, what was tested for rea
 - The proxy hop count on the real deployment (Cloud Run plus the site rewrite) was not checked. If 2 is wrong for your hosting, every visitor shares one rate-limit bucket (too many hops) or IPs become spoofable again (too few).
 - Rate limits stay per instance and in memory (documented).
 - Nothing pushed; CI has not run (see Task 6).
+
+## Task 8. Framework, Research question, Hypothesis, Ontology types
+
+**Changed**
+- `schema/schema.json`: the four collections and their fields as in the addendum (Ontology `urls` as decided: `{role, url}`, roles docs/spec/download/repository/other, C/Y, Core). Also:
+  - the new relations, with `pairs` for PART_OF, EXTENDS and BUILDS_ON, and `props` for TESTS `result` and DEFINED_IN `external_iri`;
+  - `PUBLISHED_BY` for the publisher link;
+  - layout hints (`title_from`, `ui_more`, `ui_group`);
+  - skin colours for the four types.
+- `web/core/schema.js`:
+  - `relTargets`, `relAllows` and `relationsFrom`: every endpoint check (items API, analysis, MCP, schema loader, UI) now goes through them;
+  - object-part specs, `https` (refused, not warned) and `normalize: "iri"`;
+  - start-up checks for all of the new schema keys.
+- `web/core/hypotheses.js` (new): status from the TESTS results (none: untested; only inconclusive: inconclusive; supported and refuted: mixed), the owner override, and recompute on link changes and on paper deletion (hooks).
+- `web/core/items.js`:
+  - titles from `text` or `statement`, schema defaults on create (`status: untested`, `origin: own`);
+  - hub-set values (`origin: extracted`);
+  - IRI normalisation (URNs kept as written);
+  - links to items by exact title, acronym or alias;
+  - relation properties (TESTS `result` required), and keys capped at 80 characters.
+- `web/core/analysis.js`:
+  - `extract` for papers (frameworks, research questions, tested hypotheses), each matched or created, then linked;
+  - a tested hypothesis needs its result and passage before anything is created;
+  - TESTS links recompute the status.
+- `PATCH /api/vocab` (a concept's `external_iri` and DEFINED_IN), `hub vocab iri`, and `hub item link --result`.
+- MCP: `get_schema` explains `extract` and TESTS results, and `save_analysis` accepts `extract`.
+- Migration `011`: `artifact_text` with `text`, `statement` and `acronym`; an index on `Hypothesis.status`.
+- Library:
+  - "More" menu with Frameworks, Questions and hypotheses (one entry with a switch), and Ontologies and standards;
+  - links grouped by relation with readable headings (a framework lists what it frames, an ontology its modules and users);
+  - TESTS results as a table with a tally;
+  - a link form that asks for the result, and on the paper's Analysis tab;
+  - forms do not require a title that is derived.
+- **Found in the browser and fixed:** a hypothesis created through the form sent its default status as an owner value, which froze the derivation. Hub-managed defaults are no longer sent on create (`createFields`, tested).
+- **Found by the offline tests and fixed:** URNs were rewritten as `urn://...`.
+- Docs: README, openapi (`PATCH /api/vocab`, `extract`, the TESTS result), `schema/CHANGELOG.md`, and decisions in `docs/SCHEMA_DESIGN.md`.
+
+**Tested for real**
+- Offline: the schema checks for every new key; endpoints by pairs; the status derivation table and the owner override; creating all four types (derived titles, defaults, IRI normalisation, publisher as an Organisation, parent by acronym, https refused); TESTS links (result required) giving supported, then mixed, recomputed on unlink and on paper deletion; analysis `extract` (found by alias, created, `origin: extracted`, ASKED_IN direction, TESTS with result, flags, nothing created without a result or passage, ambiguity refused, re-run idempotent); `PATCH /api/vocab` over HTTP; the CLI; the Library bar logic; migration 011. Mutation check: 50/50, plus `createFields`.
+- Integration on a fresh Neo4j 5, 4 of 4 runs:
+  - **The addendum's worked example end to end:** the stablecoin question framed by three frameworks; H1 to H3 derived from them and answering it; two papers testing with opposite results; FIBO and its module; the use case.
+  - **Statuses:** H1 mixed, H2 supported, H3 untested.
+  - **The four competency questions** in plain Cypher return exactly the expected items.
+  - **Full-text search** finds hypotheses by their statement.
+  - **Round trip:** backup, delete and restore are identical, including TESTS results and derived statuses.
+- Browser (Playwright on Chrome, real server, fresh data):
+  - owner 21/21: More menu; a framework page listing what it frames; the questions/hypotheses switch; a hypothesis with its results table, tally and derived "mixed" status; creating a hypothesis whose title comes from its statement; a paper adding a TESTS link with a result through the form, with the hypothesis status following; an ontology with its modules and users;
+  - public and mobile 9/9; the CLI end to end; no console or CSP errors. Screenshots reviewed.
+
+**Not tested / open**
+- Ontology records for FIBO, ISO 20022 and ETHON were not created from their real pages (addendum, open point 1: Claude should read them when creating the records).
+- No CI run yet (nothing pushed from here).

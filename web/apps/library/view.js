@@ -69,16 +69,43 @@ export function renderFields(item, coll, { onRef, showEmpty = false, skip = [] }
   return wrap;
 }
 
-// Links in and out, to anything (items, notes, projects, vocabulary). onRemove(link) is offered for outgoing links.
+// Headings for links, by direction: a framework lists the papers framing on it, a hypothesis the papers testing it,
+// an ontology its modules and users. Other relations read as their name.
+const REL_HEADINGS = {
+  out: { FRAMED_BY: 'Framed by', TESTS: 'Tests', USED_BY: 'Used by', PART_OF: 'Part of', DERIVED_FROM: 'Derived from', ANSWERS: 'Answers',
+    ASKED_IN: 'Asked in', ADDRESSED_BY: 'Addressed by', SUB_QUESTION_OF: 'Sub-question of', COMPETES_WITH: 'Competes with', ALIGNS_WITH: 'Aligns with' },
+  in: { FRAMED_BY: 'Framed by this', TESTS: 'Tested by', USED_BY: 'Uses this', PART_OF: 'Parts', DERIVED_FROM: 'Hypotheses derived from this',
+    ANSWERS: 'Hypotheses answering this', ASKED_IN: 'Questions asked here', ADDRESSED_BY: 'Questions it addresses', SUB_QUESTION_OF: 'Sub-questions',
+    COMPETES_WITH: 'Competing with this', BUILDS_ON: 'Built on by', DEFINED_IN: 'Concepts defined here' },
+};
+const relWords = (rel) => rel.toLowerCase().replace(/_/g, ' ');
+const heading = (dir, rel) => (REL_HEADINGS[dir][rel] || (dir === 'out' ? relWords(rel)[0].toUpperCase() + relWords(rel).slice(1) : `${relWords(rel)} (from)`));
+export const resultBadge = (r) => r && h('span', { class: `badge res res-${r}` }, r);
+
+// Links in and out, to anything (items, notes, projects, vocabulary), grouped by relation. onRemove(link) is offered for
+// outgoing links the owner may remove. Links that carry a result (TESTS) are a small table.
 export function renderLinks(item, { onOpen, onRemove } = {}) {
+  const open = (l) => h('a', { onclick: () => onOpen && onOpen(l.key) }, l.name || l.key);
+  const remove = (l, dir) => (dir === 'out' && onRemove && !l.field ? h('button', { type: 'button', class: 'iconbtn small', 'aria-label': 'Remove link', title: 'Remove link', onclick: () => onRemove(l) }, '×') : null);
+  const who = (l) => (l.by && l.by !== 'owner' ? provBadge({ by: l.by, model: l.model, confidence: l.confidence, status: l.status }) : null);
   const row = (l, dir) => h('li', null,
-    h('span', { class: 'badge outline' }, l.rel.toLowerCase().replace(/_/g, ' ')),
-    h('a', { onclick: () => onOpen && onOpen(l.key) }, l.name || l.key),
-    h('span', { class: 'faint small' }, (l.labels || []).join(', ')),
-    l.by && l.by !== 'owner' && provBadge({ by: l.by, model: l.model, confidence: l.confidence, status: l.status }),
+    open(l), h('span', { class: 'faint small' }, (l.labels || []).join(', ')), who(l),
     l.evidence && h('span', { class: 'evidence', title: [l.evidence, l.location].filter(Boolean).join(' · ') }, '“' + String(l.evidence).slice(0, 80) + (String(l.evidence).length > 80 ? '…' : '') + '”'),
-    dir === 'out' && onRemove && !l.field && h('button', { type: 'button', class: 'iconbtn small', 'aria-label': 'Remove link', title: 'Remove link', onclick: () => onRemove(l) }, '×'));
-  const sec = (title, list, dir) => (list.length ? h('section', { class: 'rel' }, h('div', { class: 'label' }, title), h('ul', null, list.map((l) => row(l, dir)))) : null); // never 0: the DOM would print it
-  const out = item.links.out.filter((l) => !['AUTHORED_BY', 'PUBLISHED_IN'].includes(l.rel) && !l.field);
-  return h('div', null, sec('Links to', out, 'out'), sec('Linked from', item.links.in, 'in'));
+    remove(l, dir));
+  const table = (list, dir) => h('table', { class: 'kv grid results' },
+    h('thead', null, h('tr', null, ['', 'result', 'evidence', 'location', ''].map((x) => h('th', null, x)))),
+    h('tbody', null, list.map((l) => h('tr', { 'data-key': l.key }, h('td', null, open(l), ' ', who(l)), h('td', null, resultBadge(l.result)),
+      h('td', { class: 'evidence' }, l.evidence || ''), h('td', null, l.location || h('span', { class: 'flag' }, 'no location')), h('td', null, remove(l, dir))))));
+  const groups = (list, dir) => {
+    const byRel = new Map();
+    for (const l of list) { if (!byRel.has(l.rel)) byRel.set(l.rel, []); byRel.get(l.rel).push(l); }
+    return [...byRel].map(([rel, ls]) => {
+      const results = ls.filter((l) => l.result).map((l) => l.result);
+      const tally = results.length ? ' (' + [...new Set(results)].map((r) => `${results.filter((x) => x === r).length} ${r}`).join(', ') + ')' : '';
+      return h('section', { class: 'rel', 'data-rel': `${dir}:${rel}` }, h('div', { class: 'label' }, heading(dir, rel) + tally),
+        results.length ? table(ls, dir) : h('ul', null, ls.map((l) => row(l, dir))));
+    });
+  };
+  const out = item.links.out.filter((l) => !['AUTHORED_BY', 'PUBLISHED_IN', 'PUBLISHED_BY'].includes(l.rel) && !l.field);
+  return h('div', { class: 'links' }, ...groups(out, 'out'), ...groups(item.links.in, 'in'));
 }

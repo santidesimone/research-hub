@@ -8,7 +8,7 @@ const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/ser
 const { z } = require('zod');
 const { requireOwner } = require('../../core/auth');
 const { run } = require('../../core/db');
-const { schema, fieldsOf } = require('../../core/schema');
+const { schema, fieldsOf, relationsFrom } = require('../../core/schema');
 const artifacts = require('../../core/artifacts');
 const query = require('../../core/query');
 const links = require('../../core/links');
@@ -25,11 +25,12 @@ const COLLECTIONS = Object.keys(schema.types).filter((t) => schema.types[t].coll
 const ANALYSIS_RULES = [
   'Fill only fields you are confident about. Leave a field empty rather than guess: empty beats wrong.',
   'Every key finding needs a location (page or section). Findings without one are saved but flagged "ungrounded".',
-  'Interpretive paper-to-paper links (builds_on, critiques, contradicts, supports, replicates) need the justifying passage as evidence, or they are not saved.',
+  'Interpretive links (builds_on, critiques, contradicts, supports, replicates, tests) need the justifying passage as evidence, or they are not saved. A TESTS link (paper to hypothesis) also needs its result: supported, refuted, mixed or inconclusive.',
   'Do not send source facts for papers (authors, year, venue, abstract, DOI metadata): the hub fills them from Crossref and OpenAlex.',
   'Pass vocabulary (topics, domains, organisations) as names; the hub matches them to existing nodes. Link other items by key.',
   'Saving fills empty fields only. It never overwrites the owner\'s edits or reviewed values; force replaces only values you wrote earlier.',
 ];
+const PAPER_EXTRACT = 'For a paper, use extract to record what it contains: frameworks it uses ({title or name, framework_kind, ...}), research questions it states ({text, kind}) and hypotheses it tests ({statement, direction, result, evidence, location}). Each is matched to an existing item by its exact title or created, then linked (FRAMED_BY, ASKED_IN, TESTS). A hypothesis status is derived from all papers that tested it.';
 
 // The fields of a collection as Claude needs them: what it may fill, enums, tiers, and what the hub fills itself.
 function schemaFor(collection) {
@@ -41,9 +42,9 @@ function schemaFor(collection) {
     if (!f.by.includes('C')) { if (f.by.includes('S')) sourceOnly.push(name); continue; }
     fields[name] = Object.fromEntries(Object.entries({ type: f.type, list: f.list || undefined, enum: f.enum, ref: f.ref, props: f.props, min: f.min, max: f.max, tier: f.tier, label: f.label, help: f.help }).filter(([, v]) => v !== undefined));
   }
-  const relations = Object.entries(schema.relation_types).filter(([, r]) => r.from.includes(t.label))
-    .map(([rel, r]) => ({ rel, to: r.to, interpretive: Boolean(r.interpretive) }));
-  return { collection, schema_version: t.schema_version, rules: ANALYSIS_RULES, fields, filled_by_the_hub: sourceOnly, relations };
+  const relations = relationsFrom(t.label);
+  return { collection, schema_version: t.schema_version, rules: collection === 'paper' ? [...ANALYSIS_RULES, PAPER_EXTRACT] : ANALYSIS_RULES,
+    fields, filled_by_the_hub: sourceOnly, relations, ...(t.title_from ? { title: `optional: derived from ${t.title_from}` } : {}) };
 }
 
 const text = (obj) => ({ content: [{ type: 'text', text: typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2).slice(0, 100000) }] });
@@ -60,7 +61,7 @@ const safe = (fn) => async (args) => { try { return text(await fn(args)); } catc
 
 function buildServer() {
   const s = new McpServer({ name: 'research-hub', version: pkg.version }, {
-    instructions: 'Tools for the owner\'s research hub: a Neo4j knowledge graph with four collections (papers, methods, use cases, case studies) plus notes and projects. '
+    instructions: 'Tools for the owner\'s research hub: a Neo4j knowledge graph with collections (papers, methods, use cases, case studies, frameworks, research questions, hypotheses, ontologies and standards) plus notes and projects. '
       + 'To analyse something, call get_schema for its collection, then save_analysis once with every field you are confident about: it saves directly. '
       + 'Use search_items and get_item to read collections; call describe_graph before writing Cypher.',
   });
@@ -136,6 +137,9 @@ function buildServer() {
           evidence: z.string().optional().describe('the justifying passage (required for interpretive links)'), location: z.string().optional().describe('page or section'),
           confidence: confidence.optional(),
         })).optional(),
+        extract: z.object({
+          frameworks: z.array(z.record(z.any())).optional(), research_questions: z.array(z.record(z.any())).optional(), hypotheses: z.array(z.record(z.any())).optional(),
+        }).optional().describe('papers only: frameworks used, research questions stated, hypotheses tested (see get_schema rules)'),
         model: z.string().describe('your model id'), tier: z.enum(['standard', 'deep']).optional(),
         confidence: z.union([confidence, z.record(confidence)]).optional().describe('one level for all fields, or {field: level}; default medium'),
         force: z.boolean().optional().describe('replace values you (Claude) wrote earlier; never touches the owner\'s'),

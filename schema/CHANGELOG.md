@@ -2,6 +2,28 @@
 
 Every change to `schema/schema.json`, with the reason. The spec is `docs/SCHEMA_DESIGN.md`. A per-type `schema_version` is raised when that type's fields change. Items below the current version form the audit worklist, so a change is never silently applied to old items.
 
+## v3, frameworks, questions, hypotheses, ontologies (2026-10-31)
+
+Why: `docs/ADDENDUM_frameworks_questions_ontologies.md` (requirements F15 to F17, D10, D12; Task 8). A paper's lens, its questions and the hypotheses it tests become queryable; ontologies and standards are referenced, not copied.
+
+- New collections, all database-managed, `schema_version` 1, none public by default:
+  - `framework` (`framework:`)
+  - `research_question` (`question:`)
+  - `hypothesis` (`hypothesis:`)
+  - `ontology` (`ontology:`)
+- New relations: FRAMED_BY, COMPETES_WITH, SUB_QUESTION_OF, ASKED_IN, ADDRESSED_BY, PART_OF, DERIVED_FROM, ANSWERS, TESTS, ALIGNS_WITH, USED_BY and DEFINED_IN. BUILDS_ON also joins framework to framework, and EXTENDS also joins ontology to ontology.
+- **PUBLISHED_BY** (ontology to Organisation) is an addition: the addendum's `publisher` field is a link and needed a relationship.
+- New schema features, all checked at start-up:
+  - Relations may declare `pairs` (endpoints per source label: PART_OF joins question to project and ontology to ontology, never question to ontology) and `props` (TESTS `result`, required, one of supported, refuted, mixed, inconclusive).
+  - Object parts may be specs (`{type: "enum", enum: [...]}`).
+  - Url fields and parts may be `https: true`. A non-https value is refused, not just warned about.
+  - Text fields may be `normalize: "iri"`.
+  - Types may set `title_from` (a question's title from its text), `ui_more` and `ui_group` (Library layout).
+- A hypothesis's `status` is derived from its TESTS results (provenance `by: derived`). An owner value stands until cleared.
+- Concepts may carry `external_iri` and a DEFINED_IN link (`PATCH /api/vocab`).
+- Migration `011` rebuilds `artifact_text` with `text`, `statement` and `acronym`, and indexes `Hypothesis.status`.
+- `Paper.theoretical_framework` (free text) stays readable alongside FRAMED_BY, as the addendum asks.
+
 ## v3, Library UI (2026-10-30)
 
 Why: the Library builds its collections, lists, forms and filters from the schema (Task 5).

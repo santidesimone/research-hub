@@ -66,7 +66,7 @@ const seed = require('../../data/seed_papers.json');
 
   // migrations are discoverable and ordered
   const migrate = require('../core/migrate');
-  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', '010_record_status_from_provenance', 'personal_001_layer']);
+  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', '010_record_status_from_provenance', '011_frameworks_questions_ontologies', 'personal_001_layer']);
   // personal layer: separate node, driven by hooks, core untouched
   calls.length = 0;
   require('../features/personal').mount({ get() {}, put() {}, delete() {}, post() {} });
@@ -321,7 +321,7 @@ const seed = require('../../data/seed_papers.json');
   const badFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hub-schema-')), 'schema.json');
   fs.writeFileSync(badFile, JSON.stringify({ ...schema, version: 'three' }));
   assert.throws(() => S.load(badFile), /schema\/schema\.json is invalid:[\s\S]*version must be an integer/);
-  assert.deepEqual(Object.keys(schema.types).filter((t) => schema.types[t].collection).sort(), ['case_study', 'method', 'paper', 'use_case']);
+  assert.deepEqual(Object.keys(schema.types).filter((t) => schema.types[t].collection).sort(), ['case_study', 'framework', 'hypothesis', 'method', 'ontology', 'paper', 'research_question', 'use_case']);
   assert.deepEqual(['note', 'project'].map(S.managedBy), ['markdown', 'markdown']);
   assert.deepEqual(['method', 'use_case', 'case_study', 'paper'].map(S.managedBy), ['db', 'db', 'db', 'api']);
   assert.ok(['Topic', 'Concept', 'Domain', 'Person', 'Venue', 'Organisation', 'Dataset'].every((l) => S.entityLabels.includes(l)));
@@ -425,7 +425,7 @@ const seed = require('../../data/seed_papers.json');
   await m005.up(fakeMigDb);
   const mq = mlog.map(([q]) => q).join('\n');
   for (const l of ['topic', 'domain', 'venue', 'organisation', 'dataset']) assert.ok(mq.includes(`CREATE CONSTRAINT ${l}_key IF NOT EXISTS`), l);
-  assert.ok(mq.includes('DROP INDEX artifact_text') && /FOR \(n:Paper\|Method\|UseCase\|CaseStudy\|Note\|Project\) ON EACH \[n\.title, n\.tldr/.test(mq), 'full-text index rebuilt over every type');
+  assert.ok(mq.includes('DROP INDEX artifact_text') && mq.includes(`FOR (n:${S.typeLabels.join('|')}) ON EACH [n.title, n.tldr`), 'full-text index rebuilt over every type in the schema');
   assert.ok(mq.includes("MATCH (n:Method {source:'markdown'}) SET n.source = 'hub', n.imported_from = 'markdown'"), 'Markdown methods become database-managed');
   assert.ok(!mq.includes("MATCH (n:Note {source:'markdown'}) SET"), 'notes stay Markdown-managed');
   assert.ok(mq.indexOf("(n:Method)-[r]->()") < mq.indexOf("MATCH (n:Method {source:'markdown'}) SET"), 'edges are converted before the nodes, so a re-run still finds them');
@@ -1140,7 +1140,8 @@ const seed = require('../../data/seed_papers.json');
   const M = await import('data:text/javascript,' + encodeURIComponent(fs.readFileSync(path.join(__dirname, '..', 'apps', 'library', 'model.js'), 'utf8')));
   const pubView = publicView();
   const colls = pubView.collections;
-  assert.deepEqual(colls.map((c) => [c.name, c.slug, c.plural]), [['paper', 'papers', 'Papers'], ['method', 'methods', 'Methods'], ['use_case', 'use-cases', 'Use cases'], ['case_study', 'case-studies', 'Case studies']]);
+  assert.deepEqual(colls.map((c) => [c.name, c.slug, c.plural]), [['paper', 'papers', 'Papers'], ['method', 'methods', 'Methods'], ['use_case', 'use-cases', 'Use cases'], ['case_study', 'case-studies', 'Case studies'],
+    ['framework', 'frameworks', 'Frameworks'], ['research_question', 'research-questions', 'Research questions'], ['hypothesis', 'hypotheses', 'Hypotheses'], ['ontology', 'ontologies-and-standards', 'Ontologies and standards']]);
   const pc = colls.find((c) => c.name === 'paper');
   assert.ok(pc.fields.contribution_type.enum.includes('empirical') && pc.fields.authors.ref === 'Person' && !pc.fields.provenance && !pc.fields.key, 'hub-set fields are not offered to the UI');
   assert.ok(pc.relations.some((r) => r.rel === 'CRITIQUES' && r.interpretive) && !pc.relations.some((r) => r.rel === 'ADDRESSES'));
@@ -1279,6 +1280,14 @@ const seed = require('../../data/seed_papers.json');
       await hub(['item', 'unlink', 'method:a', 'ADDRESSES', 'usecase:u']);
       assert.equal(seen[1].url, '/api/items/method%3Aa/links?rel=ADDRESSES&target=usecase%3Au');
       r = await hub(['item', 'frobnicate']); assert.equal(r.code, 1); assert.match(r.stderr, /list \| get \| add/);
+      reset({ 'PUT /api/items/doi%3A1/links': [200, { created: true }], 'PATCH /api/vocab': [200, { key: 'concept:x' }] });
+      await hub(['item', 'link', 'doi:1', 'TESTS', 'hypothesis:h', '--result', 'mixed', '--evidence', 'e']);
+      assert.deepEqual(seen[0].body, { rel: 'TESTS', target: 'hypothesis:h', evidence: 'e', result: 'mixed' });
+      await hub(['vocab', 'iri', 'concept:x', 'https://example.org/onto#X', '--ontology', 'ontology:o']);
+      assert.deepEqual([seen[1].url, seen[1].body], ['/api/vocab?key=concept%3Ax', { external_iri: 'https://example.org/onto#X', defined_in: 'ontology:o' }]);
+      await hub(['vocab', 'iri', 'concept:x', 'none', '--ontology', 'none']);
+      assert.deepEqual(seen[2].body, { external_iri: null, defined_in: null });
+      r = await hub(['vocab', 'list']); assert.equal(r.code, 1); assert.match(r.stderr, /usage: hub vocab iri/);
 
       // analyze: identity from the argument, everything else from stdin
       reset({ 'POST /api/analysis': (q) => [201, { key: q.body.doi ? 'doi:' + q.body.doi : q.body.key || 'paper:u', created: true }], 'POST /api/papers/file': [200, { file_url: 'https://drive' }] });
@@ -1331,7 +1340,7 @@ const seed = require('../../data/seed_papers.json');
       reset({ 'GET /api/schema': [200, publicView()] });
       r = await hub(['schema', 'case-studies']);
       assert.ok(/case_type\s+enum\s+core\s+YC\s+deployment\|pilot/.test(r.stdout) && r.stdout.includes('organisations') && r.stdout.includes('Organisation'), r.stdout);
-      r = await hub(['schema', 'gadgets']); assert.equal(r.code, 1); assert.match(r.stderr, /no collection "gadgets" \(paper, method, use_case, case_study\)/);
+      r = await hub(['schema', 'gadgets']); assert.equal(r.code, 1); assert.match(r.stderr, /no collection "gadgets" \(paper, method, use_case, case_study, framework, research_question, hypothesis, ontology\)/);
     } finally { fake.close(); }
 
     // every command the CLI handles is in its help and in the README
@@ -1434,6 +1443,229 @@ const seed = require('../../data/seed_papers.json');
     for (const q of pubQ) assert.ok(q.includes("coalesce(a.sensitivity, 'public') = 'public'"), q);
     assert.ok(pubQ[2].includes("coalesce(b.sensitivity, 'public') = 'public'"), 'and items linked from public ones');
     runImpl = async () => [];
+  }
+
+  /* ------------------------------------------------------------ Task 8: frameworks, questions, hypotheses, ontologies */
+  {
+    const S8 = require('../core/schema');
+    const hyps = require('../core/hypotheses');
+    // schema: the new types, relation pairs and props, https and iri rules, layout hints
+    assert.deepEqual(S8.check(schema), []);
+    const bad8 = (mutate) => { const c = JSON.parse(JSON.stringify(schema)); mutate(c); return S8.check(c).join('\n'); };
+    assert.match(bad8((c) => { c.relation_types.PART_OF.pairs.Ontology.push('Gadget'); }), /PART_OF.pairs.Ontology: Gadget is not in to/);
+    assert.match(bad8((c) => { c.relation_types.PART_OF.pairs.Paper = ['Project']; }), /PART_OF.pairs: Paper is not in from/);
+    assert.match(bad8((c) => { c.relation_types.TESTS.props.result.enum = []; }), /TESTS.props.result: enum needs values/);
+    assert.match(bad8((c) => { c.relation_types.TESTS.props.score = { type: 'float' }; }), /TESTS.props.score: type must be text, enum or integer/);
+    assert.match(bad8((c) => { c.types.ontology.fields.acronym.https = true; }), /acronym: https applies to url fields only/);
+    assert.match(bad8((c) => { c.types.ontology.fields.urls.props.role.enum = []; }), /urls.role: enum needs values/);
+    assert.match(bad8((c) => { c.types.ontology.fields.urls.props.role.https = true; }), /urls.role: https applies to url parts only/);
+    assert.match(bad8((c) => { c.types.ontology.fields.version.normalize = 'iri'; c.types.ontology.fields.version.type = 'date'; }), /version: normalize "iri" applies to text fields only/);
+    assert.match(bad8((c) => { c.types.hypothesis.title_from = 'direction'; }), /hypothesis: title_from must name a text field/);
+    assert.match(bad8((c) => { c.types.hypothesis.ui_group = { label: 'x' }; }), /hypothesis: ui_group needs an id and a label/);
+    assert.match(bad8((c) => { c.types.ontology.fields.parent.rel = 'USED_BY'; }), /ontology.parent: relation_types.USED_BY does not allow Ontology -> Ontology/);
+    assert.deepEqual([S8.relTargets('PART_OF', 'Ontology'), S8.relTargets('PART_OF', 'ResearchQuestion'), S8.relTargets('PART_OF', 'Paper')], [['Ontology'], ['Project'], []]);
+    assert.equal(S8.relAllows('PART_OF', 'ResearchQuestion', ['Artifact', 'Ontology']), false, 'pairs keep a question out of an ontology');
+    assert.ok(S8.relAllows('EXTENDS', 'Paper', ['Method']) && !S8.relAllows('EXTENDS', 'Paper', ['Ontology']) && S8.relAllows('EXTENDS', 'Ontology', ['Ontology']), 'EXTENDS keeps its old combinations and adds ontology to ontology only');
+    assert.ok(S8.relAllows('BUILDS_ON', 'Framework', ['Framework']) && !S8.relAllows('BUILDS_ON', 'Paper', ['Framework']));
+    const paperRels = S8.relationsFrom('Paper');
+    assert.deepEqual(paperRels.find((r) => r.rel === 'TESTS'), { rel: 'TESTS', to: ['Hypothesis'], interpretive: true, props: { result: { type: 'enum', enum: ['supported', 'refuted', 'mixed', 'inconclusive'], required: true } } });
+    const pv8 = S8.publicView().collections;
+    assert.deepEqual(pv8.filter((c) => c.ui_more).map((c) => c.name), ['framework', 'research_question', 'hypothesis', 'ontology']);
+    assert.deepEqual([pv8.find((c) => c.name === 'hypothesis').ui_group, pv8.find((c) => c.name === 'hypothesis').title_from], [{ id: 'questions', label: 'Questions and hypotheses' }, 'statement']);
+    assert.deepEqual(S8.validate('ontology', { title: 'X', urls: [{ role: 'docs', url: 'http://x.org/d' }] }).errors, ['urls: url: must be an https link'], 'http links are refused for ontologies');
+    assert.ok(S8.validate('ontology', { title: 'X', urls: [{ role: 'manual', url: 'https://x.org' }] }).warnings.includes('urls: role: expected one of docs, spec, download, repository, other'));
+    assert.deepEqual(S8.validate('ontology', { title: 'X', urls: [{ role: 'spec', url: 'https://x.org' }] }).errors, []);
+
+    // hypothesis status from TESTS results
+    const D = hyps.deriveStatus;
+    assert.deepEqual([D([]), D(['supported']), D(['refuted', 'refuted']), D(['supported', 'refuted']), D(['supported', 'mixed']), D(['inconclusive']), D(['supported', 'inconclusive']), D(['refuted', 'inconclusive', null])],
+      ['untested', 'supported', 'refuted', 'mixed', 'mixed', 'inconclusive', 'supported', 'refuted']);
+    assert.ok(hyps.overridden({ status: { by: 'owner' } }, 'supported') && !hyps.overridden({ status: { by: 'owner' } }, null) && !hyps.overridden({ status: { by: 'derived' } }, 'supported'));
+
+    // items: derived titles, defaults, IRIs, relation props
+    assert.equal(items.deriveTitle('hypothesis', { statement: '  Adoption   requires both sides ' }).title, 'Adoption requires both sides');
+    const longT = items.deriveTitle('research_question', { text: 'word '.repeat(60) }).title;
+    assert.ok(longT.length <= 120 && longT.endsWith('…') && !/\s…$/.test(longT), longT);
+    assert.equal(items.deriveTitle('hypothesis', { title: 'Own title', statement: 'x' }).title, 'Own title');
+    assert.equal(items.deriveTitle('method', { purpose: 'x' }).title, undefined, 'only types with title_from');
+    assert.deepEqual([items.normalizeIri(' <HTTPS://Spec.EDMCouncil.org/fibo/ontology/FND/> '), items.normalizeIri('urn:iso:std:20022'), items.normalizeIri(5)], ['https://spec.edmcouncil.org/fibo/ontology/FND/', 'urn:iso:std:20022', 5]);
+    assert.equal(items.slugify('x'.repeat(200)).length, 80);
+    assert.match(items.relationProps('TESTS', {}).error, /TESTS needs result \(supported, refuted, mixed, inconclusive\)/);
+    assert.match(items.relationProps('TESTS', { result: 'proven' }).error, /result must be one of/);
+    assert.deepEqual(items.relationProps('TESTS', { result: 'refuted' }), { props: { result: 'refuted' } });
+    assert.deepEqual(items.relationProps('ADDRESSES', { result: 'x' }), { props: {} }, 'only the relation\'s own properties');
+
+    // the in-memory graph learns the new queries
+    const t8Run = async (q, p) => {
+      if (q.includes('OPTIONAL MATCH (:Paper)-[t:TESTS]->(h)')) {
+        const hn = G.get(p.key); if (!hn || !hn.labels.includes('Hypothesis')) return [];
+        const results = [...G.values()].filter((n) => n.labels.includes('Paper')).flatMap((n) => n.out.filter((e) => e.rel === 'TESTS' && e.to === p.key).map((e) => e.r.result));
+        return [{ status: hn.props.status ?? null, p: hn.props.provenance_json ?? null, results }];
+      }
+      if (q.includes('-[:TESTS]->(h:Hypothesis) RETURN h.key')) return (G.get(p.key) || { out: [] }).out.filter((e) => e.rel === 'TESTS').map((e) => ({ key: e.to }));
+      if (q.includes('toLower(trim(n.title)) = toLower(trim($name))')) {
+        const lab = q.match(/MATCH \(n:(\w+)\)/)[1]; const nm = String(p.name).trim().toLowerCase();
+        const names = (n) => [n.props.title, ...(q.includes('n.acronym') ? [n.props.acronym] : []), ...(q.includes('n.aliases') ? n.props.aliases || [] : [])]; // honour what the query asks
+        return [...G.values()].filter((n) => n.labels.includes(lab) && names(n).some((x) => x != null && String(x).trim().toLowerCase() === nm)).slice(0, 2).map((n) => ({ key: n.props.key }));
+      }
+      return aRun(q, p);
+    };
+    const t8Tx = async (q, p) => {
+      if (q.startsWith('MATCH (h:Hypothesis {key:$key}) SET h.status = $status')) { calls.push([q, p]); const n = G.get(p.key); n.props.status = p.status; n.props.provenance_json = p.prov; return gRecs([]); }
+      return aTx(q, p);
+    };
+    runImpl = t8Run; txImpl = t8Tx; vocab.resolve = stubResolve;
+    G.set('doi:10.8/p1', { labels: ['Artifact', 'Paper'], props: { key: 'doi:10.8/p1', title: 'Paper one', collection: 'paper' }, out: [] });
+    G.set('doi:10.8/p2', { labels: ['Artifact', 'Paper'], props: { key: 'doi:10.8/p2', title: 'Paper two', collection: 'paper' }, out: [] });
+    G.set('project:hub', { labels: ['Artifact', 'Project'], props: { key: 'project:hub', title: 'Hub' }, out: [] });
+
+    // create all four
+    const fw = await items.create({ collection: 'framework', fields: { title: 'Two-sided market theory', framework_kind: 'theoretical', aliases: ['two-sided markets'] } });
+    const rq = await items.create({ collection: 'research_question', fields: { text: 'Why do stablecoins struggle to replace card payments?', kind: 'explanatory' } });
+    const hy = await items.create({ collection: 'hypothesis', fields: { statement: 'Adoption requires simultaneous merchant and consumer growth', direction: 'positive' } });
+    const fibo = await items.create({ collection: 'ontology', fields: { title: 'Financial Industry Business Ontology', acronym: 'FIBO', kind: 'ontology', iri: '<HTTPS://Spec.EDMCouncil.org/fibo/ontology/>', publisher: 'EDM Council',
+      urls: [{ role: 'docs', url: 'https://spec.edmcouncil.org/fibo/' }] } });
+    const fnd = await items.create({ collection: 'ontology', fields: { title: 'FIBO Foundations', kind: 'ontology', parent: 'FIBO' } });
+    assert.deepEqual([fw.key, rq.key, hy.key, fibo.key], ['framework:two-sided-market-theory', 'question:why-do-stablecoins-struggle-to-replace-card-payments', 'hypothesis:adoption-requires-simultaneous-merchant-and-consumer-growth', 'ontology:financial-industry-business-ontology']);
+    const H = () => G.get(hy.key).props;
+    assert.deepEqual([H().status, H().origin, G.get(rq.key).props.origin, G.get(rq.key).props.title], ['untested', 'own', 'own', 'Why do stablecoins struggle to replace card payments?'], 'defaults and a title from the text');
+    assert.equal(G.get(fibo.key).props.iri, 'https://spec.edmcouncil.org/fibo/ontology/', 'IRIs are normalised');
+    assert.ok(G.get(fibo.key).out.some((e) => e.rel === 'PUBLISHED_BY' && e.to === 'org:edm-council'), 'the publisher is an Organisation');
+    assert.ok(G.get(fnd.key).out.some((e) => e.rel === 'PART_OF' && e.to === fibo.key), 'a parent named by its acronym is linked, not created');
+    assert.ok((await items.create({ collection: 'ontology', fields: { title: 'Orphan module', parent: 'NOPE' } })).warnings.some((w) => /Ontology "NOPE": not found \(items are linked, never created, from a name\)/.test(w)));
+    await assert.rejects(() => items.create({ collection: 'ontology', fields: { title: 'Bad', urls: [{ role: 'docs', url: 'http://insecure.example' }] } }), (e) => e.status === 400 && /https link/.test(e.message));
+    await assert.rejects(() => items.create({ collection: 'hypothesis', fields: { direction: 'positive' } }), (e) => e.status === 400 && /title is required/.test(e.message));
+
+    // TESTS results derive the status; a second paper refuting makes it mixed
+    await assert.rejects(() => items.link('doi:10.8/p1', { rel: 'TESTS', target: hy.key }), (e) => e.status === 400 && /TESTS needs result/.test(e.message));
+    await items.link('doi:10.8/p1', { rel: 'TESTS', target: hy.key, result: 'supported', evidence: 'table 2', location: 'p. 7' });
+    assert.equal(H().status, 'supported'); assert.equal(JSON.parse(H().provenance_json).status.by, 'derived');
+    assert.equal(G.get('doi:10.8/p1').out.find((e) => e.rel === 'TESTS').r.result, 'supported');
+    await items.link('doi:10.8/p2', { rel: 'TESTS', target: hy.key, result: 'refuted', evidence: 'no effect found' });
+    assert.equal(H().status, 'mixed', 'supported by one paper, refuted by another');
+    const hGot = await items.get(hy.key);
+    assert.deepEqual(hGot.links.in.filter((l) => l.rel === 'TESTS').map((l) => [l.key, l.result]).sort(), [['doi:10.8/p1', 'supported'], ['doi:10.8/p2', 'refuted']]);
+    await items.unlink('doi:10.8/p2', { rel: 'TESTS', target: hy.key });
+    assert.equal(H().status, 'supported', 'removing a test recomputes');
+    // the owner's status stands until cleared
+    await items.update(hy.key, { status: 'refuted' });
+    await items.link('doi:10.8/p2', { rel: 'TESTS', target: hy.key, result: 'supported', evidence: 'x' });
+    assert.equal(H().status, 'refuted', 'an owner override is never recomputed');
+    await items.update(hy.key, { status: null });
+    await hyps.recompute([hy.key]);
+    assert.equal(H().status, 'supported', 'clearing it hands it back to the derivation');
+    // deleting a paper recomputes what it tested
+    await items.remove('doi:10.8/p2');
+    await items.link('doi:10.8/p1', { rel: 'TESTS', target: hy.key, result: 'refuted', evidence: 'y' });
+    assert.equal(H().status, 'refuted');
+    await items.remove('doi:10.8/p1');
+    assert.equal(H().status, 'untested', 'the paper and its test are gone');
+    // relation endpoints, by pairs
+    await assert.rejects(() => items.link(rq.key, { rel: 'PART_OF', target: fibo.key }), (e) => e.status === 400 && /not ResearchQuestion to Ontology/.test(e.message));
+    assert.equal((await items.link(rq.key, { rel: 'PART_OF', target: 'project:hub' })).created, true);
+    assert.equal((await items.link(hy.key, { rel: 'DERIVED_FROM', target: fw.key })).created, true);
+    assert.equal((await items.link(hy.key, { rel: 'ANSWERS', target: rq.key })).created, true);
+
+    // a paper analysis extracts frameworks, questions and tested hypotheses
+    G.set('doi:10.8/p3', { labels: ['Artifact', 'Paper'], props: { key: 'doi:10.8/p3', title: 'Paper three', collection: 'paper', schema_version: 1 }, out: [] });
+    const ex = await analysis.save({ collection: 'paper', key: 'doi:10.8/p3', model: 'claude-x', extract: {
+      frameworks: [{ name: 'two-sided markets' }, { name: 'Path dependence', framework_kind: 'theoretical', evidence: 'the lock-in argument', location: 's. 2' }],
+      research_questions: [{ text: 'Why do stablecoins struggle to replace card payments?' }, { text: 'Do merchants accept stablecoins?', kind: 'descriptive' }],
+      hypotheses: [{ statement: 'Adoption requires simultaneous merchant and consumer growth', result: 'refuted', evidence: 'adoption grew one-sided', location: 'table 4' },
+        { statement: 'Redemption risk reduces trust in stablecoins', direction: 'negative', result: 'supported', evidence: 'survey' },
+        { statement: 'No result given', evidence: 'x' }, { statement: 'No passage', result: 'supported' }, { kind: 'no statement' }],
+    } });
+    const E = ex.extracted;
+    assert.deepEqual(E.frameworks.map((x) => [x.key, x.created, x.linked]), [[fw.key, false, true], ['framework:path-dependence', true, true]], 'found by an alias, or created from a full entry');
+    assert.deepEqual(E.research_questions.map((x) => [x.key, x.created]), [[rq.key, false], ['question:do-merchants-accept-stablecoins', true]]);
+    assert.deepEqual(E.hypotheses.map((x) => [x.key, x.created]), [[hy.key, false], ['hypothesis:redemption-risk-reduces-trust-in-stablecoins', true]]);
+    assert.deepEqual(E.skipped.map((x) => x.extract), ['extract.hypotheses[2]', 'extract.hypotheses[3]', 'extract.hypotheses[4]'], 'no result, no passage, no statement: nothing created');
+    assert.ok(!G.has('hypothesis:no-result-given') && !G.has('hypothesis:no-passage'));
+    assert.equal(G.get('question:do-merchants-accept-stablecoins').props.origin, 'extracted');
+    assert.equal(G.get('hypothesis:redemption-risk-reduces-trust-in-stablecoins').props.origin, 'extracted');
+    assert.equal(G.get(rq.key).props.origin, 'own', 'an existing own question stays own');
+    assert.ok(G.get('question:do-merchants-accept-stablecoins').out.some((e) => e.rel === 'ASKED_IN' && e.to === 'doi:10.8/p3'), 'the question is ASKED_IN the paper');
+    const p3 = G.get('doi:10.8/p3').out;
+    assert.ok(p3.some((e) => e.rel === 'FRAMED_BY' && e.to === 'framework:path-dependence' && e.r.location === 's. 2'));
+    assert.deepEqual(p3.filter((e) => e.rel === 'TESTS').map((e) => [e.to, e.r.result, e.r.by]).sort(), [[hy.key, 'refuted', 'claude'], ['hypothesis:redemption-risk-reduces-trust-in-stablecoins', 'supported', 'claude']]);
+    assert.deepEqual([H().status, G.get('hypothesis:redemption-risk-reduces-trust-in-stablecoins').props.status], ['refuted', 'supported'], 'statuses derived from the new tests');
+    assert.ok(ex.flagged.some((f) => f.rel === 'TESTS' && f.target === 'hypothesis:redemption-risk-reduces-trust-in-stablecoins'), 'a test without a location is flagged');
+    const again = await analysis.save({ collection: 'paper', key: 'doi:10.8/p3', model: 'claude-x', extract: { hypotheses: [{ statement: 'Adoption requires simultaneous merchant and consumer growth', result: 'refuted', evidence: 'e' }] } });
+    assert.equal(again.extracted.hypotheses[0].created, false); assert.match(again.extracted.skipped[0].reason, /already linked/);
+    for (const [badBody, re] of [[{ collection: 'method', key: 'method:x', model: 'm', extract: {} }, /extract is for paper analyses/], [{ collection: 'paper', key: 'doi:10.8/p3', model: 'm', extract: { claims: [] } }, /extract.claims is not one of/],
+      [{ collection: 'paper', key: 'doi:10.8/p3', model: 'm', extract: { hypotheses: {} } }, /extract.hypotheses must be a list/], [{ collection: 'paper', key: 'doi:10.8/p3', model: 'm', extract: { frameworks: Array(51).fill({}) } }, /at most 50/]]) {
+      await assert.rejects(() => analysis.save(badBody), (e) => e.status === 400 && re.test(e.message), JSON.stringify(badBody).slice(0, 80));
+    }
+    const viaLinks = await analysis.save({ collection: 'paper', key: 'doi:10.8/p3', model: 'claude-x', links: [{ rel: 'TESTS', target: 'hypothesis:redemption-risk-reduces-trust-in-stablecoins', evidence: 'e' }] });
+    assert.match(viaLinks.links_skipped[0].reason, /TESTS needs result/, 'a TESTS link in links needs its result too');
+    await items.create({ collection: 'framework', fields: { title: 'Dup A', aliases: ['dup'] } });
+    await items.create({ collection: 'framework', fields: { title: 'Dup B', aliases: ['dup'] } });
+    const amb = await analysis.save({ collection: 'paper', key: 'doi:10.8/p3', model: 'claude-x', extract: { frameworks: [{ name: 'dup' }] } });
+    assert.deepEqual([amb.extracted.frameworks, amb.extracted.skipped[0].reason], [[], '"dup" matches more than one framework'], 'an ambiguous name is not guessed');
+    const newQ = await analysis.save({ collection: 'research_question', model: 'claude-x', fields: { text: 'Is interchange the main switching cost?', kind: 'explanatory' } });
+    assert.deepEqual([newQ.key, newQ.created], ['question:is-interchange-the-main-switching-cost', true], 'a question analysed on its own takes its title from its text');
+
+    // the Library bar: four collections in a row, the rest under More, questions and hypotheses as one entry
+    const M8 = await import('data:text/javascript,' + encodeURIComponent(fs.readFileSync(path.join(__dirname, '..', 'apps', 'library', 'model.js'), 'utf8')));
+    const bar = M8.barEntries(pv8);
+    assert.deepEqual(bar.main.map((e) => e.id), ['paper', 'method', 'use_case', 'case_study']);
+    assert.deepEqual(bar.more.map((e) => [e.id, e.label, e.members]), [['framework', 'Frameworks', ['framework']], ['research_question', 'Questions and hypotheses', ['research_question', 'hypothesis']], ['ontology', 'Ontologies and standards', ['ontology']]]);
+    assert.equal(M8.entryOf(bar, 'hypothesis').id, 'research_question'); assert.equal(M8.entryOf(bar, 'graph'), null);
+    const hf = pv8.find((c) => c.name === 'hypothesis').fields;
+    assert.deepEqual(M8.createFields(hf, { statement: 'S', status: 'untested', origin: 'own', direction: null, title: null }), { statement: 'S' }, 'hub-managed defaults are not sent as owner values');
+    assert.deepEqual(M8.createFields(hf, { statement: 'S', status: 'refuted', origin: 'extracted' }), { statement: 'S', status: 'refuted', origin: 'extracted' }, 'a changed one is the owner\'s choice');
+
+    // migration 011
+    const m011 = require('../migrations/011_frameworks_questions_ontologies');
+    const m11 = []; let ft11 = { labelsOrTypes: S8.typeLabels, properties: ['title', 'tldr', 'abstract', 'summary', 'authors', 'venue', 'body'] };
+    const db11 = { run: async (q, p) => { m11.push(q); return q.startsWith('SHOW FULLTEXT') ? (ft11 ? [ft11] : []) : []; } };
+    await m011.up(db11);
+    assert.ok(m11.some((q) => q === 'DROP INDEX artifact_text IF EXISTS') && m11.some((q) => q.includes('ON EACH [n.title, n.tldr, n.abstract, n.summary, n.authors, n.venue, n.body, n.text, n.statement, n.acronym]') && q.includes('Hypothesis')), 'rebuilt with the new text fields');
+    assert.ok(m11.some((q) => q.includes('CREATE INDEX hypothesis_status IF NOT EXISTS')));
+    m11.length = 0; ft11 = { labelsOrTypes: S8.typeLabels, properties: m011.FULLTEXT_PROPS };
+    await m011.up(db11);
+    assert.ok(!m11.some((q) => /DROP INDEX|CREATE FULLTEXT/.test(q)), 'an up-to-date index is left alone');
+
+    vocab.resolve = realResolve; runImpl = async () => []; txImpl = null;
+
+    // a concept points at a term in an ontology (external_iri and DEFINED_IN); nothing is imported
+    const appV = require('express')();
+    require('../features/vocab').mount(appV);
+    appV.use((err, _req, res, _next) => res.status(err.status || 500).json({ error: err.message }));
+    const srvV = await new Promise((ok) => { const x = appV.listen(0, '127.0.0.1', () => ok(x)); });
+    const vBase = `http://127.0.0.1:${srvV.address().port}`;
+    const VH = { Authorization: 'Bearer abc', 'Content-Type': 'application/json' };
+    const vtx8 = [];
+    txImpl = async (q, p) => {
+      vtx8.push([q, p]);
+      if (q.startsWith('MATCH (c:Concept {key:$key}) RETURN c.external_iri')) return gRecs(p.key === 'concept:missing' ? [] : [{ iri: 'https://old' }]);
+      if (q.includes('MATCH (o:Ontology {key:$o})')) return gRecs(p.o === 'ontology:fibo' ? [{ k: p.o }] : []);
+      return gRecs([]);
+    };
+    const patch = (key, body) => fetch(`${vBase}/api/vocab?key=${encodeURIComponent(key)}`, { method: 'PATCH', headers: VH, body: JSON.stringify(body) });
+    try {
+      assert.equal((await fetch(`${vBase}/api/vocab?key=concept:x`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
+      assert.equal((await patch('topic:x', { external_iri: 'https://x' })).status, 400, 'only concepts');
+      assert.equal((await patch('concept:x', { external_iri: 'not an iri' })).status, 400);
+      assert.equal((await patch('concept:x', {})).status, 400);
+      assert.equal((await patch('concept:missing', { external_iri: 'https://x' })).status, 404);
+      vtx8.length = 0;
+      const okV = await (await patch('concept:legal-entity', { external_iri: 'https://spec.edmcouncil.org/fibo/ontology/BE/LegalEntities/LegalPersons/LegalEntity', defined_in: 'ontology:fibo' })).json();
+      assert.deepEqual(okV, { key: 'concept:legal-entity', external_iri: 'https://spec.edmcouncil.org/fibo/ontology/BE/LegalEntities/LegalPersons/LegalEntity', defined_in: 'ontology:fibo' });
+      const merge = vtx8.find(([q]) => q.includes('MERGE (c)-[r:DEFINED_IN]->(o)'));
+      assert.equal(merge[1].iri, okV.external_iri, 'the link carries the IRI too');
+      assert.ok(vtx8.some(([q]) => q.startsWith('MATCH (:Concept {key:$key})-[r:DEFINED_IN]->() DELETE r')), 'one DEFINED_IN at a time');
+      assert.equal((await patch('concept:legal-entity', { defined_in: 'ontology:nope' })).status, 404);
+      vtx8.length = 0;
+      assert.deepEqual(await (await patch('concept:legal-entity', { external_iri: null })).json(), { key: 'concept:legal-entity', external_iri: null });
+      assert.ok(vtx8.some(([q]) => q.includes('-[r:DEFINED_IN]->() SET r.external_iri = $iri')), 'clearing the IRI clears it on the link');
+    } finally { srvV.close(); txImpl = null; }
+
+    // MCP get_schema tells Claude about extract and TESTS results
+    const mcp8 = require('../features/mcp');
+    assert.ok(typeof mcp8.toolError === 'function');
+    const mcpSrc = fs.readFileSync(path.join(__dirname, '..', 'features', 'mcp', 'index.js'), 'utf8');
+    assert.ok(mcpSrc.includes("rules: collection === 'paper' ? [...ANALYSIS_RULES, PAPER_EXTRACT] : ANALYSIS_RULES") && mcpSrc.includes('extract: z.object('));
   }
 
   /* ------------------------------------------------------------ search query building */
