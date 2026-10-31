@@ -5,6 +5,7 @@ Personal research hub: a Neo4j knowledge graph of papers, methods, use cases and
 ## Read first
 - `docs/SCHEMA_DESIGN.md`: the approved metadata model. This is the spec.
 - `docs/BUILD_BRIEF.md`: ordered tasks with acceptance criteria. Work through them in order; one task per commit/PR.
+- `docs/ADDENDUM_frameworks_questions_ontologies.md`: Frameworks, Research questions and Hypotheses, Ontologies (Tasks 8 and 8b; requirements in `docs/REQUIREMENTS.md`). Self-contained; the Word file of the same name is its original.
 - `README.md`: how the project is organised today, and `deploy/README.md` for Google Cloud.
 
 ## Run it

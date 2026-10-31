@@ -192,3 +192,109 @@ CITES (Paper->Paper, OpenAlex); BUILDS_ON; CRITIQUES; REPLICATES; CONTRADICTS; S
 - Tiers as listed above.
 - Notes and Projects: **related content only**, no collection.
 - Methods, Use cases and Case studies are **database-managed** (created and edited in the UI, API, MCP, CLI). `hub sync-notes` must skip them and must never prune them. Papers are API-managed. Notes and Projects remain Markdown-managed.
+
+## Addendum (Task 8): Frameworks, Research questions, Hypotheses, Ontologies
+
+Source: `docs/ADDENDUM_frameworks_questions_ontologies.md` (requirements F15 to F17 and D10 to D13 in `docs/REQUIREMENTS.md`). Everything above stays as decided; this section adds four database-managed types and their relations. Same legend, the common fields apply to each, and none of the new types are public by default. Key prefixes: `framework:`, `question:`, `hypothesis:`, `ontology:`.
+
+### Framework (framework, managed: db)
+
+| Field | Type | By | Tier |
+|---|---|---|---|
+| name, aliases | text, text list | Y/C | Core |
+| framework_kind | enum theoretical, conceptual | Y/C | Core |
+| tldr | text | C | Core |
+| originators | text list (people) | C | Standard |
+| year_first_proposed | integer | C | Standard |
+| core_propositions | text list | C | Standard |
+| key_constructs | links to Concept | C | Standard |
+| explains | text list (phenomena it applies to) | C | Standard |
+| domains | links to Domain | C/Y | Standard |
+| assumptions | text list | C | Standard |
+| limitations_critiques | text list | C | Deep |
+| conceptual_model | text (for conceptual frameworks: the variables and relationships; may hold a diagram link) | Y/C | Deep |
+
+"Theoretical" means borrowed from existing theory; "conceptual" means the owner's own synthesis of variables and relationships, often combining theories.
+
+### Research question (research_question, managed: db)
+
+| Field | Type | By | Tier |
+|---|---|---|---|
+| text | text (the question) | Y/C | Core |
+| kind | enum descriptive, explanatory, exploratory, evaluative | Y/C | Core |
+| origin | enum own, extracted (extracted = taken from a paper) | Sys/Y | Core |
+| status | enum open, partly_answered, answered, dropped | Y | Standard |
+| scope | text | Y/C | Standard |
+| rationale | text | Y/C | Deep |
+
+### Hypothesis (hypothesis, managed: db)
+
+| Field | Type | By | Tier |
+|---|---|---|---|
+| statement | text | Y/C | Core |
+| independent_variables, dependent_variables | text lists | Y/C | Standard |
+| direction | enum positive, negative, no_effect, non_directional | Y/C | Standard |
+| status | enum untested, supported, refuted, mixed, inconclusive; derived from its TESTS links, the owner can override | derived/Y | Standard |
+| origin | enum own, extracted | Sys/Y | Core |
+| operationalisation | text | Y/C | Deep |
+
+### Ontology / standard (ontology, managed: db)
+
+| Field | Type | By | Tier |
+|---|---|---|---|
+| name, acronym | text | Y/C | Core |
+| kind | enum ontology, data_dictionary, standard, taxonomy | Y/C | Core |
+| publisher | link to Organisation | C/Y | Core |
+| iri | text (base namespace; the stable machine identifier) | C/Y | Core |
+| urls | list of {role, url}; roles include docs, spec, download | not recorded | not recorded |
+| parent | link to another Ontology (e.g. a FIBO module to FIBO), via PART_OF | C/Y | Standard |
+| version, version_date | text, date | C/Y | Standard |
+| scope | text (what it models) | C | Standard |
+| domains | links to Domain | C/Y | Standard |
+| format | enum owl_rdf, xml, json_ld, json_schema, spreadsheet, html_only, other | C | Standard |
+| license | text | C/Y | Standard |
+| language | text list | C | Deep |
+| approx_size | text (e.g. "about N classes") | C | Deep |
+| maturity | enum draft, stable, standard, deprecated | C/Y | Standard |
+| how_i_use_it | text | Y | Standard |
+| snapshot | optional {file_url, drive_file_id, retrieved_at, version, sha256, size_bytes, mime} | Sys/Y | Deep |
+
+`urls`: the addendum's table row was damaged in its Word source; the full list of roles and this field's By and Tier must be confirmed before Task 8.
+
+Rules (D10, D11): an ontology record stores descriptive metadata and URLs only. URLs are stored, never fetched on read, and the ontology's contents (classes, properties) are never imported. A snapshot is a frozen copy in the owner's Drive, created only on request (Task 8b); `sha256` and `retrieved_at` let the UI show "snapshot older than the current version" when `version` differs.
+
+### Concept: external_iri (D12)
+
+A Concept may carry `external_iri`, pointing at a specific term in an ontology, with a DEFINED_IN link to the Ontology record. Nothing is imported.
+
+### Typed relations (addendum)
+
+| Relation | From to | Notes |
+|---|---|---|
+| FRAMED_BY | Paper, Research question, Project, Case study to Framework | Replaces the free-text `theoretical_framework` on Paper with a link (keep the old text field readable for one schema version) |
+| BUILDS_ON, COMPETES_WITH | Framework to Framework | e.g. Chartalism competes with Metallism. BUILDS_ON also stays Paper to Paper as above |
+| SUB_QUESTION_OF | Research question to Research question | |
+| ASKED_IN | Research question to Paper | for extracted questions |
+| ADDRESSED_BY | Research question to Paper, Method, Case study | |
+| PART_OF | Research question to Project; Ontology to Ontology | |
+| DERIVED_FROM | Hypothesis to Framework | |
+| ANSWERS | Hypothesis to Research question | |
+| TESTS | Paper to Hypothesis | Carries result (supported, refuted, mixed, inconclusive), evidence (short text), location, confidence, plus provenance. The hypothesis status is derived from the set of TESTS results |
+| ALIGNS_WITH, EXTENDS | Ontology to Ontology | |
+| USED_BY | Ontology to Use case, Case study, Paper, Project | |
+| DEFINED_IN | Concept to Ontology | with property `external_iri` |
+
+All of these go into `relations` in `schema/schema.json`, the safeRel allow-list, the `web/core/backup.js` whitelists, and the audit and public-export handling.
+
+### Competency questions (addendum)
+
+11. Papers using a given framework.
+12. Hypotheses with conflicting test results (mixed).
+13. Open research questions with no addressing paper.
+14. Ontologies used by no item, and use cases that reference an ontology.
+
+Worked example these must support: the stablecoin research question in the addendum, section 5.
+
+### Out of scope (addendum)
+
+Full ontology querying (a triple store or the Neo4j RDF plugin).

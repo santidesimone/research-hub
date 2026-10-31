@@ -55,5 +55,23 @@ Goal: turn the Library into one app with **Collections** (Papers, Methods, Use c
 - Review rate limits for `/api/analysis` (heavy bucket), request size limits, error messages, backup/restore coverage of the new labels and relation types (`web/core/backup.js` whitelists), the public export for new types. Verify production config checks.
 - Acceptance: backup and restore round-trip includes all four collections and vocabulary nodes.
 
+## Task 8. Framework, Research question, Hypothesis, Ontology types
+Source and full detail: `docs/ADDENDUM_frameworks_questions_ontologies.md` (requirements F15 to F17, D10, D12; model in `docs/SCHEMA_DESIGN.md`, section "Addendum (Task 8)"). Depends on Tasks 1 to 3.
+- Add the four types and relations to the schema (fields, tiers, enums, versions, managed: db); migration NNN_frameworks_questions_ontologies.js for constraints and indexes on the new keys and for the fulltext index (add the new types' name/text/statement fields to artifact_text).
+- Items API and MCP: reuse the generic layer (Task 3). save_analysis accepts these collections. Add a derivation hook: when a TESTS link is created, changed or removed, recompute the hypothesis status (unless the owner overrode it).
+- Paper analysis: Claude identifies frameworks used and links FRAMED_BY; extracts stated research questions (origin=extracted) and tested hypotheses (TESTS with result, evidence, location). Findings without a location are flagged, as in Task 4.
+- Ontology intake: the owner or Claude supplies a URL; Claude reads the page and fills the descriptive fields; the server validates that URLs are https and stores them without fetching. iri is normalised; parent and part_of are resolved.
+- Concept external_iri and DEFINED_IN (optional fields; no import).
+- UI: extend the Collections bar with Frameworks, Questions and hypotheses, Ontologies and standards. With seven collections the bar groups the less-used ones under a "More" menu. Detail views show linked items (e.g. a hypothesis lists the tests with results as a small table; a framework lists papers framing on it; an ontology shows its modules and users).
+- Before starting: confirm the Ontology `urls` field (its role values, By and Tier were lost in the addendum's Word source) and the open points in the addendum, section 6.
+- Acceptance: CRUD for all four types; TESTS results derive hypothesis status (offline and integration tests, including a hypothesis supported by one paper and refuted by another giving mixed); a framework page lists all papers using it; the stablecoin example (addendum, section 5) can be created end to end; backup and restore round-trips the new labels and relations.
+
+## Task 8b. Generalise file upload beyond PDFs
+Source: `docs/ADDENDUM_frameworks_questions_ontologies.md` (requirements D11, D13).
+- web/core/drive.js upload currently assumes application/pdf. Make the MIME type a parameter, restricted to an allow-list (pdf, owl, rdf, ttl, jsonld, xml, xsd, json, csv, zip, plain text), size-capped by MAX_UPLOAD_MB (default 30; Cloud Run limit is 32 MB). Over the cap, return a clear error suggesting a link.
+- Ontology snapshot endpoint and CLI: hub ontology snapshot <key> <file|url> downloads (allow-listed hosts or a local file) or reads a local file, uploads to Drive, records file_url, drive_file_id, retrieved_at, sha256, size_bytes, mime, and trashes the previous snapshot of that record. Deleting an ontology trashes its hub-uploaded snapshot, as for papers.
+- UI warning when creating a snapshot: files are shared by link; check the resource's license first.
+- Acceptance: tests with the fake Drive layer for allow-list, size cap, checksum, replacement and deletion; existing PDF behaviour unchanged.
+
 ## Out of scope for now
 Claim nodes (v2), embeddings and semantic search, multi-user access, full-text extraction from PDFs.
