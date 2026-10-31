@@ -73,5 +73,19 @@ Source: `docs/ADDENDUM_frameworks_questions_ontologies.md` (requirements D11, D1
 - UI warning when creating a snapshot: files are shared by link; check the resource's license first.
 - Acceptance: tests with the fake Drive layer for allow-list, size cap, checksum, replacement and deletion; existing PDF behaviour unchanged.
 
+## Task 9. Claude chat connector: OAuth for MCP, and an upload link
+Source: the owner (2026-10-31): drop a paper into a claude.ai chat and have the record saved in the library and the file stored in Drive. Requirements F18, S6.
+Why it is not possible today: (1) claude.ai custom connectors authenticate with OAuth, and `/mcp` only accepts the bearer token; (2) a file attached in the chat is read by Claude but not forwarded to tools, which only receive what Claude writes (text, a DOI, a URL).
+- **OAuth for `/mcp`** (MCP authorization spec, single owner, no new dependency; Node `crypto`):
+  - discovery: `/.well-known/oauth-protected-resource` (also the path-suffixed form for `<base>/mcp`) and `/.well-known/oauth-authorization-server`; a 401 from `/mcp` carries `WWW-Authenticate` pointing at the resource metadata;
+  - dynamic client registration (`POST <base>/oauth/register`), redirect URIs limited to an allow-list in config (`MCP_OAUTH_REDIRECTS`, default the claude.ai callback; localhost allowed for testing);
+  - `GET <base>/oauth/authorize`: a hub page (CSP, nonce) where the owner approves the client; it asks for the owner token unless the owner is already signed in. Authorization code with PKCE S256 only, single use, short-lived;
+  - `POST <base>/oauth/token`: code → access token (short-lived) and refresh token (rotated on use). Tokens are signed and expire; all of them can be revoked at once (a key rotation, documented);
+  - the bearer token keeps working everywhere (CLI, Claude Code); rate limits and the auth-failure limiter apply to the new endpoints;
+  - deployed behind `BASE_PATH` and a site proxy, the `/.well-known/...` paths are at the domain root: document the extra rewrite (Firebase) and serve them from the app.
+- **Upload link**: when a paper has no file, `save_analysis` and `add_paper` return `upload_url`: a Library address that opens a drop zone for that paper (sign-in required, the existing upload path, Drive). New MCP tool `request_upload(key)` returns the same. Tool descriptions tell Claude: for an attached PDF, find its DOI and a public PDF URL first (then `copy_pdf_to_drive`); otherwise save the record and give the owner the upload link.
+- Docs: connecting the claude.ai chat (custom connector, URL `<base>/mcp`), Claude Desktop and Claude Code; README, deploy/README, openapi, `_env.example`.
+- Acceptance: offline tests for discovery, registration (redirect allow-list), PKCE (wrong verifier, reused or expired code), token refresh and rotation, revocation, an OAuth token reaching `/mcp`, the bearer token unchanged, unsigned or expired tokens refused; browser checks of the approval page and the drop zone (no console or CSP errors); live: connect the claude.ai chat to the deployed hub, then (a) an arXiv paper ends up as a record with its PDF in Drive, (b) a private PDF ends up in Drive through the upload link.
+
 ## Out of scope for now
 Claim nodes (v2), embeddings and semantic search, multi-user access, full-text extraction from PDFs.

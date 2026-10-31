@@ -14,6 +14,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | 7 Hardening | done (2026-10-31) | See "Task 7" below. |
 | 8 Frameworks, research questions and hypotheses, ontologies | done (2026-10-31) | See "Task 8" below. |
 | 8b File upload beyond PDFs (ontology snapshots) | done (2026-10-31), live Drive not tested | See "Task 8b" below. |
+| 9 Claude chat connector: OAuth for MCP, upload link | not started | Requested by the owner 2026-10-31 (F18, S6). |
 
 ## Task 0. Baseline against real services
 

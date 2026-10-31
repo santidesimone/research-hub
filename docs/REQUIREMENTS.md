@@ -25,6 +25,7 @@ Status key: **Built** (in the current code), **Planned** (in `docs/BUILD_BRIEF.m
 | F15 | Store Frameworks (theoretical and conceptual) as their own items, link papers, questions and projects to them. | A paper's lens should be queryable ("every paper using path dependence"), not buried in text | Built (T8) |
 | F16 | Store Research questions and Hypotheses, with the result of each test recorded on the link between a paper and a hypothesis. | One hypothesis can be supported by one paper and contradicted by another; this gives a supported-versus-contradicted view without full Claim nodes | Built (T8) |
 | F17 | Store Ontologies and standards (e.g. FIBO modules, the ISO 20022 data dictionary, ETHON) as descriptive records with pointers to where they live. | These are large, externally maintained, living resources; the hub must reference them, not copy their contents | Built (T8) |
+| F18 | From the claude.ai chat: drop a paper (a PDF or a link) and it ends up in the library, analysed, with its file in the owner's Drive. A public PDF is copied by the hub; a private one goes through a one-click upload link, because chat attachments do not reach tools. | Capture where the owner already reads and talks with Claude | Planned (T9) |
 
 ## 2\. Data
 
@@ -53,7 +54,7 @@ Status key: **Built** (in the current code), **Planned** (in `docs/BUILD_BRIEF.m
 | S3 | All write endpoints require the owner. |  | Built |
 | S4 | The Cypher endpoint is read-only, enforced in three layers (text guard, EXPLAIN check, read transaction), row-capped. | A token leak must not allow writes through the query path | Built |
 | S5 | Security headers, CSP with nonce, rate limits, request logging without query strings, no secrets in the repo. | Internet-facing | Built (rate limits hardened in T7) |
-| S6 | Claude connects through MCP over HTTPS with the bearer token. |  | Built; the claude.ai chat connector's auth type is **Open** |
+| S6 | Claude connects through MCP over HTTPS: the bearer token (Claude Code, CLI-style clients) and OAuth (the claude.ai chat connector). |  | Bearer built; OAuth Planned (T9) |
 
 ## 4\. Deployment and operations
 
@@ -96,7 +97,7 @@ Status key: **Built** (in the current code), **Planned** (in `docs/BUILD_BRIEF.m
 
 ## 8\. Open items and risks
 
-1. Whether the claude.ai chat connector can use the bearer token (it may need OAuth or an admin-entered header).
+1. ~~Whether the claude.ai chat connector can use the bearer token~~: it needs OAuth; Task 9.
 2. First live test of Google OAuth, Drive upload, public sharing and the Drive preview embed.
 3. ~~Crossref and OpenAlex behaviour against real data~~: verified live in Task 4.
 4. ~~How santidesimone.com is hosted, and VM or Aura~~: decided, Firebase Hosting and a VM. Still open: whether `TRUST_PROXY=2` matches the deployed proxy chain.
