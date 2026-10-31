@@ -6,7 +6,8 @@ const { run, writeTx } = require('./db');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let http = (url, opts) => fetch(url, opts); // replaceable so tests never touch the network
 const setHttp = (fn) => { http = fn; };
-const workUrl = (doi) => { const email = process.env.OPENALEX_EMAIL; return `https://api.openalex.org/works/https://doi.org/${encodeURI(doi)}${email ? '?mailto=' + encodeURIComponent(email) : ''}`; };
+const config = require('./config');
+const workUrl = (doi) => { const email = config.get().openalexEmail; return `https://api.openalex.org/works/https://doi.org/${encodeURI(doi)}${email ? '?mailto=' + encodeURIComponent(email) : ''}`; };
 
 // One work by DOI -> the OpenAlex record, or null when OpenAlex does not know it. Throws on network or server errors.
 async function lookupWork(doi) {

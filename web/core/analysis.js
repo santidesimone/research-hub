@@ -16,6 +16,9 @@ const { resolveDoi } = require('../features/papers/crossref');
 const { cleanDoi } = require('../features/papers/item');
 
 const TIERS = { standard: ['core', 'standard'], deep: ['core', 'standard', 'deep'] };
+// Each link and each vocabulary name costs lookups: keep one request bounded.
+const MAX_LINKS = 200;
+const MAX_FIELDS = 300;
 const OPEN_ACCESS = { gold: 'gold', green: 'green', closed: 'closed' }; // OpenAlex's hybrid, bronze, diamond have no equivalent: left empty
 const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 const today = () => new Date().toISOString().slice(0, 10);
@@ -27,6 +30,8 @@ function check(body) {
   if (body.fields != null && (typeof body.fields !== 'object' || Array.isArray(body.fields))) throw new HttpError(400, 'fields must be an object');
   if (body.links != null && !Array.isArray(body.links)) throw new HttpError(400, 'links must be a list');
   if (body.tier != null && !TIERS[body.tier]) throw new HttpError(400, 'tier must be standard or deep');
+  if ((body.links || []).length > MAX_LINKS) throw new HttpError(400, `at most ${MAX_LINKS} links per analysis`);
+  if (Object.keys(body.fields || {}).length > MAX_FIELDS) throw new HttpError(400, `at most ${MAX_FIELDS} fields per analysis`);
 }
 
 /* ------------------------------------------------------------------ identity */

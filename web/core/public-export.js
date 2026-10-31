@@ -10,12 +10,14 @@ const config = require('./config');
 
 const keep = (props, labels) => { const allowed = publicProps(labels); return Object.fromEntries(Object.entries(props).filter(([k]) => allowed.has(k))); };
 const VOCAB = 'any(l IN labels(b) WHERE l IN $vocab)';
+// A case study marked internal or confidential stays out of the preview even if its visibility says public.
+const OPEN = (n) => `coalesce(${n}.sensitivity, 'public') = 'public'`;
 
 async function build() {
   const [nodes, extra, edges] = await Promise.all([
-    run("MATCH (a:Artifact {visibility:'public'}) RETURN a.key AS key, labels(a) AS labels, properties(a) AS props"),
-    run(`MATCH (:Artifact {visibility:'public'})-[]->(b) WHERE ${VOCAB} RETURN DISTINCT b.key AS key, labels(b) AS labels, properties(b) AS props`, { vocab: publicEntityLabels }),
-    run(`MATCH (a:Artifact {visibility:'public'})-[r]->(b) WHERE ${VOCAB} OR (b:Artifact AND b.visibility = 'public') RETURN a.key AS \`from\`, b.key AS \`to\`, type(r) AS type`, { vocab: publicEntityLabels }),
+    run(`MATCH (a:Artifact {visibility:'public'}) WHERE ${OPEN('a')} RETURN a.key AS key, labels(a) AS labels, properties(a) AS props`),
+    run(`MATCH (a:Artifact {visibility:'public'})-[]->(b) WHERE ${OPEN('a')} AND ${VOCAB} RETURN DISTINCT b.key AS key, labels(b) AS labels, properties(b) AS props`, { vocab: publicEntityLabels }),
+    run(`MATCH (a:Artifact {visibility:'public'})-[r]->(b) WHERE ${OPEN('a')} AND (${VOCAB} OR (b:Artifact AND b.visibility = 'public' AND ${OPEN('b')})) RETURN a.key AS \`from\`, b.key AS \`to\`, type(r) AS type`, { vocab: publicEntityLabels }),
   ]);
   const seen = new Set();
   const outNodes = [];

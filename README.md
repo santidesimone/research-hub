@@ -392,11 +392,14 @@ DOIs, authors, venues and arXiv IDs were checked against arXiv, publisher and UC
 
 ## Known limits
 
-- Metadata is not editable in the UI yet: change a paper by re-posting it with `?overwrite=true` (the status dropdown and the file link are the exceptions).
+- Notes and projects are edited as Markdown files (`hub sync-notes`), not in the Library; papers, methods, use cases and case studies are edited in the Library, the API, the CLI or through Claude.
 - The chat-window connector needs OAuth or an admin-entered header depending on your plan; the MCP server only accepts the bearer token.
 - Public Drive links are readable by anyone who has the URL, by your choice. Sites other than Google Drive may refuse to be embedded in the Reader; they open in a new tab.
 - Rate limiting is per instance, in memory. That is enough for one person, not for a public API.
-- **What has been run, and what has not.** The offline suite passes, the real server was exercised over HTTP and in a headless browser against a fake database and a fake Google, and the page works under its Content-Security-Policy. **Not run against live services:** Neo4j (the migrations, full-text index, notes sync, backup/restore and the `integration.js` test are written for CI and a real database), Google (OAuth consent, the first real upload, public sharing, whether the Drive preview embeds), Crossref, OpenAlex, the Docker image build, Cloud Run and the proxy rule. Expect to fix small things on first contact, and run `npm run test:integration` against a throwaway Neo4j first.
+- Paper authors and venue come from the source (Crossref, OpenAlex) and cannot be edited through `/api/items`; a paper known only by URL keeps `doi` and `arxiv_id` empty.
+- **What has been run, and what has not** (details per task in `docs/PROGRESS.md`):
+  - **Run against real services:** Neo4j 5 (all migrations, the full-text indexes, notes sync, backup and restore, and the integration suite), live Crossref and OpenAlex, the Docker image build, and the Library in Chrome (Playwright: owner, anonymous visitor, mobile width).
+  - **Not run:** Google OAuth and Drive uploads and sharing, Cloud Run and the proxy rule, and the GitHub Actions workflow itself.
 
 ## Layout
 

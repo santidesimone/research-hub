@@ -164,6 +164,10 @@ Large PDFs cannot travel through chat. Give Claude a URL (`copy_pdf_to_drive` wi
 On failure, the e2e job uploads the server log and screenshots. `deploy/cloudbuild.yaml` builds and deploys on a Cloud Build trigger (see the comment at the top of that file).
 
 ## Security checklist
+- Rate limits are per client IP. `deploy.sh` sets `TRUST_PROXY=2` (your site's rewrite plus Cloud Run), so the IP comes from what the proxies saw, not from headers a client can write. If you serve the run.app URL directly, deploy with `TRUST_PROXY=1`. Expensive endpoints (query, MCP, analysis, audit, backup and restore, import and export, enrich, notes sync) share a smaller budget (`HEAVY_RATE_LIMIT_PER_MIN`, 120/min), and sign-in allows 10 failed attempts per IP per 10 minutes. `bin/hub` waits and retries when it is rate limited.
+- In production, unexpected errors reach clients (REST and MCP) only as "Internal error" with a request id; the details go to the log.
+- The public preview is a whitelist: public items and whitelisted fields only. A case study marked `internal` or `confidential` never appears, even with `visibility: public`, and organisations never do.
+- Production start-up refuses a missing or short `HUB_API_TOKEN`, the default Neo4j password and a half-configured Drive. It warns about `TRUST_PROXY=true`, a Neo4j password under 12 characters, a missing `OPENALEX_EMAIL` and `MAX_UPLOAD_MB` above 32.
 
 - The UI and API reject everything private without the token; anonymous visitors only get the public preview.
 - `/mcp` and `/api/*` need the token; sessions are a signed cookie (HttpOnly, SameSite=Lax, Secure over https); changes made with the cookie also need an `X-Hub` header.

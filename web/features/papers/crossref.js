@@ -1,5 +1,6 @@
 // DOI -> metadata through Crossref (a public service), so a paper can be added from a DOI alone.
 const { cleanDoi } = require('./item');
+const config = require('../../core/config');
 
 const TYPES = { 'journal-article': 'journalArticle', 'proceedings-article': 'conferencePaper', 'book-chapter': 'bookSection',
   book: 'book', 'posted-content': 'preprint', report: 'report', dissertation: 'thesis' };
@@ -10,7 +11,7 @@ const setHttp = (fn) => { http = fn; };
 
 async function resolveDoi(doi) {
   const res = await http('https://api.crossref.org/works/' + encodeURIComponent(cleanDoi(doi)), {
-    headers: { 'User-Agent': `research-hub/0.7 (mailto:${process.env.OPENALEX_EMAIL || 'unknown@example.com'})` },
+    headers: { 'User-Agent': `research-hub/0.7 (mailto:${config.get().openalexEmail || 'unknown@example.com'})` },
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) return null;

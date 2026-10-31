@@ -4,6 +4,7 @@ const { requireOwner } = require('../../core/auth');
 const { run } = require('../../core/db');
 const { schema, safeLabel } = require('../../core/schema');
 const vocab = require('../../core/vocab');
+const { HttpError } = require('../../core/errors');
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -12,6 +13,7 @@ module.exports = {
   mount(app) {
     app.get('/api/vocab', requireOwner, wrap(async (req, res) => {
       const label = vocab.labelOf(req.query.kind);
+      if (String(req.query.q || '').length > 200) throw new HttpError(400, 'q is limited to 200 characters');
       const q = vocab.analyse(schema.entities[label].match, String(req.query.q || '')).norm;
       const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 12, 1), 50);
       const rows = await run(

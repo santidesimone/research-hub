@@ -31,6 +31,8 @@ const SYSTEM = new Set(['key', 'source', 'created_at', 'updated_at', 'collection
 const UNKNOWN_NAME = /^[a-z][a-z0-9_]{0,63}$/;
 const MAX_UNKNOWN = 50;
 const MAX_LIMIT = 100;
+const MAX_REFS = 100; // values per link field: each name is a vocabulary lookup
+const MAX_QUERY = 500; // characters of a list search
 
 const isSys = (f) => f.by.length === 1 && f.by[0] === 'Sys';
 const kindOf = (f) => (f.type === 'ref' ? 'edge' : f.type === 'object' ? 'json' : 'prop');
@@ -133,6 +135,7 @@ async function get(key) {
 // created when new); items must be referenced by key.
 async function resolveRefs(spec, value, by, model) {
   const list = (Array.isArray(value) ? value : [value]).filter((x) => !empty(x));
+  if (list.length > MAX_REFS) throw new HttpError(400, `${spec.ref}: at most ${MAX_REFS} values in one field`);
   const out = [];
   const warnings = [];
   for (const x of list) {
@@ -428,6 +431,7 @@ async function list(query = {}) {
     else if (spec.list) where.push(`any(x IN coalesce(n.\`${f}\`, []) WHERE x IN $${p})`);
     else where.push(`n.\`${f}\` IN $${p}`);
   }
+  if (query.q != null && String(query.q).length > MAX_QUERY) throw new HttpError(400, `q is limited to ${MAX_QUERY} characters`);
   if (query.q && String(query.q).trim()) {
     const lucene = luceneQuery(query.q);
     let keys = null;

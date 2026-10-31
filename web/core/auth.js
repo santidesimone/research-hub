@@ -4,11 +4,12 @@
 // Anonymous visitors only ever get the public preview.
 const crypto = require('crypto');
 const { BASE } = require('./env');
+const config = require('./config');
 
 const COOKIE = '__session';
 const DAYS = 30;
 
-const token = () => process.env.HUB_API_TOKEN || '';
+const token = () => config.get().token;
 const key = () => crypto.createHash('sha256').update('hub-session:' + token()).digest();
 const eq = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 

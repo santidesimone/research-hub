@@ -47,7 +47,15 @@ function schemaFor(collection) {
 }
 
 const text = (obj) => ({ content: [{ type: 'text', text: typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2).slice(0, 100000) }] });
-const fail = (e) => ({ isError: true, content: [{ type: 'text', text: e.message || String(e) }] });
+const log = require('../../core/log');
+// Our own errors (HttpError, status < 500) are meant for the caller. Anything else is logged, and in production only a
+// short message reaches the client, as with the REST API (driver messages can name hosts and queries).
+const fail = (e) => {
+  const ours = e && e.status && e.status < 500;
+  if (!ours) log.error('mcp tool failed: ' + ((e && e.stack) || String(e)));
+  const text = ours || !config.get().production ? (e.message || String(e)) : 'Internal error (see the server log)';
+  return { isError: true, content: [{ type: 'text', text }] };
+};
 const safe = (fn) => async (args) => { try { return text(await fn(args)); } catch (e) { return fail(e); } };
 
 function buildServer() {
@@ -177,6 +185,7 @@ function buildServer() {
 
 module.exports = {
   name: 'mcp',
+  toolError: fail,
   mount(app) {
     app.post('/mcp', requireOwner, express.json({ limit: '2mb' }), async (req, res) => {
       const server = buildServer();

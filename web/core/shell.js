@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { BASE } = require('./env');
+const config = require('./config');
 
 const WEB = path.join(__dirname, '..');
 const TEMPLATE = path.join(WEB, 'public', 'index.html');
@@ -13,7 +14,7 @@ const skinNames = () => fs.readdirSync(SKINS, { withFileTypes: true }).filter((d
 // -> { html, csp }: the page and the Content-Security-Policy extras this skin needs (extra font/style hosts).
 function render(req, nonce) {
   const names = skinNames();
-  const wanted = String(req.query.skin || process.env.HUB_SKIN || 'paper');
+  const wanted = String(req.query.skin || config.get().skin);
   const skin = names.includes(wanted) ? wanted : names[0];
   const meta = JSON.parse(fs.readFileSync(path.join(SKINS, skin, 'skin.json'), 'utf8'));
   const fonts = (meta.fonts || []).map((u) => `<link rel="stylesheet" href="${u}">`).join('\n');

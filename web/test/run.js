@@ -1206,6 +1206,7 @@ const seed = require('../../data/seed_papers.json');
     assert.deepEqual([vr.kind, vr.items[0].key], ['Topic', 'topic:zero-knowledge-proof']);
     assert.equal(vq[1].q, 'zero knowledge proof', 'searched in the normalised form'); assert.ok(vq[0].includes('MATCH (n:Topic)') && /LIMIT 50$/.test(vq[0].trim()), 'limit capped');
     assert.equal((await fetch(sBase + '/api/vocab?kind=Paper&q=x', { headers: { Authorization: 'Bearer abc' } })).status, 400);
+    assert.equal((await fetch(sBase + '/api/vocab?kind=Topic&q=' + 'x'.repeat(201), { headers: { Authorization: 'Bearer abc' } })).status, 400, 'look-up text is capped');
     runImpl = async (q) => { vq = [q]; return []; };
     await fetch(sBase + '/api/graph', { headers: { Authorization: 'Bearer abc' } });
     assert.ok(vq[0].includes('Topic') && vq[0].includes('Domain') && vq[0].includes('Organisation'), 'the graph includes every vocabulary label');
@@ -1224,8 +1225,8 @@ const seed = require('../../data/seed_papers.json');
         try { rec.body = raw.length && /json/.test(rec.type) ? JSON.parse(raw) : null; } catch { rec.body = null; }
         seen.push(rec);
         const hit = Object.entries(routes).find(([k]) => `${req.method} ${req.url.split('?')[0]}` === k || `${req.method} ${req.url}` === k);
-        const [status, out] = hit ? (typeof hit[1] === 'function' ? hit[1](rec) : hit[1]) : [404, { error: 'no route ' + req.url }];
-        res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(out));
+        const [status, out, hdrs = {}] = hit ? (typeof hit[1] === 'function' ? hit[1](rec) : hit[1]) : [404, { error: 'no route ' + req.url }];
+        res.writeHead(status, { 'Content-Type': 'application/json', ...hdrs }); res.end(JSON.stringify(out));
       });
     });
     await new Promise((ok) => fake.listen(0, '127.0.0.1', ok));
@@ -1316,6 +1317,16 @@ const seed = require('../../data/seed_papers.json');
       r = await hub(['audit']);
       assert.ok(r.stdout.includes('low confidence: 1') && r.stdout.includes('a  Item A  f2'), r.stdout);
 
+      // rate limited: wait as told and retry; give up after HUB_MAX_RETRIES
+      let tries = 0;
+      reset({ 'GET /api/items/method%3Aa': () => (tries++ < 1 ? [429, { error: 'Too many heavy requests' }, { 'Retry-After': '2' }] : [200, { key: 'method:a', collection: 'method', fields: {}, provenance: {}, links: { out: [], in: [] } }]) });
+      const t0 = Date.now();
+      r = await hub(['item', 'get', 'method:a', '--json']);
+      assert.equal(r.code, 0, r.stderr); assert.equal(seen.length, 2); assert.match(r.stderr, /rate limited; retrying in 2s/); assert.ok(Date.now() - t0 >= 1900, 'Retry-After is honoured');
+      tries = 0;
+      r = await hub(['item', 'get', 'method:a'], { extraEnv: { HUB_MAX_RETRIES: '0' } });
+      assert.equal(r.code, 1); assert.match(r.stderr, /429 Too many heavy requests/);
+
       // schema of a collection
       reset({ 'GET /api/schema': [200, publicView()] });
       r = await hub(['schema', 'case-studies']);
@@ -1348,6 +1359,81 @@ const seed = require('../../data/seed_papers.json');
     assert.ok(routes.has('PATCH /api/items/{key}') && routes.has('PUT /api/items/{key}/links') && routes.has('GET /api/vocab'), [...routes].join(', '));
     assert.deepEqual([...routes].filter((r) => !documented.has(r)).sort(), [], 'every route is in web/openapi.json');
     assert.deepEqual([...documented].filter((r) => !routes.has(r)).sort(), [], 'openapi.json documents no route that does not exist');
+  }
+
+  /* ------------------------------------------------------------ hardening (Task 7) */
+  {
+    const config = require('../core/config');
+    const G0 = { HUB_API_TOKEN: 'x'.repeat(32), NEO4J_PASSWORD: 'a-long-enough-password' };
+    // TRUST_PROXY
+    assert.deepEqual(['', '2', 'true', 'false', '10.0.0.0/8'].map((v) => config.get({ TRUST_PROXY: v }).trustProxy), ['loopback', 2, true, false, '10.0.0.0/8']);
+    assert.strictEqual(config.get({ TRUST_PROXY: '2' }).trustProxy, 2, 'a hop count is a number (a string would be read as an address)');
+    assert.equal(config.get({ NODE_ENV: 'production' }).trustProxy, 1, 'production believes one proxy by default (Cloud Run), never every client-written entry');
+    const prodWarn = (extra) => config.problems(config.get({ NODE_ENV: 'production', ...G0, OPENALEX_EMAIL: 'me@x.org', ...extra })).warnings.join(' | ');
+    assert.ok(/TRUST_PROXY=true/.test(prodWarn({ TRUST_PROXY: 'true' })) && !/TRUST_PROXY/.test(prodWarn({})));
+    assert.ok(/NEO4J_PASSWORD is shorter than 12/.test(prodWarn({ NEO4J_PASSWORD: 'short-pw' })));
+    assert.ok(/OPENALEX_EMAIL is not set/.test(prodWarn({ OPENALEX_EMAIL: '' })) && !/OPENALEX_EMAIL/.test(prodWarn({})));
+    assert.ok(/MAX_UPLOAD_MB is above 32/.test(prodWarn({ MAX_UPLOAD_MB: '50' })) && !/MAX_UPLOAD/.test(prodWarn({ MAX_UPLOAD_MB: '30' })));
+    assert.deepEqual(config.problems(config.get({ NODE_ENV: 'production', ...G0 })).errors, [], 'warnings, not errors: an upgrade must not stop a running deployment');
+    assert.deepEqual(config.get({ PDF_FETCH_ALLOWED_HOSTS: ' A.org, b.org ,' }).pdfFetchAllowedHosts, ['a.org', 'b.org']);
+    assert.equal(config.get({}).skin, 'paper');
+    // what trust proxy does to the client IP
+    const appT = require('express')();
+    let tp = 1;
+    appT.get('/ip', (req, res) => { appT.set('trust proxy', tp); res.json({ ip: req.ip }); });
+    const srvT = await new Promise((ok) => { const x = appT.listen(0, '127.0.0.1', () => ok(x)); });
+    const ipOf = async (v, xff) => { tp = v; await fetch(`http://127.0.0.1:${srvT.address().port}/ip`); return (await (await fetch(`http://127.0.0.1:${srvT.address().port}/ip`, { headers: { 'X-Forwarded-For': xff } })).json()).ip; };
+    try {
+      assert.equal(await ipOf(1, 'spoofed-by-client, 203.0.113.9'), '203.0.113.9', 'one hop: the entry the proxy appended');
+      assert.equal(await ipOf(true, 'spoofed-by-client, 203.0.113.9'), 'spoofed-by-client', 'why true is dangerous');
+    } finally { srvT.close(); }
+    // heavy budget and login budget are wired in server.js
+    const { HEAVY } = require('../core/ratelimit');
+    for (const p of ['/api/query', '/mcp', '/api/analysis', '/api/audit', '/api/backup', '/api/restore', '/api/import', '/api/export', '/api/enrich', '/api/notes/sync']) assert.ok(HEAVY.includes(p), p);
+    const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    assert.ok(serverSrc.includes('root.use(HEAVY, limiter({ max: cfg.heavyRateLimitPerMin') && serverSrc.includes("app.set('trust proxy', cfg.trustProxy)"));
+    assert.ok(!/process\.env\./.test(serverSrc));
+    // no module reads the environment except config.js and env.js (CLAUDE.md, rule 8)
+    const readsEnv = [];
+    const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else if (f.endsWith('.js') && /process\.env\b/.test(fs.readFileSync(f, 'utf8'))) readsEnv.push(path.relative(path.join(__dirname, '..'), f)); } };
+    for (const d of ['core', 'features', 'migrations']) walk(path.join(__dirname, '..', d));
+    assert.deepEqual(readsEnv.sort(), ['core/config.js', 'core/env.js']);
+    // OPENALEX_EMAIL reaches Crossref through config
+    const crossref = require('../features/papers/crossref');
+    let ua = null;
+    crossref.setHttp(async (_u, o) => { ua = o.headers['User-Agent']; return { ok: false, status: 404, json: async () => ({}) }; });
+    process.env.OPENALEX_EMAIL = 'owner@example.org';
+    await crossref.resolveDoi('10.1/x');
+    delete process.env.OPENALEX_EMAIL;
+    assert.match(ua, /mailto:owner@example\.org/);
+    crossref.setHttp((u, o) => fetch(u, o));
+    // MCP: our errors reach the client; anything else is masked in production
+    const mcp = require('../features/mcp');
+    const { HttpError } = require('../core/errors');
+    const silence = console.error; console.error = () => {};
+    try {
+      assert.equal(mcp.toolError(new HttpError(400, 'title is required')).content[0].text, 'title is required');
+      assert.equal(mcp.toolError(new Error('connection to 10.0.0.5:7687 refused')).content[0].text, 'connection to 10.0.0.5:7687 refused', 'locally the detail helps');
+      process.env.NODE_ENV = 'production';
+      assert.equal(mcp.toolError(new Error('connection to 10.0.0.5:7687 refused')).content[0].text, 'Internal error (see the server log)');
+      assert.equal(mcp.toolError(new HttpError(404, 'No such item')).content[0].text, 'No such item');
+    } finally { delete process.env.NODE_ENV; console.error = silence; }
+    // size caps
+    const analysisMod = require('../core/analysis');
+    await assert.rejects(() => analysisMod.save({ collection: 'paper', doi: '10.1/x', model: 'm', links: Array(201).fill({ rel: 'ABOUT', target: 'x' }) }), (e) => e.status === 400 && /at most 200 links/.test(e.message));
+    await assert.rejects(() => analysisMod.save({ collection: 'paper', doi: '10.1/x', model: 'm', fields: Object.fromEntries(Array.from({ length: 301 }, (_, i) => ['f' + i, 1])) }), (e) => e.status === 400 && /at most 300 fields/.test(e.message));
+    runImpl = async (q) => (q.includes('AS inc') ? [{ labels: ['Artifact', 'Method'], props: { key: 'method:cap', title: 'Cap' }, out: [], inc: [] }] : []);
+    await assert.rejects(() => items.update('method:cap', { domain: Array.from({ length: 101 }, (_, i) => 'd' + i) }), (e) => e.status === 400 && /at most 100 values/.test(e.message));
+    await assert.rejects(() => items.list({ collection: 'method', q: 'x'.repeat(501) }), (e) => e.status === 400 && /q is limited to 500/.test(e.message));
+    runImpl = async () => [];
+    // the public preview skips internal and confidential case studies, and their edges
+    let pubQ = [];
+    runImpl = async (q) => { pubQ.push(q); return []; };
+    pubExport.invalidate(); await pubExport.read(); pubExport.invalidate();
+    assert.equal(pubQ.length, 3);
+    for (const q of pubQ) assert.ok(q.includes("coalesce(a.sensitivity, 'public') = 'public'"), q);
+    assert.ok(pubQ[2].includes("coalesce(b.sensitivity, 'public') = 'public'"), 'and items linked from public ones');
+    runImpl = async () => [];
   }
 
   /* ------------------------------------------------------------ search query building */

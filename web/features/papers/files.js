@@ -11,10 +11,7 @@ const config = require('../../core/config');
 
 const maxBytes = () => config.get().maxUploadBytes;
 
-function allowedHosts() {
-  return (process.env.PDF_FETCH_ALLOWED_HOSTS || 'arxiv.org,export.arxiv.org,discovery.ucl.ac.uk')
-    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-}
+const allowedHosts = () => config.get().pdfFetchAllowedHosts;
 
 // Download a PDF so it can be copied to Drive. Only https, only allow-listed hosts, redirects re-checked at every hop.
 async function fetchPdf(url) {

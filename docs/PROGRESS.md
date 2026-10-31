@@ -11,7 +11,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | 4 Claude analysis, single-call save, audit | done (2026-10-30) | See "Task 4" below. |
 | 5 Library UI: Collections, forms, audit | done (2026-10-30) | See "Task 5" below. |
 | 6 CLI, API docs, CI, docs | done (2026-10-30), CI not run yet | See "Task 6" below. |
-| 7 Hardening | not started | |
+| 7 Hardening | done (2026-10-31) | See "Task 7" below. |
 
 ## Task 0. Baseline against real services
 
@@ -284,3 +284,33 @@ Update at the end of every task. For each: what changed, what was tested for rea
 **Not tested / open**
 - **CI itself has not run.** Nothing has been pushed (that needs the owner's go-ahead). The acceptance "CI green" is open until the first push. Risks to watch on the first run: Chrome at `/usr/bin/google-chrome` on the runner, and live Crossref and OpenAlex availability for the seed.
 - `hub analyze file.pdf` upload: only the offline test (fake server) covered it; the real Drive needs credentials.
+
+## Task 7. Hardening pass
+
+**Reviewed, and what changed**
+- **Rate limits:**
+  - The heavy budget used to cover only `/api/query` and `/mcp`. It now also covers `/api/analysis` (live Crossref and OpenAlex, many writes), `/api/audit` (scans every item), backup/restore, import/export, enrich and notes sync (`HEAVY` in `core/ratelimit.js`).
+  - `bin/hub` waits and retries on 429 (honouring Retry-After, at most a minute, `HUB_MAX_RETRIES`), so a long `hub restore` survives the stricter budget.
+  - Sign-in already had its own limit (10 failed attempts per IP per 10 minutes); it is now documented.
+  - **Found:** `trust proxy` was `true`, so any client could choose its rate-limit IP with `X-Forwarded-For`. That applies to every per-IP limit, sign-in included. It is now `TRUST_PROXY`, a hop count: 1 in production (Cloud Run) by default, loopback locally. `deploy.sh` passes 2 (the site rewrite plus Cloud Run), and production warns if it is set to `true`.
+- **Request sizes:** body limits were already per endpoint (2 MB for items and analysis, 30 MB restore, 2 KB login). New caps on fan-out: an analysis takes at most 200 links and 300 fields, a link field at most 100 values (each is a vocabulary lookup), a list search at most 500 characters, and a vocabulary look-up at most 200.
+- **Error messages:** REST already answered "Internal error" plus a request id in production. **Found:** MCP tools returned any error's raw message, including driver errors that can name hosts and queries. Now our own 4xx messages pass through, anything else is logged and masked in production.
+- **Backup and restore:** the label and relationship whitelists already come from the schema (Task 1). An integration test now proves the round trip on real Neo4j:
+  - Coverage: all four collections; Person, Concept, Topic, Domain, Venue, Organisation and Dataset; AUTHORED_BY, PUBLISHED_IN, ABOUT, USES, INTRODUCES, ADDRESSES (with evidence), INSTANCE_OF, INVOLVES and FOR; provenance, object parts and the personal layer.
+  - Backup, delete it all, restore, and back up again: identical.
+  - Timestamps come back as datetimes (sorting by `updated_at` still works).
+- **Public export:** already per-type whitelists, with organisations kept out (Task 1). **Found:** a case study with `visibility: public` but `sensitivity: internal` or `confidential` was exported. It no longer is, and neither are its links.
+- **Production config:** the existing refusals (token, default password, half-configured Drive) are re-verified. New warnings, not errors, so an upgrade cannot stop a running deployment: `TRUST_PROXY=true`, a Neo4j password under 12 characters, missing `OPENALEX_EMAIL`, and `MAX_UPLOAD_MB` above Cloud Run's 32.
+  - `OPENALEX_EMAIL`, `HUB_SKIN`, `PDF_FETCH_ALLOWED_HOSTS` and the owner token were read directly from the environment in five modules. They now go through `core/config.js` (CLAUDE.md, rule 8), and a test fails if any module other than `config.js` or `env.js` touches `process.env`.
+- Docs: `_env.example` (`TRUST_PROXY`, the heavy list), the `deploy/README.md` security checklist, `deploy.sh`, openapi (rate and size limits, 429 and 413), and the README "Known limits", which still said Neo4j, Crossref, OpenAlex and the Docker build had never been run.
+
+**Tested for real**
+- Offline: trust-proxy parsing and its effect on `req.ip` through Express (one hop takes the proxy-appended entry; `true` takes the client's), the production warnings, the heavy list and its wiring, the no-direct-env rule, `OPENALEX_EMAIL` reaching Crossref through config, MCP masking (production and local), every cap, the export's sensitivity rule, and the CLI retry with Retry-After timing and the give-up path. Mutation check: 21/21 of the current mutations (the login limiter mutation no longer applies).
+- Integration on a fresh Neo4j 5: the round trip, 5 of 5 runs. Two deliberate breaks were caught on the real database: backing up only the old labels, and restoring timestamps as text (that one was missed at first, so I added the datetime assertion).
+- The real server in production mode: start-up warnings; `/api/audit` hitting the heavy limit with 429 and `Retry-After: 60`, while `/api/items` stays in the general budget; failed sign-ins limited.
+- The full e2e set again on fresh data (browser owner 15/15, public and mobile 9/9, CLI end to end), `npm test` and the integration suite.
+
+**Not tested / open**
+- The proxy hop count on the real deployment (Cloud Run plus the site rewrite) was not checked. If 2 is wrong for your hosting, every visitor shares one rate-limit bucket (too many hops) or IPs become spoofable again (too few).
+- Rate limits stay per instance and in memory (documented).
+- Nothing pushed; CI has not run (see Task 6).

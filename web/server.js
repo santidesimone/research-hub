@@ -19,12 +19,12 @@ const registry = require('./core/registry');
 const migrate = require('./core/migrate');
 const shell = require('./core/shell');
 const security = require('./core/security');
-const { limiter } = require('./core/ratelimit');
+const { limiter, HEAVY } = require('./core/ratelimit');
 const { run } = require('./core/db');
 
 const app = express();
 app.disable('x-powered-by');
-app.set('trust proxy', true); // behind Cloud Run / a proxy: real client IP and https detection
+app.set('trust proxy', cfg.trustProxy); // proxies to believe for client IP and https (TRUST_PROXY, core/config.js)
 app.use(log.requestLogger);
 app.use(security.headers);
 app.use(compression({ filter: (req, res) => !/\/mcp(\/|$)/.test(req.originalUrl.split('?')[0]) && compression.filter(req, res) })); // MCP may stream
@@ -39,7 +39,8 @@ root.get('/readyz', async (_req, res) => { // readiness: the database answers
 });
 
 root.use('/api', limiter({ max: cfg.rateLimitPerMin, name: 'requests' }));
-root.use(['/api/query', '/mcp'], limiter({ max: cfg.heavyRateLimitPerMin, name: 'queries' }));
+root.use(HEAVY, limiter({ max: cfg.heavyRateLimitPerMin, name: 'heavy requests' }));
+// sign-in has its own, stricter limit on failed attempts (core/auth.js)
 root.use(['/api', '/mcp'], (_req, res, next) => { res.set('Cache-Control', 'private, no-store'); next(); });
 
 for (const dir of fs.readdirSync(path.join(__dirname, 'features')).sort()) {

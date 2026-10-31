@@ -190,6 +190,77 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
   await db.exec('MATCH (n) WHERE (n:Topic OR n:Venue) AND n.norm ENDS WITH $tag DETACH DELETE n', { tag });
   crossref.setHttp((url, o) => fetch(url, o)); openalex.setHttp((url, o) => fetch(url, o));
 
+  // backup -> delete -> restore gives back exactly the same graph: all four collections, every vocabulary label,
+  // typed links with their evidence, provenance, object parts and the personal layer (Task 7 acceptance)
+  {
+    const RDOI = `10.8888/rt-${tag}`;
+    crossref.setHttp(async (url) => (url.endsWith(encodeURIComponent(RDOI))
+      ? R({ message: { type: 'journal-article', title: [T('Round trip paper')], DOI: RDOI, author: [{ given: 'Ada', family: T('Lovelace') }], issued: { 'date-parts': [[2021]] }, 'container-title': [T('Round Trip Journal')] } })
+      : R({}, 404)));
+    openalex.setHttp(async () => R({ id: 'https://openalex.org/W9', cited_by_count: 7, open_access: { oa_status: 'green' }, language: 'en' }));
+    const rm = await items.create({ collection: 'method', fields: { title: T('RT method'), kind: 'technique', domain: ['payments'], procedure: ['a', 'b'] } });
+    const ru = await items.create({ collection: 'use_case', fields: { title: T('RT use case'), goal: 'g', actors: [{ role: 'payer' }], visibility: 'public', summary: 's' } });
+    const rc = await items.create({ collection: 'case_study', fields: { title: T('RT case'), case_type: 'pilot', organisations: [T('RT Org')], sector: 'payments', period: { from: '2023-01' }, visibility: 'public', sensitivity: 'confidential' } });
+    const rp = await analysis.save({ collection: 'paper', doi: RDOI, model: 'rt-model', confidence: { main_claim: 'low' },
+      fields: { main_claim: 'c', evidence: { type: 'survey', n: 42 }, key_findings: [{ text: 'k', location: 'p. 1' }] },
+      links: [{ rel: 'INTRODUCES', target: rm.key }, { rel: 'ABOUT', target: T('RT topic'), kind: 'Topic' }, { rel: 'USES', target: T('RT dataset'), kind: 'Dataset' }] });
+    await items.link(rm.key, { rel: 'ADDRESSES', target: ru.key, evidence: 'why', location: 's. 1', confidence: 'high' });
+    await items.link(rc.key, { rel: 'INSTANCE_OF', target: ru.key });
+    const concept = await artifacts.add('paper', { title: T('RT tagged paper'), tags: [`topic:rt-concept-${tag}`] });
+    await require('../features/personal').setState(rp.key, { status: 'reading' });
+    const mine = [rm.key, ru.key, rc.key, rp.key, concept.key];
+
+    // what to compare: these items, everything they link to, their personal nodes, and the relationships among them
+    const pick = (dump) => {
+      const keys = new Set(mine);
+      for (const r of dump.rels) if (mine.includes(r.from)) keys.add(r.to);
+      for (const k of mine) keys.add('personal:' + k);
+      const nodes = dump.nodes.filter((n) => keys.has(n.props.key)).map((n) => ({ labels: [...n.labels].sort(), props: n.props })).sort((a, b) => (a.props.key < b.props.key ? -1 : 1));
+      const rels = dump.rels.filter((r) => keys.has(r.from) && keys.has(r.to)).sort((a, b) => (`${a.from}|${a.type}|${a.to}` < `${b.from}|${b.type}|${b.to}` ? -1 : 1));
+      return { nodes, rels };
+    };
+    const dump = await backup.exportAll();
+    const before = pick(dump);
+    const labels = new Set(before.nodes.flatMap((n) => n.labels));
+    for (const l of ['Paper', 'Method', 'UseCase', 'CaseStudy', 'Person', 'Concept', 'Topic', 'Domain', 'Venue', 'Organisation', 'Dataset', 'Personal']) assert.ok(labels.has(l), `the backup covers ${l}`);
+    const relTypes = new Set(before.rels.map((r) => r.type));
+    for (const t of ['AUTHORED_BY', 'PUBLISHED_IN', 'ABOUT', 'USES', 'INTRODUCES', 'ADDRESSES', 'INSTANCE_OF', 'INVOLVES', 'FOR']) assert.ok(relTypes.has(t), `the backup covers ${t}`);
+    const paperNode = before.nodes.find((n) => n.props.key === rp.key).props;
+    assert.ok(paperNode.provenance_json && paperNode.evidence__n === 42 && paperNode.record_status === 'auto');
+
+    // delete all of it (vocabulary included), then restore the whole backup
+    await db.exec('UNWIND $keys AS k MATCH (n {key: k}) DETACH DELETE n', { keys: before.nodes.map((n) => n.props.key) });
+    assert.equal((await db.run('UNWIND $keys AS k MATCH (n {key: k}) RETURN count(n) AS c', { keys: before.nodes.map((n) => n.props.key) }))[0].c, 0);
+    const res = await backup.restore(dump);
+    assert.equal(res.rels_skipped, 0);
+    const after = pick(await backup.exportAll());
+    assert.deepEqual(after, before, 'identical after backup, delete and restore');
+    // and timestamps are datetimes again, not text (the items list sorts on updated_at.epochMillis)
+    const stamps = await db.run('UNWIND $keys AS k MATCH (n {key: k}) WHERE n.created_at IS NOT NULL RETURN n.key AS key, n.created_at.epochMillis AS c, n.updated_at.epochMillis AS u', { keys: before.nodes.map((n) => n.props.key) });
+    assert.ok(stamps.length >= mine.length && stamps.every((x) => Number.isInteger(x.c)), 'created_at restored as a datetime');
+    const sorted = await items.list({ collection: 'method', q: tag, sort: '-updated_at' });
+    assert.ok(sorted.items.some((x) => x.key === rm.key), 'and sorting by updated_at still works');
+    const back = await items.get(rp.key);
+    assert.deepEqual([back.fields.evidence, back.provenance.main_claim.confidence, back.fields.venue.name], [{ type: 'survey', n: 42 }, 'low', T('Round Trip Journal')], 'readable through the API again');
+
+    // the public preview of the restored graph: whitelisted fields, no confidential case study, no organisations
+    publicExport.invalidate();
+    const pubRT = JSON.parse((await publicExport.read()).text);
+    const pubU = pubRT.nodes.find((n) => n.key === ru.key);
+    assert.deepEqual(Object.keys(pubU.props).sort(), ['key', 'summary', 'title']);
+    assert.ok(!pubRT.nodes.some((n) => n.key === rc.key), 'a confidential case study stays private even when marked public');
+    assert.ok(!pubRT.edges.some((e) => e.from === rc.key || e.to === rc.key));
+    await items.update(rc.key, { sensitivity: 'public' });
+    publicExport.invalidate();
+    const pubRT2 = JSON.parse((await publicExport.read()).text);
+    assert.ok(pubRT2.nodes.some((n) => n.key === rc.key) && pubRT2.edges.some((e) => e.from === rc.key && e.to === ru.key), 'once public, it and its link appear');
+    assert.ok(!pubRT2.nodes.some((n) => n.labels.includes('Organisation')) && pubRT2.nodes.some((n) => n.key === 'domain:payments'), 'organisations never; domains yes');
+
+    for (const k of mine) await items.remove(k).catch(() => artifacts.remove(k));
+    await db.exec('MATCH (n) WHERE (n:Topic OR n:Dataset OR n:Organisation OR n:Venue OR n:Person OR n:Concept) AND n.norm CONTAINS $tag DETACH DELETE n', { tag });
+    crossref.setHttp((url, o) => fetch(url, o)); openalex.setHttp((url, o) => fetch(url, o));
+  }
+
   // notes sync: upsert, edges to the paper and a concept, prune; methods are skipped and never pruned
   const entries = [
     { path: `notes/it-${stamp}-a.md`, meta: { title: 'Note A', annotates: [paperKey], concepts: ['integration-testing'], visibility: 'private' }, body: '# A\ntext' },

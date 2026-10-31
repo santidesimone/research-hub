@@ -57,13 +57,22 @@ const HELP = `hub: research hub client   (${url})
   hub config --url <base url> --token <token>     save connection settings
 `;
 
+const MAX_RETRIES = Number(process.env.HUB_MAX_RETRIES || 5);
 async function call(method, p, body, extra = {}) {
   const headers = { Authorization: `Bearer ${token}`, ...(extra.headers || {}) };
   let payload = extra.raw;
   if (body !== undefined) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
   let res;
-  try { res = await fetch(url + p, { method, headers, body: payload }); }
-  catch (e) { fail(`cannot reach ${url}: ${e.message}`); }
+  // a 429 means slow down, not stop: wait as told (Retry-After, at most a minute) and try again, so a long
+  // `hub restore` or `hub audit --accept-all-unchanged` survives the server's rate limits
+  for (let attempt = 0; ; attempt++) {
+    try { res = await fetch(url + p, { method, headers, body: payload }); }
+    catch (e) { fail(`cannot reach ${url}: ${e.message}`); }
+    if (res.status !== 429 || attempt >= MAX_RETRIES) break;
+    const wait = Math.min(60, Math.max(1, Number(res.headers.get('retry-after')) || 5));
+    console.error(`rate limited; retrying in ${wait}s`);
+    await new Promise((r) => setTimeout(r, wait * 1000));
+  }
   const textBody = await res.text();
   let data; try { data = JSON.parse(textBody); } catch { data = textBody; }
   if (!res.ok) fail(`${res.status} ${(data && data.error) || textBody.slice(0, 200)}`);

@@ -24,4 +24,7 @@ function limiter({ windowMs = 60000, max = 600, name = 'requests' } = {}) {
   };
 }
 
-module.exports = { limiter };
+// Endpoints that cost real work (database scans, outside services, bulk writes) share the smaller "heavy" budget.
+const HEAVY = ['/api/query', '/mcp', '/api/analysis', '/api/audit', '/api/backup', '/api/restore', '/api/import', '/api/export', '/api/enrich', '/api/notes/sync'];
+
+module.exports = { limiter, HEAVY };
