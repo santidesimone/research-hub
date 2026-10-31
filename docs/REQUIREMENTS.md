@@ -33,7 +33,7 @@ Status key: **Built** (in the current code), **Planned** (in `docs/BUILD_BRIEF.m
 | :---- | :---- | :---- | :---- |
 | D1 | **Neo4j is the only system of record.** | Single source of truth for items and relationships | Built |
 | D2 | **The database stores links, never files.** A paper keeps `file_url` (and `drive_file_id` only when the hub uploaded it). | Keep the graph small and portable | Built |
-| D3 | PDFs the hub uploads go to the owner's **own Google Drive**, in one dedicated folder, shared "anyone with the link". Deleting a paper trashes its hub-uploaded file. Drive is required for uploads (no local-folder fallback). The owner accepts that links are public. | Simple private cloud with embeddable links | Built; live test Open |
+| D3 | PDFs the hub uploads go to the owner's **own Google Drive**, in one dedicated folder, shared "anyone with the link". Deleting a paper trashes its hub-uploaded file. Drive is required for uploads (no local-folder fallback). The owner accepts that links are public. | Simple private cloud with embeddable links | Built; tested live 2026-10-31 (copy from arXiv, public link, trash on delete) |
 | D4 | Note text stays in Neo4j (`body`). | Searchable, no redeploy to change notes | Built |
 | D5 | `schema/schema.json` is the single source of truth for types, fields, relations and the public whitelist. | UI, API, MCP and migrations stay in step | Built (fields and layout hints in T1) |
 | D6 | **Additive schema evolution**: new fields optional, old items stay valid, renames and removals via numbered migrations, per-type `schema_version`. | Improve the schema without breaking anything | Built (T1; migrations 005 to 010) |
@@ -61,7 +61,7 @@ Status key: **Built** (in the current code), **Planned** (in `docs/BUILD_BRIEF.m
 | ID | Requirement | Why | Status |
 | :---- | :---- | :---- | :---- |
 | P1 | Runs locally with `docker compose` (Neo4j) and Node, with no cloud account. One command: `./scripts/local.sh`. | Develop and use offline | Built |
-| P2 | Deploys to Google Cloud (Cloud Run for the app, a VM for Neo4j, Secret Manager) and is served at `santidesimone.com/research-hub` through a transparent proxy (`BASE_PATH`). | Owner's domain and cloud | Built; never run live. Decided: GCP project `research-hub-513302`, Neo4j on a VM, santidesimone.com on Firebase Hosting |
+| P2 | Deploys to Google Cloud (Cloud Run for the app, a VM for Neo4j, Secret Manager) and is served at `santidesimone.com/research-hub` through a transparent proxy (`BASE_PATH`). | Owner's domain and cloud | Deployed 2026-10-31 to `research-hub-513302` (Cloud Run, scaled to zero; Neo4j on a free-tier e2-micro with no public IP; budget guard). Serving at `santidesimone.com/research-hub` is still Open (Firebase rewrite needs the service in the Firebase project) |
 | P3 | The same code and image run in both modes; only environment variables differ. | Easy move to the cloud | Built |
 | P4 | Production refuses to start with a weak token, the default database password, or half-configured Drive. | Fail safe on the internet | Built (plus warnings for weak proxy, password and polite-pool settings in T7) |
 | P5 | Nightly Neo4j disk snapshots; CI runs unit and integration tests and builds the image. | Recovery and regression safety | Built (browser and CLI checks added to CI in T6); CI unrun |
@@ -98,7 +98,7 @@ Status key: **Built** (in the current code), **Planned** (in `docs/BUILD_BRIEF.m
 ## 8\. Open items and risks
 
 1. ~~Whether the claude.ai chat connector can use the bearer token~~: it needs OAuth; Task 9.
-2. First live test of Google OAuth, Drive upload, public sharing and the Drive preview embed.
+2. ~~First live test of Google OAuth, Drive upload, public sharing~~: done on the deployed hub (2026-10-31). Still open: the Drive preview embed in the reader. A trashed file stays reachable by its link until the trash is emptied (Drive empties it after 30 days).
 3. ~~Crossref and OpenAlex behaviour against real data~~: verified live in Task 4.
 4. ~~How santidesimone.com is hosted, and VM or Aura~~: decided, Firebase Hosting and a VM. Still open: whether `TRUST_PROXY=2` matches the deployed proxy chain.
 5. Whether the Drive "anyone with the link" files should stay public once the library holds anything sensitive.

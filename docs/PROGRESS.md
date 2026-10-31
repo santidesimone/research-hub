@@ -410,3 +410,20 @@ Update at the end of every task. For each: what changed, what was tested for rea
 - A real upload to Google Drive (Drive is not configured here; the same open item as D3).
 - A real download of a snapshot from a live host.
 
+## Deployment to Google Cloud (2026-10-31)
+
+**Done, live, in `research-hub-513302` (us-central1)**
+- Neo4j on an e2-micro (free tier), Container-Optimized OS, **no public IP** (Neo4j pulled through an Artifact Registry mirror of Docker Hub over Private Google Access), nightly disk snapshots (14 days). Heap 256 MB and page cache 64 MB: 384 MB and 128 MB put the VM under constant memory pressure (requests over a minute).
+- Cloud Run `research-hub`, `MIN_INSTANCES=0`, `TRUST_PROXY=1` (served on its run.app URL for now), app images cleaned to the newest 2.
+- Budget guard: a $5/month budget with emails at 20/60/100%; at 100% a function stops the VM and closes the app to public traffic (nothing deleted). Wiring tested with a harmless notification (it found a bug: the function receives the plain Pub/Sub message; fixed and tested).
+- Google Drive: OAuth client (Desktop app, `drive.file`, in production), secrets in Secret Manager.
+
+**Tested live**
+- `/healthz`, `/readyz` (the database over the private network), sign-in with the owner token (cookie), bearer API, 401 without a token, security headers.
+- Drive: `hub drive` created the folder; a PDF copied from arXiv into Drive and linked; its link opens anonymously; deleting the paper put the file in the Drive trash (checked through the Drive API).
+
+**Not tested / open**
+- `santidesimone.com/research-hub` (Firebase rewrite to a service in another project): to decide.
+- The claude.ai chat connector: Task 9.
+- The real budget stop (it would take the hub down); behaviour of the e2-micro under a large library.
+
