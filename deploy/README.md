@@ -86,6 +86,21 @@ Sign in with the token, then load data from your computer: `hub add 10.1007/978-
 
 Your Markdown notes are not in the image. Keep them in a folder (ideally a git repo) and push them with `hub sync-notes ./content`.
 
+## 4b. Budget guard (recommended, free)
+
+Google budgets only alert; they never stop spending. `deploy/budget-guard.sh` creates a budget for the project (default $5 a month; emails at 20%, 60% and 100%) and a small function (`deploy/budget-guard/`) that, once the month's cost reaches the budget, **stops the Neo4j VM and closes the app to public traffic**. Nothing is deleted: the disk and its snapshots stay.
+
+```bash
+BILLING_ACCOUNT=$(gcloud billing projects describe $PROJECT --format='value(billingAccountName)' | cut -d/ -f2) ./deploy/budget-guard.sh
+```
+
+Billing data reaches the budget a few hours late, so this bounds spending; it is not an instant cap. To resume after it fired (raise the budget first, or it fires again):
+
+```bash
+gcloud compute instances start neo4j-hub --zone $ZONE
+gcloud run services update research-hub --region $REGION --ingress all
+```
+
 ## 5. Make santidesimone.com/research-hub reach it (transparent proxy)
 
 A **redirect** (301/302) would change the address bar to the run.app URL, so use a **proxy / rewrite**: the request path is forwarded unchanged

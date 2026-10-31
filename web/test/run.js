@@ -1757,6 +1757,30 @@ const seed = require('../../data/seed_papers.json');
     } finally { srvO.close(); runImpl = async () => []; txImpl = null; }
   }
 
+  /* ------------------------------------------------------------ deploy: budget guard (soft stop) */
+  {
+    const bg = require('../../deploy/budget-guard');
+    const ev = (o) => ({ data: { message: { data: Buffer.from(JSON.stringify(o)).toString('base64') } } });
+    assert.deepEqual(bg.parse(ev({ costAmount: 1.2, budgetAmount: 5 })), { cost: 1.2, budget: 5 });
+    assert.equal(bg.parse({ data: { message: { data: 'bm90IGpzb24=' } } }), null);
+    assert.equal(bg.parse(ev({ budgetAmount: 5 })), null);
+    assert.equal(bg.overBudget({ cost: 4.99, budget: 5 }), false); assert.equal(bg.overBudget({ cost: 5, budget: 5 }), true);
+    assert.equal(bg.overBudget({ cost: 1, budget: 0 }), false, 'a zero budget never stops anything');
+    const calls = [];
+    const http = async (url, o = {}) => { calls.push([o.method || 'GET', url, o.body]); return { ok: true, status: 200, json: async () => ({ access_token: 'T' }) }; };
+    const env = { PROJECT: 'p', ZONE: 'us-central1-a', VM: 'neo4j-hub', REGION: 'us-central1', SERVICE: 'research-hub' };
+    assert.deepEqual(await bg.guard(ev({ costAmount: 2, budgetAmount: 5 }), { env, http, log() {} }), []);
+    assert.equal(calls.length, 0, 'under budget: nothing is touched');
+    await bg.guard(ev({ costAmount: 5.3, budgetAmount: 5 }), { env, http, log() {} });
+    assert.deepEqual(calls.slice(1).map((c) => c.slice(0, 2)), [
+      ['POST', 'https://compute.googleapis.com/compute/v1/projects/p/zones/us-central1-a/instances/neo4j-hub/stop'],
+      ['PATCH', 'https://run.googleapis.com/v2/projects/p/locations/us-central1/services/research-hub?updateMask=ingress']]);
+    assert.deepEqual(JSON.parse(calls[2][2]), { ingress: 'INGRESS_TRAFFIC_INTERNAL_ONLY' });
+    assert.ok(!calls.some((c) => /delete|billingInfo/i.test(c[1])), 'a soft stop: nothing deleted, billing untouched');
+    const failing = async (url, o = {}) => (url.includes('run.googleapis') ? { ok: false, status: 403 } : http(url, o));
+    await assert.rejects(() => bg.guard(ev({ costAmount: 6, budgetAmount: 5 }), { env, http: failing, log() {} }), /close research-hub to public traffic: 403/);
+  }
+
   /* ------------------------------------------------------------ search query building */
   assert.equal(q.luceneQuery('Blind sig+nature'), 'blind* AND sig* AND nature*');
   assert.equal(q.luceneQuery('  '), ''); assert.ok(!/["\\()]/.test(q.luceneQuery('a" (b) \\c')));

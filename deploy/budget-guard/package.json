@@ -1,0 +1,6 @@
+{
+  "name": "research-hub-budget-guard",
+  "private": true,
+  "main": "index.js",
+  "engines": { "node": ">=20" }
+}

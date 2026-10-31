@@ -17,7 +17,7 @@ else
   echo "No google-refresh-token secret: PDF uploads stay off (links still work). See deploy/README.md, step 3."
 fi
 
-gcloud run deploy "$SERVICE" --project "$PROJECT" --region "$REGION" --source . \
+gcloud run deploy "$SERVICE" --project "$PROJECT" --region "$REGION" --source . --quiet \
   --allow-unauthenticated --port 8080 --memory 512Mi --cpu 1 --cpu-boost --concurrency 40 \
   --min-instances "$MIN_INSTANCES" --max-instances 3 --timeout 300 \
   --network default --subnet default --vpc-egress private-ranges-only \
