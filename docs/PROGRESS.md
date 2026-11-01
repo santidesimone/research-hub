@@ -15,6 +15,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | 8 Frameworks, research questions and hypotheses, ontologies | done (2026-10-31) | See "Task 8" below. |
 | 8b File upload beyond PDFs (ontology snapshots) | done (2026-10-31), live Drive not tested | See "Task 8b" below. |
 | 9 Claude chat connector: OAuth for MCP, upload link | done (2026-10-31), tested live from the claude.ai chat | See "Task 9" below. |
+| Served at santidesimone.com/research-hub | done (2026-11-01), tested live | See "Served at santidesimone.com" below. |
 
 ## Task 0. Baseline against real services
 
@@ -423,7 +424,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 - Drive: `hub drive` created the folder; a PDF copied from arXiv into Drive and linked; its link opens anonymously; deleting the paper put the file in the Drive trash (checked through the Drive API).
 
 **Not tested / open**
-- `santidesimone.com/research-hub` (Firebase rewrite to a service in another project): to decide.
+- ~~`santidesimone.com/research-hub`~~: done 2026-11-01, see "Served at santidesimone.com" below.
 - The claude.ai chat connector: Task 9.
 - The real budget stop (it would take the hub down); behaviour of the e2-micro under a large library.
 
@@ -502,3 +503,28 @@ Update at the end of every task. For each: what changed, what was tested for rea
 - The private-PDF path through the upload link, from the chat.
 - Three `400` replies on `/mcp` during the session did not stop anything; their cause is not logged yet (MCP request bodies are not logged).
 
+## Served at santidesimone.com (2026-11-01)
+
+Firebase Hosting can rewrite only to Cloud Run in its own project (`santidesimone-com`), and the hub runs in `research-hub-513302` with Neo4j on a private network, so the hub was not moved: a relay forwards to it.
+
+**Changed**
+- `deploy/site-relay/` (new, no dependencies): `research-hub-relay` on Cloud Run in `santidesimone-com`, Node 24 (the buildpacks no longer offer Node 20).
+  - Forwards only the hub's paths (`/research-hub/**` and the two OAuth discovery documents at the root), unchanged and streamed; anything else is 404.
+  - Signs each request with its own service account (`site-relay@`) in `X-Serverless-Authorization`, so the hub's own `Authorization` header passes untouched.
+  - Sends the hub only the visitor's address (`CLIENT_HOPS`, counted from the right of the X-Forwarded-For it receives).
+  - `deploy.sh` deploys it and gives its service account `run.invoker` on the hub.
+- The site's `firebase.json` (other repo): four `run` rewrites to the relay, before the site's own `**` rule.
+- Hub: `PUBLIC_URL=https://santidesimone.com`, `TRUST_PROXY=2`, and `allUsers` removed from `run.invoker`.
+- `deploy/deploy.sh`: an existing service keeps its access (it no longer passes `--allow-unauthenticated`, which would reopen the hub), and env vars are updated instead of replaced (so `PUBLIC_URL` survives a deploy).
+- `npm test` also runs the relay's tests.
+
+**Tested**
+- Offline: the relay against a fake hub (path and query kept, ID token added and a client-sent one ignored, owner `Authorization` and `__session` passed, 1 MB body intact, redirects and cookies passed back and not followed, other paths refused without reaching the hub, 502 without a token or hub). Mutation-checked (4 breakages, all caught).
+- Live: `/research-hub/`, `/healthz`, `/readyz`, the OAuth discovery document (issuer `https://santidesimone.com/research-hub`) through santidesimone.com; the site's own pages unchanged; the run.app URL answers 403. X-Forwarded-For at the relay is `<visitor>, <Google front end>` and a client-sent value is dropped by Firebase, so `CLIENT_HOPS=2`. The claude.ai connector reconnected at `https://santidesimone.com/research-hub/mcp`, and a paper added from the chat.
+
+**Not tested / open**
+- A PDF upload through the site near the size limit (Firebase gives a rewritten request at most 60 seconds).
+- The budget stop with the relay in front (it closes the hub's ingress; the relay would then answer 502/403).
+
+**Data**
+- Production is the real library. The local database is for development (example data from `scripts/seed.py`); it is not copied to production.

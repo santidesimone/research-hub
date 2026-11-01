@@ -1,0 +1,13 @@
+{
+  "name": "research-hub-site-relay",
+  "private": true,
+  "description": "Forwards santidesimone.com/research-hub (Firebase Hosting) to the hub's private Cloud Run service",
+  "main": "relay.js",
+  "scripts": {
+    "start": "node relay.js",
+    "test": "node test.js"
+  },
+  "engines": {
+    "node": "24"
+  }
+}

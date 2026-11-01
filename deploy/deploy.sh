@@ -8,6 +8,9 @@ set -euo pipefail
 REGION="${REGION:-us-central1}"; SERVICE="${SERVICE:-research-hub}"; BASE_PATH="${BASE_PATH:-/research-hub}"; SKIN="${SKIN:-paper}"
 MIN_INSTANCES="${MIN_INSTANCES:-0}"   # 0 scales to zero (about free; the first request after idle waits a few seconds); 1 keeps one warm (~$8-10/month)
 TRUST_PROXY="${TRUST_PROXY:-2}"       # proxies in front: 2 = your site's rewrite (step 5) + Cloud Run. Use 1 if you serve the run.app URL directly
+# A new service is public; an existing one keeps its access as it is, so a hub closed to everyone but the site relay (step 5) stays closed.
+ACCESS=(--allow-unauthenticated)
+gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" >/dev/null 2>&1 && ACCESS=()
 
 SECRETS="HUB_API_TOKEN=hub-api-token:latest,NEO4J_PASSWORD=neo4j-password:latest"
 if gcloud secrets describe google-refresh-token --project "$PROJECT" >/dev/null 2>&1; then
@@ -18,10 +21,10 @@ else
 fi
 
 gcloud run deploy "$SERVICE" --project "$PROJECT" --region "$REGION" --source . --quiet \
-  --allow-unauthenticated --port 8080 --memory 512Mi --cpu 1 --cpu-boost --concurrency 40 \
+  ${ACCESS[@]+"${ACCESS[@]}"} --port 8080 --memory 512Mi --cpu 1 --cpu-boost --concurrency 40 \
   --min-instances "$MIN_INSTANCES" --max-instances 3 --timeout 300 \
   --network default --subnet default --vpc-egress private-ranges-only \
-  --set-env-vars "BASE_PATH=${BASE_PATH},NEO4J_URI=${NEO4J_URI},NEO4J_USER=neo4j,HUB_SKIN=${SKIN},TRUST_PROXY=${TRUST_PROXY}" \
+  --update-env-vars "BASE_PATH=${BASE_PATH},NEO4J_URI=${NEO4J_URI},NEO4J_USER=neo4j,HUB_SKIN=${SKIN},TRUST_PROXY=${TRUST_PROXY}" \
   --set-secrets "$SECRETS"
 
 # Keep only the 2 newest app images (each deploy adds one; Artifact Registry storage over 0.5 GB is billed)

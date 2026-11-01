@@ -113,13 +113,23 @@ OAuth discovery uses `/.well-known/oauth-protected-resource/research-hub/mcp` an
 A **redirect** (301/302) would change the address bar to the run.app URL, so use a **proxy / rewrite**: the request path is forwarded unchanged
 (the app is mounted at `/research-hub`) and the response is returned as if it came from santidesimone.com. Pick the recipe that matches how santidesimone.com is hosted:
 
-**Firebase Hosting** (`firebase.json` of the santidesimone.com project; Firebase only forwards the `__session` cookie, which is the name this app uses):
-```json
-{ "hosting": { "rewrites": [
-  { "source": "/research-hub",    "run": { "serviceId": "research-hub", "region": "us-central1" } },
-  { "source": "/research-hub/**", "run": { "serviceId": "research-hub", "region": "us-central1" } }
-] } }
-```
+**Firebase Hosting** (Firebase only forwards the `__session` cookie, which is the name this app uses). A Firebase rewrite can only reach Cloud Run in the site's own project. If the hub runs in that project, rewrite to `research-hub` directly. If it runs in its own project (as here), deploy the relay in `deploy/site-relay/` to the site's project: it forwards the hub's paths unchanged and signs each request with its own service account, so the hub can then be closed to everyone else.
+1. `./deploy/site-relay/deploy.sh` (defaults: site project `santidesimone-com`, hub project `research-hub-513302`). It deploys `research-hub-relay` and allows its service account to call the hub.
+2. In the site's `firebase.json`, put these before the site's own `**` rule, then `firebase deploy --only hosting`:
+   ```json
+   { "source": "/research-hub",    "run": { "serviceId": "research-hub-relay", "region": "us-central1" } },
+   { "source": "/research-hub/**", "run": { "serviceId": "research-hub-relay", "region": "us-central1" } },
+   { "source": "/.well-known/oauth-protected-resource/research-hub/**", "run": { "serviceId": "research-hub-relay", "region": "us-central1" } },
+   { "source": "/.well-known/oauth-authorization-server/research-hub",  "run": { "serviceId": "research-hub-relay", "region": "us-central1" } },
+   ```
+3. Tell the hub its address and close the run.app URL (only the relay can call it afterwards; `deploy.sh` keeps it that way):
+   ```bash
+   gcloud run services update research-hub --region $REGION --update-env-vars PUBLIC_URL=https://santidesimone.com,TRUST_PROXY=2
+   gcloud run services remove-iam-policy-binding research-hub --region $REGION --member allUsers --role roles/run.invoker
+   ```
+4. Point the CLI and the claude.ai connector at `https://santidesimone.com/research-hub` (and `/mcp`).
+
+The relay sends the hub only the visitor's address (`CLIENT_HOPS` from the right of the X-Forwarded-For it receives; `LOG_XFF=1 ./deploy/site-relay/deploy.sh` logs it to check), so `TRUST_PROXY=2` is right behind it. Firebase gives a rewritten request at most 60 seconds.
 
 **Vercel** (`vercel.json`):
 ```json

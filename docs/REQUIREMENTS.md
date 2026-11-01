@@ -61,7 +61,7 @@ Status key: **Built** (in the current code), **Planned** (in `docs/BUILD_BRIEF.m
 | ID | Requirement | Why | Status |
 | :---- | :---- | :---- | :---- |
 | P1 | Runs locally with `docker compose` (Neo4j) and Node, with no cloud account. One command: `./scripts/local.sh`. | Develop and use offline | Built |
-| P2 | Deploys to Google Cloud (Cloud Run for the app, a VM for Neo4j, Secret Manager) and is served at `santidesimone.com/research-hub` through a transparent proxy (`BASE_PATH`). | Owner's domain and cloud | Deployed 2026-10-31 to `research-hub-513302` (Cloud Run, scaled to zero; Neo4j on a free-tier e2-micro with no public IP; budget guard). Serving at `santidesimone.com/research-hub` is still Open (Firebase rewrite needs the service in the Firebase project) |
+| P2 | Deploys to Google Cloud (Cloud Run for the app, a VM for Neo4j, Secret Manager) and is served at `santidesimone.com/research-hub` through a transparent proxy (`BASE_PATH`). | Owner's domain and cloud | Deployed 2026-10-31 to `research-hub-513302` (Cloud Run, scaled to zero; Neo4j on a free-tier e2-micro with no public IP; budget guard). Served at `santidesimone.com/research-hub` since 2026-11-01 through a relay in the site's project (`deploy/site-relay`); the run.app URL is closed to everyone but the relay |
 | P3 | The same code and image run in both modes; only environment variables differ. | Easy move to the cloud | Built |
 | P4 | Production refuses to start with a weak token, the default database password, or half-configured Drive. | Fail safe on the internet | Built (plus warnings for weak proxy, password and polite-pool settings in T7) |
 | P5 | Nightly Neo4j disk snapshots; CI runs unit and integration tests and builds the image. | Recovery and regression safety | Built (browser and CLI checks added to CI in T6); CI unrun |
@@ -100,7 +100,7 @@ Status key: **Built** (in the current code), **Planned** (in `docs/BUILD_BRIEF.m
 1. ~~Whether the claude.ai chat connector can use the bearer token~~: it needs OAuth; Task 9.
 2. ~~First live test of Google OAuth, Drive upload, public sharing~~: done on the deployed hub (2026-10-31). Still open: the Drive preview embed in the reader. A trashed file stays reachable by its link until the trash is emptied (Drive empties it after 30 days).
 3. ~~Crossref and OpenAlex behaviour against real data~~: verified live in Task 4.
-4. ~~How santidesimone.com is hosted, and VM or Aura~~: decided, Firebase Hosting and a VM. Still open: whether `TRUST_PROXY=2` matches the deployed proxy chain.
+4. ~~How santidesimone.com is hosted, and VM or Aura~~: decided, Firebase Hosting and a VM. `TRUST_PROXY=2` matches the deployed chain (measured 2026-11-01: the relay sends the hub only the visitor's address).
 5. Whether the Drive "anyone with the link" files should stay public once the library holds anything sensitive.
 6. In-memory rate limiting is per instance; fine for one user, not for a public API.
 7. The Ontology `urls` field lost part of its definition in the addendum's Word file. Decided for Task 8: a list of {role, url} with roles docs, spec, download, repository, other; filled by Claude or the owner; tier Core.

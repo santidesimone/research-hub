@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node test/run.js",
+    "test": "node test/run.js && node ../deploy/site-relay/test.js",
     "test:integration": "node test/integration.js"
   },
   "engines": {

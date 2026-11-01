@@ -78,9 +78,15 @@ if ! curl -fsS -H "Authorization: Bearer $TOKEN" "$URL/api/drive" >/dev/null 2>&
 fi
 
 echo "5/6 example library and notes"
-python3 -c "import requests" 2>/dev/null || python3 -m pip install -q requests 2>/dev/null || python3 -m pip install -q --user requests
+# seed.py needs requests. A Homebrew or system Python refuses pip installs (PEP 668), so fall back to a project virtualenv.
+PY=python3
+if ! $PY -c "import requests" 2>/dev/null; then
+  [ -x .venv/bin/python ] || python3 -m venv .venv
+  PY=.venv/bin/python
+  $PY -c "import requests" 2>/dev/null || $PY -m pip install -q requests
+fi
 export HUB_API_TOKEN=$TOKEN
-python3 scripts/seed.py --with-pdfs
+$PY scripts/seed.py --with-pdfs
 ./bin/hub config --url "$URL" --token "$TOKEN" >/dev/null
 ./bin/hub sync-notes ./content
 
