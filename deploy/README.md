@@ -66,6 +66,8 @@ A service account cannot do this (it has no Drive storage of its own, and person
 
 Public links are the trade-off you chose: anyone who has a file's URL can open it, even if the paper is private in the hub. If the refresh token is ever revoked or expires, uploads fail with a clear message; run `bin/drive-auth` again and add a new secret version.
 
+To use another Google account's Drive (for example a Workspace account), run `bin/drive-auth` signed in as that account, add the token as a new `google-refresh-token` version, and start a new revision (`gcloud run services update research-hub --region $REGION --update-labels drive-account=<name>`); until then the running instances keep the old login. The hub switches to a new folder in the new Drive by itself. Files already uploaded stay in the old Drive (their links keep working); upload them again to move them.
+
 ## 4. Deploy the app
 
 ```bash

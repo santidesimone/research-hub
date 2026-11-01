@@ -427,6 +427,12 @@ Update at the end of every task. For each: what changed, what was tested for rea
 - The claude.ai chat connector: Task 9.
 - The real budget stop (it would take the hub down); behaviour of the e2-micro under a large library.
 
+**Drive moved to the Workspace account (2026-11-01)**
+- Drive now uses santi@santidesimone.com instead of the personal gmail account. No code change: same OAuth client, a new refresh token from `bin/drive-auth` in `.env` and as `google-refresh-token` version 2, then a new Cloud Run revision (`research-hub-00004`) to load it. Uploading before that revision existed still went to the gmail Drive.
+- The hub's stored folder id pointed at the gmail folder; with the new login it was not visible, so the hub switched to a new "Research Hub PDFs" folder in the Workspace Drive by itself (`HubSetting {id:'drive'}` updated). Local and cloud now share that folder.
+- The only hub-uploaded file (`doi:10.3390/fi13050130`) was downloaded from its public link and uploaded again through the Library upload link; `file_url` and `drive_file_id` point to the new file, which opens anonymously. No Workspace sharing setting had to change.
+- Left behind: one copy in the gmail Drive's old folder, which the new login cannot trash; delete it by hand.
+
 ## Task 9. Claude chat connector: OAuth for MCP, upload link
 
 **Changed**
