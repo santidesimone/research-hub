@@ -25,7 +25,7 @@ const noOverflow = async (page) => page.evaluate(() => document.documentElement.
     const titles = await anon.$$eval('.list .item .t', (e) => e.map((x) => x.textContent));
     expect(titles.length === 1 && titles[0] === 'A Public Preprint on Payments', titles.join('|'));
     const bar = await anon.$$eval('.sidebar .nav', (b) => b.map((x) => x.dataset.section));
-    expect(!bar.includes('audit') && !bar.includes('curation'), 'no audit or curation for visitors: ' + bar.join('|'));
+    expect(!bar.includes('review'), 'no Review for visitors: ' + bar.join('|'));
     expect(!(await anon.$('button:has-text("+ New")')), 'no create button');
   });
   await step('anonymous: detail shows only whitelisted fields', async () => {

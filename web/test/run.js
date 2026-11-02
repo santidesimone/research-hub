@@ -1158,11 +1158,14 @@ const seed = require('../../data/seed_papers.json');
   assert.deepEqual(M.parseRoute([], Q(''), colls), { section: 'paper', key: null, edit: false }, 'the Library opens on Papers');
   assert.deepEqual(M.parseRoute([], Q('key=doi:1'), colls), { section: 'all', key: 'doi:1', edit: false }, 'older links resolve through All');
   assert.deepEqual(M.parseRoute([], Q('view=graph&key=method:x'), colls).section, 'graph');
-  assert.deepEqual(M.parseRoute(['audit'], Q(''), colls).section, 'audit');
+  assert.deepEqual(M.parseRoute(['audit'], Q(''), colls), { section: 'review', key: null, edit: false, tab: 'check' }, 'the old Audit address opens Review');
+  assert.deepEqual(M.parseRoute(['curation'], Q(''), colls).tab, 'fixes', 'the old Curation address opens its tab');
+  assert.deepEqual([M.parseRoute(['review'], Q('tab=fixes'), colls).tab, M.parseRoute(['review'], Q('tab=nonsense'), colls).tab], ['fixes', 'check']);
+  assert.equal(M.routePath({ section: 'review', tab: 'fixes' }, colls), '/library/review?tab=fixes');
   assert.deepEqual(M.parseRoute(['nonsense'], Q(''), colls).section, 'all');
   assert.equal(M.routePath({ section: 'case_study', key: 'case:a/b', edit: true }, colls), '/library/case-studies?key=case%3Aa%2Fb&edit=1');
   assert.equal(M.routePath({ section: 'graph' }, colls), '/library/graph');
-  for (const r of [{ section: 'method', key: 'method:x', edit: false }, { section: 'audit', key: null, edit: false }]) {
+  for (const r of [{ section: 'method', key: 'method:x', edit: false }, { section: 'review', key: null, edit: false, tab: 'check' }, { section: 'review', key: null, edit: false, tab: 'fixes' }]) {
     const [p0, qs] = M.routePath(r, colls).split('?');
     assert.deepEqual(M.parseRoute(p0.split('/').slice(2), Q(qs || ''), colls), r, 'routes round-trip');
   }
@@ -1915,6 +1918,13 @@ const seed = require('../../data/seed_papers.json');
     assert.deepEqual(M8.sidebarGroups(pv8, []).map((g) => g.label), ['Other'], 'no sections: everything is still listed');
     assert.deepEqual(M8.collectionCounts([{ labels: ['Artifact', 'Method'] }, { labels: ['Artifact', 'Method'] }, { labels: ['Artifact', 'Paper'] }, { labels: ['Concept'] }], pv8.filter((c) => ['paper', 'method', 'ontology'].includes(c.name)), [{}, {}, {}]),
       { paper: 3, method: 2, ontology: 0 }, 'counts per collection; papers from their own list');
+    // the graph filter: sidebar groups, then Vocabulary, then other types; large vocabularies off by default
+    const pubLabels = S8.publicView().labels;
+    const fg = M8.graphFilterGroups(pubLabels, pv8, S8.publicView().sections, S8.publicView().entities.map((e) => e.label));
+    assert.deepEqual(fg.map((g) => [g.id, g.items.map((l) => l.label)]), [['reading', ['Paper']], ['knowledge', ['Method', 'UseCase', 'CaseStudy', 'Framework', 'Ontology']], ['inquiry', ['ResearchQuestion', 'Hypothesis']],
+      ['vocabulary', ['Person', 'Concept', 'Topic', 'Domain', 'Venue', 'Organisation', 'Dataset']], ['other', ['Note', 'Project']]]);
+    assert.deepEqual(M8.GRAPH_OFF_BY_DEFAULT, ['Concept', 'Person', 'Organisation', 'Venue']);
+    assert.ok(M8.GRAPH_OFF_BY_DEFAULT.every((l) => pubLabels.some((x) => x.label === l)), 'every default-off type exists');
     // list entries are plain text: linked names joined, enum words, a count for tables
     assert.deepEqual([M8.plainValue({ type: 'ref', list: true }, [{ key: 'topic:a', name: 'CBDC' }, { name: 'Privacy' }]), M8.plainValue({ type: 'enum' }, 'partly_answered'),
       M8.plainValue({ type: 'object', list: true, label: 'Outcomes' }, [{}, {}]), M8.plainValue({ type: 'text' }, null), M8.plainValue({ type: 'integer' }, 0)],

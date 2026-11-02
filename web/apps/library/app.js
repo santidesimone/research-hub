@@ -4,10 +4,9 @@
 // Addresses: /library/<collection>?key=..[&edit=1], /library/graph, /library/audit, /library/curation, /library/all.
 // Anonymous visitors see the public preview (a static export, whitelisted fields only); the owner sees the database.
 import { h, icon, api, state as S, BASE, cssVar, loadScript, toast } from '../../shell/ui.js';
-import { parseRoute, routePath, collectionOf, sidebarGroups, collectionCounts } from './model.js';
+import { parseRoute, routePath, collectionOf, sidebarGroups, collectionCounts, graphFilterGroups, GRAPH_OFF_BY_DEFAULT } from './model.js';
 import { CollectionView, itemDetail } from './collections.js';
-import { AuditView } from './audit.js';
-import { CurationView } from './curation.js';
+import { ReviewView, reviewCounts } from './review.js';
 import { itemForm, linkForm } from './forms.js';
 import { renderFields, renderLinks } from './view.js';
 
@@ -52,7 +51,10 @@ class Library {
   /* ---------------------------------------------------------------- lifecycle */
   async start() {
     this.labels = (S.schema && S.schema.labels) || [];
-    this.enabled = new Set(this.labels.map((l) => l.label));
+    // graph types shown: as left in this browser, else everything but the large vocabularies
+    let off = GRAPH_OFF_BY_DEFAULT;
+    try { const saved = JSON.parse(localStorage.getItem('hub-graph-off')); if (Array.isArray(saved)) off = saved; } catch { /* private mode or nothing saved */ }
+    this.enabled = new Set(this.labels.map((l) => l.label).filter((l) => !off.includes(l)));
     let collapsed = false;
     try { collapsed = localStorage.getItem('hub-sidebar') === 'collapsed'; } catch { /* private mode */ }
     this.root = h('div', { class: 'libwrap' + (collapsed ? ' collapsed' : '') });
@@ -70,6 +72,7 @@ class Library {
     this.renderBody();
     await this.loadData();
     this.renderBody();
+    this.loadReviewWaiting();
     // older links (/library?key=..) open the item in its own collection
     if (this.section === 'all' && this.sel) { const c = this.collOfKey(this.sel); if (c) this.goSection(c.name, { key: this.sel }, true); }
   }
@@ -79,21 +82,24 @@ class Library {
   }
   readRoute() {
     const r = parseRoute(this.ctx.route.rest || [], this.ctx.route.query, this.collections);
-    if (['audit', 'curation'].includes(r.section) && !(S.owner && this.mode === 'private')) r.section = 'paper';
-    this.section = r.section; this.sel = r.key; this.edit = r.edit;
+    if (r.section === 'review' && !(S.owner && this.mode === 'private')) r.section = 'paper';
+    // the old Audit and Curation addresses show the Review tab under its own address
+    const old = (this.ctx.route.rest || [])[0];
+    if (r.section === 'review' && ['audit', 'curation'].includes(old)) this.ctx.navigate(routePath(r, this.collections), { replace: true });
+    this.section = r.section; this.sel = r.key; this.edit = r.edit; this.reviewTab = r.tab || 'check';
     this.view = r.section === 'graph' ? 'graph' : 'list';
   }
   onRoute(ctx) {
     this.ctx = ctx;
-    const before = this.section, sel = this.sel, edit = this.edit;
+    const before = this.section, sel = this.sel, edit = this.edit, tab = this.reviewTab;
     this.readRoute();
-    if (before !== this.section) { this.renderBody(); return; }
+    if (before !== this.section || tab !== this.reviewTab) { this.renderBody(); return; }
     if (sel !== this.sel || edit !== this.edit) { if (this.cview) this.cview.show(); else this.showSelection(); }
   }
   onTheme() { if (this.view === 'graph') this.buildGraph(); }
   // older call sites: go({view, key}); list views stay in the current collection
   go({ view = this.view, key = this.sel } = {}, replace = false) {
-    const listSection = ['graph', 'audit', 'curation'].includes(this.section) ? 'paper' : this.section;
+    const listSection = ['graph', 'review'].includes(this.section) ? 'paper' : this.section;
     this.goSection(view === 'graph' ? 'graph' : listSection, { key }, replace);
   }
   goSection(section, { key = null, edit = false } = {}, replace = false) {
@@ -176,12 +182,12 @@ class Library {
           h('div', { class: 'navlabel' }, g.label), g.items.map((it) => item(it.id, it.label, counts[it.id])))),
         h('div', { class: 'navsep' }),
         item('graph', 'Graph'),
-        owner && item('audit', 'Audit'), owner && item('curation', 'Curation'),
+        owner && item('review', 'Review', this.reviewWaiting ? this.reviewWaiting.check + this.reviewWaiting.fixes : null),
         S.owner && S.publicAccess && h('div', { class: 'seg navmode' }, [['private', 'Private'], ['public', 'Public preview']].map(([m, l]) =>
           h('button', { type: 'button', class: this.mode === m ? 'on' : '', onclick: () => m !== this.mode && this.setMode(m) }, l)))));
     const here = this.coll(this.section);
     this.mobileBarEl.replaceChildren(h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Open the library menu', onclick: () => this.drawer(true) }, icon('menu', 18)),
-      h('span', { class: 'mobiletitle' }, here ? here.plural : { graph: 'Graph', audit: 'Audit', curation: 'Curation', all: 'Search' }[this.section] || 'Library'));
+      h('span', { class: 'mobiletitle' }, here ? here.plural : { graph: 'Graph', review: 'Review', all: 'Search' }[this.section] || 'Library'));
     this.bannerEl.classList.toggle('hidden', this.mode !== 'public');
   }
   collapse(on) {
@@ -190,6 +196,17 @@ class Library {
     if (this.network) setTimeout(() => this.network.redraw(), 0);
   }
   drawer(open) { this.root.classList.toggle('drawer-open', open); }
+  goReview(tab) { this.ctx.navigate(routePath({ section: 'review', tab }, this.collections)); }
+  // what is waiting in Review ({check, fixes}), shown as one count beside it in the sidebar
+  setReviewWaiting(c) {
+    const was = this.reviewWaiting ? this.reviewWaiting.check + this.reviewWaiting.fixes : null;
+    this.reviewWaiting = { ...c };
+    if (was !== c.check + c.fixes) this.renderNav();
+  }
+  async loadReviewWaiting() {
+    if (!(S.owner && this.mode === 'private')) { this.reviewWaiting = null; return; }
+    try { this.setReviewWaiting(await reviewCounts()); } catch { /* the sidebar shows Review without a count */ }
+  }
 
   /* ---------------------------------------------------------------- body */
   renderBody() {
@@ -198,8 +215,7 @@ class Library {
     this.bodyEl.replaceChildren();
     this.cview = null;
     if (this.view === 'graph') return this.renderGraphView();
-    if (this.section === 'audit') return new AuditView(this).mount(this.bodyEl);
-    if (this.section === 'curation') return new CurationView(this).mount(this.bodyEl);
+    if (this.section === 'review') return new ReviewView(this).mount(this.bodyEl);
     const c = this.coll(this.section);
     if (c && c.name !== 'paper' && this.mode === 'private') { this.cview = new CollectionView(this, c); return this.cview.mount(this.bodyEl); }
     return this.renderListView();
@@ -281,9 +297,10 @@ class Library {
   }
   onKey(e) {
     if (e.key === 'Escape' && this.root.classList.contains('drawer-open')) { this.drawer(false); return; }
+    if (e.key === 'Escape' && this.filterOpen) { this.toggleFilter(false); return; }
     if (this.view !== 'list' || !['ArrowDown', 'ArrowUp'].includes(e.key)) return;
     if (['INPUT', 'SELECT', 'TEXTAREA', 'IFRAME'].includes(document.activeElement.tagName)) return;
-    if (this.cview || ['audit', 'curation'].includes(this.section)) return;
+    if (this.cview || this.section === 'review') return;
     const rows = this.filtered(); if (!rows.length) return;
     const i = rows.findIndex((p) => p.key === this.sel);
     const next = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))];
@@ -539,8 +556,14 @@ class Library {
     this.asideEl.replaceChildren(h('div', { class: 'empty' }, 'Click a node to inspect it and highlight its neighbours.'));
   }
   renderGraphView() {
-    this.legendEl = h('div', { class: 'legend' });
-    this.statsEl = h('span', { class: 'faint', style: { marginLeft: 'auto', fontSize: '12.5px' } });
+    this.statsEl = h('span', { class: 'faint graphstats' });
+    this.filterOpen = false;
+    this.filterBtn = h('button', { type: 'button', class: 'btn btn-sm', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', onclick: () => this.toggleFilter() }, icon('filter', 15), 'Filter');
+    this.filterEl = h('div', { class: 'popover graphfilter hidden', role: 'dialog', 'aria-label': 'Filter the graph' });
+    this.filterScrim = h('button', { type: 'button', class: 'popscrim hidden', tabindex: '-1', 'aria-label': 'Close the filter', onclick: () => this.toggleFilter(false) });
+    this.legendEl = h('div', { class: 'graphbar' }, this.filterBtn,
+      h('button', { type: 'button', class: 'btn btn-sm', onclick: () => this.network && this.network.fit({ animation: { duration: 400 } }) }, 'Fit'),
+      this.statsEl, this.filterScrim, this.filterEl);
     this.canvasEl = h('div', { class: 'canvas' }, h('div', { id: 'hub-graph' }));
     this.asideEl = h('aside', { class: 'graphaside' });
     this.bodyEl.append(h('div', { class: 'graphwrap' }, h('div', { class: 'graphmain' }, this.legendEl, this.canvasEl), this.asideEl));
@@ -550,11 +573,49 @@ class Library {
   }
   mainLabel(labels) { return (this.labels.find((l) => labels.includes(l.label)) || { label: 'Artifact', name: 'artifact', big: false }); }
   colorOf(l) { return cssVar('--node-' + l.name) || l.color || '#999'; }
+  // The graph filter: a popover of grouped checkboxes with counts, All / None overall and per group, and a type search.
+  // It closes on a tap outside or Esc. The choice is remembered in this browser.
+  toggleFilter(open = !this.filterOpen) {
+    this.filterOpen = open;
+    this.filterEl.classList.toggle('hidden', !open); this.filterScrim.classList.toggle('hidden', !open);
+    this.filterBtn.setAttribute('aria-expanded', String(open));
+    if (open) { this.filterQ = ''; this.renderFilter(); const f = this.filterEl.querySelector('input[type=search]'); if (f) f.focus(); } else this.filterBtn.focus();
+  }
+  setTypes(labels, on) {
+    for (const l of labels) { if (on) this.enabled.add(l); else this.enabled.delete(l); }
+    try { localStorage.setItem('hub-graph-off', JSON.stringify(this.labels.map((l) => l.label).filter((l) => !this.enabled.has(l)))); } catch { /* private mode */ }
+    this.renderFilter(); this.buildGraph();
+  }
+  renderFilter() {
+    if (!this.filterOpen) return;
+    const counts = new Map();
+    for (const n of this.graph.nodes) { const l = this.mainLabel(n.labels).label; counts.set(l, (counts.get(l) || 0) + 1); }
+    const q = (this.filterQ || '').trim().toLowerCase();
+    const groups = graphFilterGroups(this.labels, this.collections, (S.schema && S.schema.sections) || [], this.entities.map((e) => e.label))
+      .map((g) => ({ ...g, items: g.items.filter((l) => !q || [l.label, l.plural].join(' ').toLowerCase().includes(q)) })).filter((g) => g.items.length);
+    const search = h('input', { class: 'input', type: 'search', placeholder: 'Find a type', 'aria-label': 'Find a type', value: this.filterQ || '',
+      oninput: (e) => { this.filterQ = e.target.value; const pos = e.target.selectionStart; this.renderFilter(); const f = this.filterEl.querySelector('input[type=search]'); f.focus(); f.setSelectionRange(pos, pos); } });
+    const all = this.labels.map((l) => l.label);
+    this.filterEl.replaceChildren(
+      h('div', { class: 'pophead' }, h('strong', null, 'Filter'), h('button', { type: 'button', class: 'iconbtn small', 'aria-label': 'Close the filter', onclick: () => this.toggleFilter(false) }, icon('close', 16))),
+      h('div', { class: 'searchbox' }, icon('search', 15), search),
+      h('div', { class: 'row-flex', style: { margin: '10px 0 2px' } },
+        h('button', { type: 'button', class: 'btn btn-sm', 'data-all': 'on', onclick: () => this.setTypes(all, true) }, 'All'),
+        h('button', { type: 'button', class: 'btn btn-sm', 'data-all': 'off', onclick: () => this.setTypes(all, false) }, 'None')),
+      ...groups.map((g) => h('fieldset', { class: 'filtergroup', 'data-group': g.id },
+        h('legend', null, h('span', null, g.label), h('span', { class: 'groupall' },
+          h('button', { type: 'button', class: 'linkbtn', onclick: () => this.setTypes(g.items.map((l) => l.label), true) }, 'all'), ' · ',
+          h('button', { type: 'button', class: 'linkbtn', onclick: () => this.setTypes(g.items.map((l) => l.label), false) }, 'none'))),
+        g.items.map((l) => h('label', { class: 'checkrow' },
+          h('input', { type: 'checkbox', 'data-label': l.label, checked: this.enabled.has(l.label), onchange: (e) => this.setTypes([l.label], e.target.checked) }),
+          h('span', { class: 'dot', style: { background: this.colorOf(l) } }), h('span', { class: 'grow' }, l.plural || l.label),
+          h('span', { class: 'faint small' }, String(counts.get(l.label) || 0)))))),
+      !groups.length && h('p', { class: 'faint small' }, 'No type matches.'));
+  }
   buildLegend() {
-    this.legendEl.replaceChildren(...this.labels.map((l) => h('button', { class: this.enabled.has(l.label) ? '' : 'off',
-      onclick: () => { this.enabled.has(l.label) ? this.enabled.delete(l.label) : this.enabled.add(l.label); this.buildGraph(); } },
-      h('span', { class: 'dot', style: { background: this.colorOf(l), width: '10px', height: '10px' } }), l.label)), this.statsEl,
-      h('button', { class: 'btn btn-sm', onclick: () => this.network && this.network.fit({ animation: { duration: 400 } }) }, 'Fit'));
+    this.filterBtn.textContent = '';
+    const total = this.labels.length, on = this.labels.filter((l) => this.enabled.has(l.label)).length;
+    this.filterBtn.append(icon('filter', 15), on === total ? 'Filter' : `Filter · ${on} of ${total}`);
   }
   async buildGraph() {
     if (!this.legendEl) return;
@@ -578,7 +639,7 @@ class Library {
     const vedges = edges.map((e, i) => ({ id: i, from: e.from, to: e.to, type: e.type, label: '', arrows: { to: { enabled: true, scaleFactor: 0.45 } },
       color: { color: edge, highlight: hi, hover: hi, opacity: 1 }, width: 1, selectionWidth: 2,
       font: { size: 10, color: muted, strokeWidth: 3, strokeColor: halo, align: 'middle' }, smooth: { type: 'continuous' } }));
-    this.statsEl.textContent = `${nodes.length} nodes · ${vedges.length} edges`;
+    this.statsEl.textContent = `Showing ${this.labels.filter((l) => this.enabled.has(l.label)).length} of ${this.labels.length} types · ${nodes.length} nodes · ${vedges.length} edges`;
     if (this.network) this.network.destroy();
     this.nodesDS = new vis.DataSet(nodes); this.edgesDS = new vis.DataSet(vedges);
     const el = this.canvasEl.firstChild;

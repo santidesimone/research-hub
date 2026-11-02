@@ -18,7 +18,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | Served at santidesimone.com/research-hub | done (2026-11-01), tested live | See "Served at santidesimone.com" below. |
 | Publishing settings (default visibility, full public detail) | done (2026-11-01), not deployed yet | See "Publishing settings" below. |
 | 10 Curation: reviewable change plans | done (2026-11-01), tested live from the claude.ai chat | See "Task 10" below. |
-| 11 Library redesign (`docs/UI_REDESIGN.md`) | in progress: steps 1 and 2 of 6 done (2026-11-02), not deployed | See "Task 11" below. |
+| 11 Library redesign (`docs/UI_REDESIGN.md`) | in progress: steps 1 to 3 of 6 done (2026-11-02), not deployed | See "Task 11" below. |
 
 ## Task 0. Baseline against real services
 
@@ -650,6 +650,20 @@ Approved by the owner on 2026-11-02 after three rounds on a clickable mockup (sp
 **Tested**
 - Offline: `plainValue` (links joined, enum words, a count for tables, empty, zero). Mutation-checked: 1 breakage, caught.
 - Browser: all six suites green on a throwaway hub; screenshots checked for the list and the Analysis tab.
+
+**Not tested / open**
+- Not deployed.
+
+### Step 3. Review, and the graph filter (2026-11-02)
+
+**Changed**
+- `web/apps/library/review.js` (new): **Review**, one owner entry with two tabs, "Check Claude's work" (the audit) and "Proposed fixes" (curation plans), each with its waiting count; the sidebar shows the total. Addresses `/library/review` and `?tab=fixes`; `/library/audit` and `/library/curation` open those tabs and replace the address. Audit and Curation render inside it (`embedded`), without their own titles.
+- Audit and Curation lose their pills: the bucket index is a line of plain words (what needs a look in the accent colour), field and relation names are plain text, a plan's state is a coloured word.
+- Graph: the row of legend chips became **Filter**, a popover (`graphFilterGroups` in `model.js`): types grouped like the sidebar, then Vocabulary, then other types (notes, projects), with counts, All / None overall and per group, and a type search. It closes with a tap outside (a transparent scrim) or Esc, is a bottom sheet on a phone, and is remembered in this browser (`localStorage`, try/catch). Concepts, people, organisations and venues start hidden. The bar says "Showing n of m types · nodes · edges".
+
+**Tested**
+- Offline: the routes (old addresses, the tab, round trips), the filter groups and the default-off types. Mutation-checked: 1 breakage, caught (plus the route assertions changed with the code).
+- Browser: Review from the sidebar, both tabs and their counts, the waiting count in the sidebar, the old Curation address, plan states as words; the filter popover (groups, defaults, a group's all, None, the type search, a tap outside, remembered after a reload, Esc); all six suites green.
 
 **Not tested / open**
 - Not deployed.

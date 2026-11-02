@@ -12,24 +12,30 @@ const BUCKETS = [
   ['unreviewed_items', 'Not reviewed', 'Items with values nobody has reviewed yet.'],
 ];
 
+// What needs a look: everything but the two informational buckets (empty fields, unreviewed items).
+export const auditWaiting = (counts) => Object.entries(counts || {}).filter(([k]) => k !== 'empty_fields' && k !== 'unreviewed_items').reduce((a, [, n]) => a + n, 0);
+
 export class AuditView {
-  constructor(lib) { this.lib = lib; }
+  // embedded: inside Review, which has the page title and tabs
+  constructor(lib, { embedded = false, onCounts } = {}) { this.lib = lib; this.embedded = embedded; this.onCounts = onCounts; }
   async mount(bodyEl) {
-    this.el = h('div', { class: 'page audit' });
-    bodyEl.append(h('div', { class: 'scroll' }, this.el));
+    this.el = h('div', { class: this.embedded ? 'audit' : 'page audit' });
+    bodyEl.append(this.embedded ? this.el : h('div', { class: 'scroll' }, this.el));
     await this.load();
   }
   async load() {
     this.el.replaceChildren(h('div', { class: 'center' }, h('span', { class: 'spinner' })));
     let r;
     try { r = await api('/api/audit?limit=200'); } catch (e) { this.el.replaceChildren(h('div', { class: 'alert' }, e.message)); return; }
-    const total = Object.entries(r.counts).filter(([k]) => k !== 'empty_fields' && k !== 'unreviewed_items').reduce((a, [, n]) => a + n, 0);
-    this.el.replaceChildren(
-      h('h1', { class: 'page-title' }, 'Audit'),
+    const total = auditWaiting(r.counts);
+    if (this.onCounts) this.onCounts(total);
+    this.el.replaceChildren(...[ // the DOM would print false or null
+      !this.embedded && h('h1', { class: 'page-title' }, 'Audit'),
       h('p', { class: 'lead' }, 'Claude saves directly. This is the optional review: accept what is right (it is then protected from re-runs), edit what is not.'),
-      h('div', { class: 'row-flex counts' }, BUCKETS.map(([k, label]) => h('a', { class: 'badge ' + (r.counts[k] ? (k === 'empty_fields' || k === 'unreviewed_items' ? 'outline' : 'warn') : 'ok'), href: '#audit-' + k }, `${label}: ${r.counts[k]}`))),
+      // an index of the buckets as plain words; the ones needing a look in the accent colour
+      h('p', { class: 'counts' }, BUCKETS.flatMap(([k, label], i) => [i ? ' · ' : '', h('a', { class: r.counts[k] && k !== 'empty_fields' && k !== 'unreviewed_items' ? 'due' : '', href: '#audit-' + k }, `${label} ${r.counts[k]}`)])),
       ...[!total && h('p', { class: 'muted' }, 'Nothing needs a look.'),
-        ...BUCKETS.map(([k, label, help]) => this.bucket(k, label, help, r[k] || [], r.counts[k]))].filter(Boolean)); // DOM append prints null/false
+        ...BUCKETS.map(([k, label, help]) => this.bucket(k, label, help, r[k] || [], r.counts[k]))]].filter(Boolean));
   }
   bucket(k, label, help, rows, count) {
     if (!rows.length) return null;
@@ -47,17 +53,17 @@ export class AuditView {
     } }, 'Accept');
     const editAt = (field) => h('button', { class: 'btn btn-sm btn-ghost', onclick: () => this.lib.editItem(x.key, field) }, 'Edit');
     switch (k) {
-      case 'low_confidence': return [this.title(x), h('span', { class: 'badge outline' }, x.field), x.model && h('span', { class: 'faint small' }, x.model), h('span', { class: 'grow' }),
+      case 'low_confidence': return [this.title(x), h('span', { class: 'muted small' }, x.field), x.model && h('span', { class: 'faint small' }, x.model), h('span', { class: 'grow' }),
         accept({ key: x.key, fields: [x.field] }, 'Accepted'), editAt(x.field)];
-      case 'low_confidence_links': return [this.title(x), h('span', { class: 'badge outline' }, x.rel.toLowerCase().replace(/_/g, ' ')), h('span', null, '→ ', x.target),
+      case 'low_confidence_links': return [this.title(x), h('span', { class: 'muted small' }, x.rel.toLowerCase().replace(/_/g, ' ')), h('span', null, '→ ', x.target),
         x.evidence && h('span', { class: 'evidence' }, '“' + String(x.evidence).slice(0, 60) + '”'), !x.location && h('span', { class: 'flag' }, 'no location'), h('span', { class: 'grow' }),
         accept({ key: x.key, links: [{ rel: x.rel, target: x.target }] }, 'Link accepted'), editAt(null)];
       case 'ungrounded': return [this.title(x), h('span', { class: 'flag' }, `finding ${x.index + 1}`), h('span', { class: 'faint small grow' }, x.text || ''), editAt('key_findings')];
-      case 'vocab_by_claude': return [h('span', { class: 'badge outline' }, x.label), h('a', { onclick: () => this.lib.openKey(x.key) }, x.name || x.key), h('span', { class: 'faint small' }, `${x.uses} link${x.uses === 1 ? '' : 's'}`), h('span', { class: 'grow' }),
+      case 'vocab_by_claude': return [h('span', { class: 'muted small' }, x.label), h('a', { onclick: () => this.lib.openKey(x.key) }, x.name || x.key), h('span', { class: 'faint small' }, `${x.uses} link${x.uses === 1 ? '' : 's'}`), h('span', { class: 'grow' }),
         accept({ vocab: x.key }, 'Accepted')];
       case 'outdated': return [this.title(x), h('span', { class: 'faint small' }, `version ${x.schema_version ?? 'none'} of ${x.current}`), h('span', { class: 'grow' }), editAt(null)];
       case 'empty_fields': return [this.title(x), h('span', { class: 'faint small grow' }, x.fields.map((f) => f.field).join(', ')), editAt(x.fields[0] && x.fields[0].field)];
-      case 'unreviewed_items': return [this.title(x), h('span', { class: 'badge outline' }, x.collection), h('span', { class: 'grow' }), accept({ key: x.key }, 'All fields accepted'), editAt(null)];
+      case 'unreviewed_items': return [this.title(x), h('span', { class: 'muted small' }, x.collection), h('span', { class: 'grow' }), accept({ key: x.key }, 'All fields accepted'), editAt(null)];
       default: return [this.title(x)];
     }
   }

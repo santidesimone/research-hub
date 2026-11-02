@@ -3,15 +3,16 @@
 import { h, api, toast } from '../../shell/ui.js';
 
 const FILTERS = [['proposed', 'To review'], ['applied', 'Applied'], ['', 'All']];
-const STATUS_BADGE = { proposed: 'warn', applied: 'ok', rejected: 'outline', reverted: 'outline' };
+const STATUS_TEXT = { proposed: 'To review', applied: 'Applied', rejected: 'Rejected', reverted: 'Undone' };
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const linkCounts = (o) => Object.entries(o || {}).map(([t, n]) => `${t} ×${n}`).join(', ');
 
 export class CurationView {
-  constructor(lib) { this.lib = lib; this.filter = 'proposed'; }
+  // embedded: inside Review, which has the page title and tabs
+  constructor(lib, { embedded = false, onCounts } = {}) { this.lib = lib; this.filter = 'proposed'; this.embedded = embedded; this.onCounts = onCounts; }
   async mount(bodyEl) {
-    this.el = h('div', { class: 'page audit curation' });
-    bodyEl.append(h('div', { class: 'scroll' }, this.el));
+    this.el = h('div', { class: this.embedded ? 'audit curation' : 'page audit curation' });
+    bodyEl.append(this.embedded ? this.el : h('div', { class: 'scroll' }, this.el));
     await this.load();
   }
   async load() {
@@ -19,12 +20,13 @@ export class CurationView {
     let r;
     try { r = await api('/api/curation/plans' + (this.filter ? '?status=' + this.filter : '')); } catch (e) { this.el.replaceChildren(h('div', { class: 'alert' }, e.message)); return; }
     const seg = h('div', { class: 'seg' }, FILTERS.map(([id, label]) => h('button', { class: this.filter === id ? 'on' : '', 'data-filter': id, onclick: () => { this.filter = id; this.load(); } }, label)));
-    this.el.replaceChildren(
-      h('h1', { class: 'page-title' }, 'Curation'),
+    if (this.onCounts && this.filter === 'proposed') this.onCounts(r.plans.length);
+    this.el.replaceChildren(...[ // the DOM would print false
+      !this.embedded && h('h1', { class: 'page-title' }, 'Curation'),
       h('p', { class: 'lead' }, 'Fixes to the graph, proposed by Claude or by you: merging duplicates, removing wrong links, deleting junk, renaming concepts. Nothing changes until you apply a plan, and an applied plan can be undone.'),
       h('div', { style: { marginTop: '18px' } }, seg),
       r.plans.length ? h('div', { class: 'plans' }, r.plans.map((p) => this.plan(p)))
-        : h('p', { class: 'muted', style: { marginTop: '18px' } }, this.filter === 'proposed' ? 'Nothing to review. Ask Claude in the chat to check the graph and propose fixes.' : 'No plans yet.'));
+        : h('p', { class: 'muted', style: { marginTop: '18px' } }, this.filter === 'proposed' ? 'Nothing to review. Ask Claude in the chat to check the graph and propose fixes.' : 'No plans yet.')].filter(Boolean));
   }
   key(k) { return h('a', { class: 'keylink', onclick: () => this.lib.openKey(k) }, k); }
   change(c) {
@@ -75,7 +77,7 @@ export class CurationView {
     if (p.status === 'proposed') actions.append(act('Apply', 'apply', 'btn-primary', 'Click again to apply'), act('Reject', 'reject', 'btn-ghost'));
     if (p.status === 'applied') actions.append(act('Undo', 'revert', '', 'Click again to undo'));
     return h('section', { class: 'card plan', 'data-plan': p.id, style: { marginTop: '14px' } },
-      h('div', { class: 'row-flex' }, h('span', { class: 'badge ' + STATUS_BADGE[p.status] }, p.status), h('span', { class: 'faint small' }, `${who} · ${when}`)),
+      h('div', { class: 'row-flex' }, h('span', { class: 'planstatus small', 'data-status': p.status }, STATUS_TEXT[p.status] || p.status), h('span', { class: 'faint small' }, `${who} · ${when}`)),
       p.reason && h('p', { style: { margin: '10px 0 0' } }, p.reason),
       ...p.changes.map((c) => this.change(c)),
       p.drive_trash.length ? h('div', { class: 'alert', style: { marginTop: '10px' } }, `${plural(p.drive_trash.length, 'file')} in your Google Drive will go to the Drive trash (Undo takes them out again).`) : null,

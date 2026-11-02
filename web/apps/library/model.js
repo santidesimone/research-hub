@@ -1,20 +1,27 @@
 // Library logic that needs no DOM: addresses, form values, what changed, provenance labels. Tested from web/test/run.js.
 
-export const SECTIONS = ['all', 'graph', 'audit', 'curation'];
+export const SECTIONS = ['all', 'graph', 'review'];
+// older addresses of the two Review tabs
+const REVIEW_ALIASES = { audit: 'check', curation: 'fixes' };
 
-// /library/<slug>?key=..&edit=1  ->  { section, key, edit }. Older links (/library?key=..&view=graph) keep working.
+// /library/<slug>?key=..&edit=1  ->  { section, key, edit }; /library/review?tab=fixes adds { tab }. Older links
+// (/library?key=..&view=graph, /library/audit, /library/curation) keep working.
 export function parseRoute(rest, query, collections) {
   const first = (rest[0] || '').toLowerCase();
   const coll = collections.find((c) => c.slug === first);
+  if (first === 'review' || REVIEW_ALIASES[first]) {
+    return { section: 'review', key: null, edit: false, tab: REVIEW_ALIASES[first] || (query.get('tab') === 'fixes' ? 'fixes' : 'check') };
+  }
   let section = coll ? coll.name : SECTIONS.includes(first) ? first : query.get('view') === 'graph' ? 'graph' : 'all';
   if (!first && !query.get('view') && !query.get('key')) section = 'paper'; // the Library opens on Papers
   return { section, key: query.get('key') || null, edit: query.get('edit') === '1' };
 }
-export function routePath({ section, key = null, edit = false }, collections) {
+export function routePath({ section, key = null, edit = false, tab = null }, collections) {
   const coll = collections.find((c) => c.name === section);
   const qs = new URLSearchParams();
   if (key) qs.set('key', key);
   if (edit) qs.set('edit', '1');
+  if (section === 'review' && tab === 'fixes') qs.set('tab', 'fixes');
   const s = qs.toString();
   return `/library/${coll ? coll.slug : section}${s ? '?' + s : ''}`;
 }
@@ -26,6 +33,24 @@ export function sidebarGroups(collections, sections = []) {
   for (const c of collections) (groups.find((g) => g.id === c.ui_section) || other).items.push({ id: c.name, label: c.plural });
   return [...groups, other].filter((g) => g.items.length);
 }
+
+// The graph filter: node types grouped like the sidebar (collections by ui_section), then Vocabulary (the schema's
+// entities: topics, people …), then any other type (notes, projects). labels: the schema's labels ({label, name,
+// color}); entityLabels: the entities' labels. Empty groups are left out.
+export function graphFilterGroups(labels, collections, sections = [], entityLabels = []) {
+  const byLabel = new Map(collections.map((c) => [c.label, c]));
+  const groups = sidebarGroups(collections, sections).map((g) => ({ id: g.id, label: g.label, items: [] }));
+  const vocab = { id: 'vocabulary', label: 'Vocabulary', items: [] };
+  const other = groups.find((g) => g.id === 'other') || { id: 'other', label: 'Other', items: [] };
+  for (const l of labels) {
+    const c = byLabel.get(l.label);
+    const g = c ? groups.find((x) => x.id === c.ui_section) || other : entityLabels.includes(l.label) ? vocab : other;
+    g.items.push(l);
+  }
+  return [...groups.filter((g) => g.id !== 'other'), vocab, other].filter((g) => g.items.length);
+}
+// Large vocabularies stay off until asked for, so the first view is not a hairball.
+export const GRAPH_OFF_BY_DEFAULT = ['Concept', 'Person', 'Organisation', 'Venue'];
 
 // How many items of each collection the loaded graph holds: { collection name: count }. Papers count from their own list.
 export function collectionCounts(nodes, collections, papers = null) {
