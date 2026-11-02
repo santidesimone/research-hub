@@ -5,6 +5,8 @@ import { isEmpty, noun, plainValue } from './model.js';
 import { renderFields } from './view.js';
 import { Connections } from './connections.js';
 import { questionOverview, hypothesisOverview } from './inquiry.js';
+import { thoughtOverview, thoughtsOn } from './thoughts.js';
+import { popover } from './connections.js';
 import { itemForm, picker, vocabSearch } from './forms.js';
 
 export class CollectionView {
@@ -160,10 +162,12 @@ export function itemDetail(lib, coll, item, { onChanged, skip = [], compact = fa
     h('span', { class: 'faint small' }, item.key)));
   const conn = new Connections(lib, coll, item, { onChanged });
   // questions and hypotheses open on their overview (inquiry.js); their text and status are in the header already
-  const overview = coll.name === 'research_question' ? questionOverview(lib, item, conn) : coll.name === 'hypothesis' ? hypothesisOverview(lib, item, conn) : null;
-  const more = overview ? [coll.fields.text ? 'text' : 'statement', 'status'] : [];
+  const overview = coll.name === 'research_question' ? questionOverview(lib, item, conn) : coll.name === 'hypothesis' ? hypothesisOverview(lib, item, conn)
+    : coll.name === 'thought' ? thoughtOverview(lib, item, popover, { onChanged }) : null;
+  const more = coll.name === 'thought' ? ['text', 'state', 'suggested_as', 'suggested_reason'] : overview ? [coll.fields.text ? 'text' : 'statement', 'status'] : [];
   const info = h('div', { class: 'tabpane' }, overview, renderFields(item, coll, { onRef: open, skip: compact ? ['title', ...more, ...skip] : ['title', 'tldr', ...more, ...skip] }),
-    coll.name === 'ontology' && snapshotPanel(item, onChanged));
+    coll.name === 'ontology' && snapshotPanel(item, onChanged),
+    coll.name !== 'thought' && thoughtsOn(lib, item.key, item.links.in, { onAdded: async () => { await lib.loadData(); lib.renderNav(); if (onChanged) await onChanged(); } }));
   const connEl = h('div', { class: 'tabpane' }, conn.render());
   const tabs = h('div', { class: 'tabs', role: 'tablist' });
   const setTab = (id) => {

@@ -4,6 +4,7 @@ const { HttpError } = require('../../core/errors');
 const { requireOwner } = require('../../core/auth');
 const artifacts = require('../../core/artifacts');
 const types = require('../../core/types');
+const { assertNotRetired } = require('../../core/schema');
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -19,6 +20,7 @@ module.exports = {
 
     app.post('/api/artifacts/:type', requireOwner, express.json({ limit: '2mb' }), wrap(async (req, res) => {
       types.get(req.params.type);
+      assertNotRetired(req.params.type);
       res.status(201).json(await artifacts.add(req.params.type, req.body, { overwrite: req.query.overwrite === 'true' }));
     }));
 

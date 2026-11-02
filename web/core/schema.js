@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { ROOT } = require('./env');
+const { HttpError } = require('./errors');
 
 const SAFE = /^[A-Za-z][A-Za-z0-9_]*$/;
 const FIELD = /^[a-z][a-z0-9_]*$/;
@@ -61,7 +62,8 @@ function check(s) {
   checkFields('common_fields', s.common_fields);
   // the Library sidebar groups; every collection names one (ui_section)
   const sections = Array.isArray(s.ui_sections) ? s.ui_sections : [];
-  if (!sections.length || sections.some((x) => !x || !/^[a-z_]+$/.test(x.id || '') || typeof x.label !== 'string' || !x.label.trim())) out.push('ui_sections: a list of {id, label}');
+  // an empty label is a group without a heading (Thoughts, at the top)
+  if (!sections.length || sections.some((x) => !x || !/^[a-z_]+$/.test(x.id || '') || typeof x.label !== 'string')) out.push('ui_sections: a list of {id, label}');
   const sectionIds = new Set(sections.map((x) => x && x.id));
   if (sectionIds.size !== sections.length) out.push('ui_sections: ids must be unique');
   for (const [name, t] of Object.entries(s.types || {})) {
@@ -73,6 +75,9 @@ function check(s) {
     if (t.managed === 'markdown' && !t.folder) out.push(`${at}: Markdown-managed types need a folder`);
     if (t.collection && !t.fields) out.push(`${at}: collections need fields`);
     if (t.collection && !sectionIds.has(t.ui_section)) out.push(`${at}: ui_section must be one of ${[...sectionIds].join(', ')}`);
+    if (t.ui_count != null && !((t.fields || {})[t.ui_count.field] && ((t.fields[t.ui_count.field].enum || []).includes(t.ui_count.value)))) out.push(`${at}: ui_count needs an enum field of this type and one of its values`);
+    if (t.retired != null && t.retired !== true && !(s.types || {})[t.retired]) out.push(`${at}: retired is true or names the type that replaces it`);
+    if (t.retired && t.collection) out.push(`${at}: a retired type cannot be a collection`);
     if (t.title_from != null && !['text', 'longtext'].includes(((t.fields || {})[t.title_from] || {}).type)) out.push(`${at}: title_from must name a text field of this type`);
     checkFields(at + '.fields', t.fields);
     const known = new Set([...Object.keys(s.common_fields || {}), ...Object.keys(t.fields || {})]);
@@ -146,8 +151,12 @@ const relTargets = (rel, fromLabel) => relTargetsIn(schema, rel, fromLabel);
 const relAllows = (rel, fromLabel, toLabels) => relTargets(rel, fromLabel).some((l) => toLabels.includes(l));
 // The relations an item of this label can start, with where they may point and their own properties.
 // what a type can link to now (a retired relation stays readable, for old data and backups, but is never offered)
-const relationsFrom = (label) => Object.entries(schema.relation_types).filter(([rel, r]) => !r.retired && relTargets(rel, label).length)
-  .map(([rel, r]) => ({ rel, to: relTargets(rel, label), interpretive: Boolean(r.interpretive), ...(r.props ? { props: r.props } : {}) }));
+// (nor is a retired type: notes and projects stay readable until removed, but nothing new links to them)
+const retiredLabels = () => Object.values(schema.types).filter((t) => t.retired).map((t) => t.label);
+const relationsFrom = (label) => Object.entries(schema.relation_types)
+  .map(([rel, r]) => [rel, r, relTargets(rel, label).filter((l) => !retiredLabels().includes(l))])
+  .filter(([, r, to]) => !r.retired && to.length)
+  .map(([rel, r, to]) => ({ rel, to, interpretive: Boolean(r.interpretive), ...(r.props ? { props: r.props } : {}) }));
 
 // Every field of a type: the common ones (collections only) plus its own.
 function fieldsOf(typeName) {
@@ -250,7 +259,7 @@ function publicView() {
   const collections = Object.entries(schema.types).filter(([, t]) => t.collection).map(([name, t]) => ({
     name, label: t.label, plural: t.label_plural || t.label, slug: slugOf(t.label_plural || t.label), schema_version: t.schema_version, managed: t.managed,
     list_columns: t.list_columns || [], filters: t.filters || [], detail_groups: t.detail_groups || [],
-    ui_section: t.ui_section, title_from: t.title_from || null,
+    ui_section: t.ui_section, ui_count: t.ui_count || null, title_from: t.title_from || null,
     fields: Object.fromEntries(Object.entries(fieldsOf(name)).filter(([, f]) => !(f.by.length === 1 && f.by[0] === 'Sys'))
       .map(([f, spec]) => [f, Object.fromEntries(FIELD_KEYS.filter((k) => spec[k] !== undefined).map((k) => [k, spec[k]]))])),
     relations: relationsFrom(t.label),
@@ -259,7 +268,14 @@ function publicView() {
   return { version: schema.version, labels, sections: schema.ui_sections.map(({ id, label }) => ({ id, label })), collections, entities };
 }
 
+// A retired type (notes, projects) can still be read, but nothing new is made of it through the API or Claude.
+function assertNotRetired(typeName) {
+  const t = schema.types[typeName];
+  if (t && t.retired) throw new HttpError(410, `${typeName} is retired${t.retired === true ? '' : `: use ${t.retired}`}`);
+}
+
 module.exports = {
+  assertNotRetired,
   schema, check, load, safeLabel, safeRel, entityLabels, typeLabels, publicEntityLabels, orphanLabels, relationTypes,
   fieldsOf, keyPrefix, managedBy, publicProps, validate, publicView, relTargets, relAllows, relationsFrom, partSpec,
 };

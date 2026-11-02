@@ -2,6 +2,15 @@
 
 Every change to `schema/schema.json`, with the reason. The spec is `docs/SCHEMA_DESIGN.md`. A per-type `schema_version` is raised when that type's fields change. Items below the current version form the audit worklist, so a change is never silently applied to old items.
 
+## v3, thoughts replace notes; projects retired (2026-11-02)
+
+Why: Task 11 step 6 (`docs/UI_REDESIGN.md` sections 4 and 7). Notes as Markdown files in git were clumsy, and projects organise work, which the hub is not for.
+- New collection **thought** (`thought:`, database-managed): `text` (title from it), `state` (waiting, turned, kept; default waiting), `suggested_as` and `suggested_reason` (Claude's). Sidebar group `capture` (a group without a heading, first), counted while waiting (`ui_count`, new and checked: an enum field of the type and one of its values).
+- `ui_sections` labels may be empty (a group without a heading).
+- **TURNED_INTO** (Thought to the item it became). A thought may ANNOTATE (now also frameworks, questions, hypotheses, ontologies), CRITIQUE, SUPPORT, CONTRADICT and be ABOUT, as notes could.
+- Types may be `retired` (true, or the type that replaces it; checked; never a collection): **note** (by thought) and **project**. They stay readable; the API and Claude refuse to make new ones (410), and no relation offers them as a target (a relation left without a live target, such as a question PART_OF a project, is not offered).
+- Migration `015_thoughts` copies every note into a kept thought with its links and proposes one curation plan deleting the old notes and all projects. `PUT /api/notes/sync` and `hub sync-notes` answer that they are retired; `hub import-notes` turns Markdown notes into thoughts once.
+
 ## v3, questions and hypotheses are the owner's (2026-11-02)
 
 Why: Task 11 step 5 (`docs/UI_REDESIGN.md` section 3). Questions and hypotheses are created by the owner and informed by sources; a paper's own question is a fact about the paper.

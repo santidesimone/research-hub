@@ -7,7 +7,7 @@ A self-hosted personal research hub built around a knowledge graph. **Neo4j is t
   CLI  bin/hub ───────────┼──► web app (Node.js, mounted at BASE_PATH) ──► Neo4j  (metadata, notes, links, personal layer)
   Claude (MCP) ───────────┤                    │
   scripts / curl (REST) ──┘                    └──► your Google Drive (PDFs you upload; optional)
-  notes/*.md on your computer ──► hub sync-notes ──► Neo4j
+  notes/*.md on your computer ──► hub import-notes (once) ──► thoughts in Neo4j
 ```
 
 Everything runs inside a **shell** (top bar with an app switcher, sign-in, theme). **Apps** are folders (`web/apps/<id>/`): Home, **Library** (papers list, reader and graph view) and **Query** (Cypher console). The look is a **skin** (`web/skins/<name>/`: a file of design tokens). Everything is behind your token: anyone not signed in gets only the sign-in page, on every address. Signed in, you land in the Library (or on the page you asked for). A public preview for visitors exists but is off unless the server runs with `PUBLIC_ACCESS=1`.
@@ -40,7 +40,7 @@ Docker (for Neo4j), Node.js 18+. Python 3 only if you want `scripts/seed.py` (`p
    python scripts/seed.py --with-pdfs
    ```
    This adds 12 items (10 papers by Geoffrey Goodell and a 2025 talk by him, plus David Chaum's "Blind Signatures for Untraceable Payments") with a link to each open PDF. Nothing is downloaded. Existing papers are skipped, so re-running is safe. To remove one: `DELETE /api/papers?key=<paper key>`.
-4. Open http://localhost:3000. Optionally push the example notes: `./bin/hub config --url http://localhost:3000 --token <token>` then `./bin/hub sync-notes ./content`.
+4. Open http://localhost:3000. Optionally bring in the example notes as thoughts: `./bin/hub config --url http://localhost:3000 --token <token>` then `./bin/hub import-notes ./content`.
 
 ## Local and cloud
 
@@ -82,7 +82,7 @@ curl http://localhost:3000/api/query/schema -H "Authorization: Bearer $HUB_API_T
 # CLI (Node 18+, no install): bin/hub
 ./bin/hub config --url http://localhost:3000 --token $HUB_API_TOKEN      # saved to ~/.config/research-hub.json
 ./bin/hub query "MATCH (a:Person)<-[:AUTHORED_BY]-(p:Paper) RETURN a.name, count(p) AS papers ORDER BY papers DESC"
-./bin/hub search blind signatures      # also: schema, get <key>, add, link, pdf, status, sync-notes, enrich, backup (hub help)
+./bin/hub search blind signatures      # also: schema, get <key>, add, link, pdf, status, import-notes, enrich, backup (hub help)
 ```
 
 **Claude (MCP)**: the server exposes `POST <base>/mcp` (Streamable HTTP, bearer token). Tools: `describe_graph`, `run_cypher`, `search_papers`, `get_artifact`, `add_paper`, `add_artifact`, `set_file_link`, `copy_pdf_to_drive`, `remove_file_link`, `set_status`. Plus `request_upload` (Task 9). With Claude Code: `claude mcp add --transport http research-hub http://localhost:3000/mcp --header "Authorization: Bearer $HUB_API_TOKEN"`.
@@ -154,31 +154,19 @@ Put the three values in `.env`, restart, and run `./bin/hub drive` to check. Ful
 
 Papers that an earlier version stored in a bucket keep their old reference as `legacy_pdf_uri` (migration `003`; nothing is deleted); the UI shows a hint to re-upload them.
 
-## Markdown notes and projects
+## Thoughts (formerly notes)
 
-Keep one file per note or project on your computer, ideally in a git repo (this project's `content/` folder is an example): `notes/`, `projects/`. Push them to the hub:
+A **thought** is a short text in the hub, on whatever you were looking at: a paper, a question, a method. Notes and projects as Markdown files are retired (Task 11): no files, no git, no sync step.
+- **Add one:** the field at the end of any item's Info tab ("Your thoughts on this"), **+ New** in Thoughts, or ask Claude in the chat. Thoughts sits at the top of the sidebar with the number waiting.
+- **Turn it into structure:** a thought's page offers one button for the suggested type (Claude's `suggested_as` and reason, when Claude has looked at it; a thought ending in "?" looks like a question) and **Something else…** for the rest: question, hypothesis, critique, supports or contradicts the paper, finding (added to the paper's key findings), method, or keep as a note. What it is on carries over: the paper informs the new question, a hypothesis answers the question it was on. Then **Delete the thought** or **Keep it** (never deleted automatically); the new item links back (`TURNED_INTO`).
+- **Your old notes:** migration `015_thoughts` copied every note in the database into a thought (state kept, links kept) and proposed, in Review, deleting the old notes and all projects. Markdown files that were never synced come in once with:
 
 ```bash
-./bin/hub sync-notes ./content --dry-run     # what would be created / updated / removed
-./bin/hub sync-notes ./content               # one atomic batch; files you deleted are removed from the graph
+./bin/hub import-notes ./content --dry-run   # what would be imported
+./bin/hub import-notes ./content             # notes/*.md become thoughts (kept), with their annotates/critiques/supports/contradicts links
 ```
 
-**Methods, use cases and case studies are database-managed** (schema v3): create and edit them in the Library, the API (`POST /api/artifacts/<type>`), MCP or the CLI. `sync-notes` skips files in `methods/` (or with `kind: method`) with a message and never prunes a database-managed item. Methods that came from Markdown were moved into the database by migration `005` (they keep `source_path` and get `imported_from: markdown`), so the files in `content/methods/` are now only a historical copy.
-
-The node key is `<kind>:<filename>`. The file's text is stored on the node as `body`, so notes need no redeploy and are searchable. Front matter:
-
-```yaml
----
-title: Critique of X
-visibility: private          # or public
-summary: One line.
-critiques: ["doi:10.1109/cvpr.2016.90"]
-uses: ["method:snowballing"]
-concepts: ["evaluation"]
----
-```
-
-Relationship fields: `about uses extends supports contradicts critiques annotates inspired builds_on replicates introduces addresses instance_of variant_of alternative_to requires`. Papers are `doi:` plus the lowercase DOI (or the `paper:<hash>` key returned when you added them). **Quote values containing a colon.** Unknown targets are reported in `warnings` and skipped. A `status:` line is ignored (status is personal; set it with `hub status`). `sync-notes` refuses to prune when no usable file is found, so an empty or wrong folder cannot wipe your notes. `--no-prune` only adds and updates.
+`hub sync-notes` and `PUT /api/notes/sync` now only say they are retired (410).
 
 Any type can also be created without files: `POST /api/artifacts/<type>` or Claude's `add_artifact`. Input is checked against the type's fields in `schema/schema.json`: a missing title is a 400; empty Core fields, values outside an enum, bad numbers, dates, lists or objects come back as `warnings` (the value is stored as sent); fields the schema does not know are kept.
 
@@ -338,7 +326,7 @@ Node 18+, nothing to install. `hub config --url <base url> --token <token>` save
 | `hub analyze <doi \| url \| key \| file.pdf>` `[--deep] [--force] [--model m] [--collection c] < analysis.json` | save an analysis in one call (stdin: `{fields, links, confidence}`; the model from `--model`, the JSON or `HUB_MODEL`). For a PDF, the JSON names the paper (`doi` or `url`) and the file is uploaded to your Drive |
 | `hub audit [--json]` | what is worth reviewing, with counts |
 | `hub audit --accept-all-unchanged [--dry-run]` | accept every Claude value nobody changed, except low-confidence values and ungrounded findings (listed as skipped) |
-| `hub sync-notes [dir] [--dry-run] [--no-prune]` | push Markdown notes and projects |
+| `hub import-notes [dir] [--dry-run]` | turn Markdown notes into thoughts, once (projects are skipped) |
 | `hub enrich` | citation edges from OpenAlex |
 | `hub backup [file]`, `hub restore <file>` | the whole graph to and from one JSON file |
 | `hub export`, `hub sync` | papers as CSL JSON; rebuild the public preview |
@@ -384,7 +372,7 @@ web/core/                 config, log, security headers, rate limit, db, schema,
 web/features/             API pieces, one folder each:
     papers/ (everything about papers and their files)  personal/ (your status layer)  artifacts/ (generic API for every type)
     graph/ (read side)  query/ (read-only Cypher)  mcp/ (Claude)  session/ (sign-in)  apps/ (app list)
-    notes/ (sync-notes)  enrich/ (OpenAlex)  backup/  drive/  sync/
+    notes/ (retired sync)  enrich/ (OpenAlex)  backup/  drive/  sync/
 web/public/index.html     the page template; web/public/shell/  the shell (routing, top bar, sign-in) + base.css (structure) + ui.js
 web/apps/<id>/            one folder per app: app.json + app.js (home, library, console)
 web/skins/<name>/         one folder per look: skin.json + skin.css (design tokens only)
@@ -395,7 +383,7 @@ web/test/                 run.js (offline, no database) and integration.js (need
 - **Add an app**: create `web/apps/<id>/app.json` (`{id,title,description,icon,auth:"public"|"owner",order}`) and `app.js` (`export default { mount(ctx) {...}, onRoute?(ctx) }`). It appears in the apps menu and is served at `/<id>`. It gets `ctx.el`, `ctx.api`, `ctx.navigate`, `ctx.route` (path, query) and shared helpers; it uses only CSS classes from `base.css` and colours from tokens, so it follows whatever skin is active.
 - **Change the look**: copy `web/skins/paper` to `web/skins/mine`, edit the tokens, run with `HUB_SKIN=mine` (or try one live with `?skin=slate` in the URL). A skin that loads fonts from another host lists it in `skin.json` under `"csp": {"style": [...], "font": [...]}`. A test checks that every skin defines every token the app uses.
 - **Change how papers work**: edit only `web/features/papers/`. Remove the folder and papers disappear from the API; nothing else breaks.
-- **Add a new artifact type** (say `dataset`): add it to `schema/schema.json` (label, colour, `managed` (`db`, `markdown` with a `folder`, or `api`), `schema_version`, optional `key_prefix`, legacy `props`, and for a Library collection `"collection": true` with `fields` and layout hints). That alone gives you `POST /api/artifacts/dataset` with validation (and `hub sync-notes` support if it is Markdown-managed), and the UI legend and colour. Only write `web/features/<name>/type.js` if the type needs special input handling (like papers do). The schema is checked at start-up: an unknown field type, a `ref` to a label that does not exist or a type `public_props` entry outside the global whitelist stops the server. Record the change in `schema/CHANGELOG.md`; raise the type's `schema_version` when its fields change.
+- **Add a new artifact type** (say `dataset`): add it to `schema/schema.json` (label, colour, `managed` (`db`, `markdown` with a `folder`, or `api`), `schema_version`, optional `key_prefix`, legacy `props`, and for a Library collection `"collection": true` with `fields` and layout hints). That alone gives you `POST /api/artifacts/dataset` with validation, and the UI legend and colour. Only write `web/features/<name>/type.js` if the type needs special input handling (like papers do). The schema is checked at start-up: an unknown field type, a `ref` to a label that does not exist or a type `public_props` entry outside the global whitelist stops the server. Record the change in `schema/CHANGELOG.md`; raise the type's `schema_version` when its fields change.
 - **Add a relationship type**: add it to `relation_types` (with its endpoints) in `schema/schema.json`; add it to `relations` as well if it should be a front-matter and API field.
 - **Change stored data (a migration)**: add `web/migrations/00N_what_it_does.js` exporting `{ id, description, async up(db) }` where `db.run(cypher, params)` writes. On the next start it runs once, and its id is recorded on a `(:SchemaMeta {id:'graph'})` node. Write migrations so they are safe to run twice. `002` to `005` are real examples. `GET /api/schema` lists what has been applied.
 - **Tests**: `cd web && npm test` (offline: parsing, the Cypher issued, Drive calls against a fake Google, notes sync, backup, public whitelist, config checks, security policy). `npm run test:integration` runs against a real Neo4j and refuses to start unless `HUB_INTEGRATION=1` (it prunes and restores data, so use a throwaway database).
@@ -418,7 +406,7 @@ curl -X PUT "http://localhost:3000/api/personal?key=doi:10.1007/978-1-4757-0602-
 curl -X DELETE "http://localhost:3000/api/personal?key=..." -H "Authorization: Bearer $HUB_API_TOKEN"   # clear
 ```
 
-New papers start as `to-read` unless a `status:` tag or `status` field is sent with them (that policy is a constant in `features/personal/index.js`). A `status:` line in a Markdown file's front matter is ignored by `sync-notes`; set it through this API. When you are signed in, the dropdown beside a paper's title in the Library sets it (that is the only place the UI writes).
+New papers start as `to-read` unless a `status:` tag or `status` field is sent with them (that policy is a constant in `features/personal/index.js`). When you are signed in, the dropdown beside a paper's title in the Library sets it (that is the only place the UI writes).
 
 To keep more private things per artifact (a rating, a private comment), add the field name to `FIELDS` in that file.
 
@@ -432,7 +420,7 @@ DOIs, authors, venues and arXiv IDs were checked against arXiv, publisher and UC
 
 ## Known limits
 
-- Notes and projects are edited as Markdown files (`hub sync-notes`), not in the Library; papers, methods, use cases and case studies are edited in the Library, the API, the CLI or through Claude.
+- Everything is edited in the hub (Library, API, CLI or Claude); Markdown notes are imported once as thoughts (`hub import-notes`), projects are retired.
 - The chat-window connector needs OAuth or an admin-entered header depending on your plan; the MCP server only accepts the bearer token.
 - Public Drive links are readable by anyone who has the URL, by your choice. Sites other than Google Drive may refuse to be embedded in the Reader; they open in a new tab.
 - Rate limiting is per instance, in memory. That is enough for one person, not for a public API.

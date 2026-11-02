@@ -39,7 +39,7 @@ export function sidebarGroups(collections, sections = []) {
 // color}); entityLabels: the entities' labels. Empty groups are left out.
 export function graphFilterGroups(labels, collections, sections = [], entityLabels = []) {
   const byLabel = new Map(collections.map((c) => [c.label, c]));
-  const groups = sidebarGroups(collections, sections).map((g) => ({ id: g.id, label: g.label, items: [] }));
+  const groups = sidebarGroups(collections, sections).map((g) => ({ id: g.id, label: g.label || g.items.map((i) => i.label).join(', '), items: [] }));
   const vocab = { id: 'vocabulary', label: 'Vocabulary', items: [] };
   const other = groups.find((g) => g.id === 'other') || { id: 'other', label: 'Other', items: [] };
   for (const l of labels) {
@@ -55,10 +55,10 @@ export const GRAPH_OFF_BY_DEFAULT = ['Concept', 'Person', 'Organisation', 'Venue
 // Headings for links, by direction: a framework lists the papers framing on it, a hypothesis the papers testing it,
 // an ontology its modules and users. Other relations read as their name.
 const REL_HEADINGS = {
-  out: { FRAMED_BY: 'Framed by', TESTS: 'Tests', USED_BY: 'Used by', PART_OF: 'Part of', DERIVED_FROM: 'Derived from', ANSWERS: 'Answers', INFORMS: 'Informs',
+  out: { FRAMED_BY: 'Framed by', TESTS: 'Tests', USED_BY: 'Used by', PART_OF: 'Part of', DERIVED_FROM: 'Derived from', ANSWERS: 'Answers', INFORMS: 'Informs', ANNOTATES: 'On', TURNED_INTO: 'Turned into',
     ASKED_IN: 'Asked in', ADDRESSED_BY: 'Addressed by', SUB_QUESTION_OF: 'Sub-question of', COMPETES_WITH: 'Competes with', ALIGNS_WITH: 'Aligns with' },
   in: { FRAMED_BY: 'Framed by this', TESTS: 'Tested by', USED_BY: 'Uses this', PART_OF: 'Parts', DERIVED_FROM: 'Hypotheses derived from this',
-    ANSWERS: 'Answered by', INFORMS: 'Informed by', ASKED_IN: 'Questions asked here', ADDRESSED_BY: 'Questions it addresses', SUB_QUESTION_OF: 'Sub-questions',
+    ANSWERS: 'Answered by', INFORMS: 'Informed by', ANNOTATES: 'Thought on this', TURNED_INTO: 'Came from a thought', ASKED_IN: 'Questions asked here', ADDRESSED_BY: 'Questions it addresses', SUB_QUESTION_OF: 'Sub-questions',
     COMPETES_WITH: 'Competing with this', BUILDS_ON: 'Built on by', DEFINED_IN: 'Concepts defined here' },
 };
 const relWords = (rel) => rel.toLowerCase().replace(/_/g, ' ');
@@ -138,10 +138,36 @@ export function hypothesisVerdict(results) {
   return { n, counts: c, text: `${n} ${n === 1 ? 'paper' : 'papers'} tested it: ${parts.join(', ')}.` };
 }
 
+// What a thought can become, given what it is on (labels of the items it ANNOTATES) and the collections that exist.
+// Each option: { id, label, help, needs } (needs: a label one of its targets must have). Order: Claude's suggestion is
+// put first by the page. These are behaviours of the Thoughts inbox, so they name collections; an option whose
+// collection the schema lacks is not offered.
+export const TURN_OPTIONS = [
+  { id: 'question', coll: 'research_question', label: 'Question', help: 'Something you want to find out. It joins your research questions; what the thought is on informs it.' },
+  { id: 'hypothesis', coll: 'hypothesis', label: 'Hypothesis', help: 'A claim you could test. It answers the question the thought is on, if any.' },
+  { id: 'critique', rel: 'CRITIQUES', needs: 'Paper', label: 'Critique of the paper', help: 'Your objection, kept as this thought and linked to the paper as a critique.' },
+  { id: 'support', rel: 'SUPPORTS', needs: 'Paper', label: 'Supports the paper', help: 'Your reading that backs the paper, kept as this thought.' },
+  { id: 'contradiction', rel: 'CONTRADICTS', needs: 'Paper', label: 'Contradicts the paper', help: 'Your reading that undercuts the paper, kept as this thought.' },
+  { id: 'finding', needs: 'Paper', label: 'Finding', help: 'Something the paper shows: added to its key findings.' },
+  { id: 'method', coll: 'method', label: 'Method', help: 'A way of doing research worth reusing.' },
+  { id: 'keep', label: 'Keep as a note', help: 'Leave it as free text, linked to what it is on.' },
+];
+export function turnOptions(onLabels, collections) {
+  const have = new Set(collections.map((c) => c.name));
+  return TURN_OPTIONS.filter((o) => (!o.coll || have.has(o.coll)) && (!o.needs || onLabels.includes(o.needs)));
+}
+// Claude's suggestion when there is one (suggested_as), else a question when the thought asks one.
+export function suggestedTurn(fields, options) {
+  const want = fields.suggested_as || (/\?\s*$/.test(String(fields.text || '')) ? 'question' : null);
+  return options.find((o) => o.id === want) || null;
+}
+
 // How many items of each collection the loaded graph holds: { collection name: count }. Papers count from their own list.
 export function collectionCounts(nodes, collections, papers = null) {
   const out = {};
-  for (const c of collections) out[c.name] = c.name === 'paper' && papers ? papers.length : nodes.filter((n) => (n.labels || []).includes(c.label)).length;
+  // ui_count narrows it ({field, value}: Thoughts counts only the waiting ones)
+  const counted = (c, n) => !c.ui_count || (n.props || {})[c.ui_count.field] === c.ui_count.value;
+  for (const c of collections) out[c.name] = c.name === 'paper' && papers ? papers.length : nodes.filter((n) => (n.labels || []).includes(c.label) && counted(c, n)).length;
   return out;
 }
 

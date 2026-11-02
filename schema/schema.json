@@ -19,6 +19,7 @@
     "updated_at": { "type": "datetime", "by": ["Sys"], "tier": "core", "label": "Updated" }
   },
   "ui_sections": [
+    { "id": "capture", "label": "" },
     { "id": "reading", "label": "Reading" },
     { "id": "knowledge", "label": "Knowledge" },
     { "id": "inquiry", "label": "Inquiry" }
@@ -339,9 +340,37 @@
         { "label": "My use", "fields": ["how_i_use_it", "snapshot"] }
       ]
     },
+    "thought": {
+      "label": "Thought",
+      "label_plural": "Thoughts",
+      "color": "#5f8f6b",
+      "big": false,
+      "folder": null,
+      "collection": true,
+      "managed": "db",
+      "schema_version": 1,
+      "key_prefix": "thought:",
+      "ui_section": "capture",
+      "ui_count": { "field": "state", "value": "waiting" },
+      "title_from": "text",
+      "props": ["imported_from"],
+      "public_props": ["key", "title"],
+      "fields": {
+        "text": { "type": "longtext", "by": ["Y", "C"], "tier": "core", "label": "Thought" },
+        "state": { "type": "enum", "enum": ["waiting", "turned", "kept"], "default": "waiting", "by": ["Sys", "Y"], "tier": "core", "label": "State", "help": "waiting: in the inbox; turned: made into another item (TURNED_INTO); kept: stays as a note." },
+        "suggested_as": { "type": "enum", "enum": ["question", "hypothesis", "critique", "support", "contradiction", "finding", "method", "keep"], "by": ["C"], "tier": "standard", "label": "Claude suggests", "help": "What Claude thinks the thought could become; the owner decides." },
+        "suggested_reason": { "type": "text", "by": ["C"], "tier": "standard", "label": "Why" }
+      },
+      "list_columns": ["title", "state"],
+      "filters": ["state"],
+      "detail_groups": [
+        { "label": "Thought", "fields": ["text", "suggested_as", "suggested_reason"] }
+      ]
+    },
     "note": {
       "label": "Note",
       "label_plural": "Notes",
+      "retired": "thought",
       "color": "#10b981",
       "big": true,
       "folder": "notes",
@@ -353,6 +382,7 @@
     "project": {
       "label": "Project",
       "label_plural": "Projects",
+      "retired": true,
       "color": "#ec4899",
       "big": true,
       "folder": "projects",
@@ -404,14 +434,15 @@
   "relation_types": {
     "CITES": { "from": ["Paper"], "to": ["Paper"], "help": "From OpenAlex." },
     "BUILDS_ON": { "from": ["Paper", "Framework"], "to": ["Paper", "Framework"], "pairs": { "Paper": ["Paper"], "Framework": ["Framework"] }, "interpretive": true },
-    "CRITIQUES": { "from": ["Paper", "Note"], "to": ["Paper"], "interpretive": true },
+    "CRITIQUES": { "from": ["Paper", "Note", "Thought"], "to": ["Paper"], "interpretive": true },
     "REPLICATES": { "from": ["Paper"], "to": ["Paper"], "interpretive": true },
-    "CONTRADICTS": { "from": ["Paper", "Note"], "to": ["Paper"], "interpretive": true },
-    "SUPPORTS": { "from": ["Paper", "CaseStudy", "Note"], "to": ["Paper", "UseCase"], "interpretive": true },
+    "CONTRADICTS": { "from": ["Paper", "Note", "Thought"], "to": ["Paper"], "interpretive": true },
+    "SUPPORTS": { "from": ["Paper", "CaseStudy", "Note", "Thought"], "to": ["Paper", "UseCase"], "interpretive": true },
     "EXTENDS": { "from": ["Paper", "Method", "Note", "Project", "Ontology"], "to": ["Paper", "Method", "Note", "Project", "Ontology"],
       "pairs": { "Paper": ["Paper", "Method", "Note", "Project"], "Method": ["Paper", "Method", "Note", "Project"], "Note": ["Paper", "Method", "Note", "Project"], "Project": ["Paper", "Method", "Note", "Project"], "Ontology": ["Ontology"] } },
     "INSPIRED": { "from": ["Paper", "Method", "Note", "Project"], "to": ["Paper", "Method", "Note", "Project"] },
-    "ANNOTATES": { "from": ["Note"], "to": ["Paper", "Method", "UseCase", "CaseStudy", "Project"] },
+    "ANNOTATES": { "from": ["Note", "Thought"], "to": ["Paper", "Method", "UseCase", "CaseStudy", "Project", "Framework", "ResearchQuestion", "Hypothesis", "Ontology"], "help": "A thought (or an old note) on an item." },
+    "TURNED_INTO": { "from": ["Thought"], "to": ["Paper", "Method", "UseCase", "CaseStudy", "Framework", "ResearchQuestion", "Hypothesis", "Ontology"], "help": "The item a thought became." },
     "INTRODUCES": { "from": ["Paper"], "to": ["Method"] },
     "USES": { "from": ["Paper", "CaseStudy", "Note", "Project", "Method"], "to": ["Method", "Dataset"] },
     "ADDRESSES": { "from": ["Method"], "to": ["UseCase"] },
@@ -419,7 +450,7 @@
     "VARIANT_OF": { "from": ["Method"], "to": ["Method"] },
     "ALTERNATIVE_TO": { "from": ["Method"], "to": ["Method"] },
     "REQUIRES": { "from": ["Method"], "to": ["Method"] },
-    "ABOUT": { "from": ["Paper", "Method", "UseCase", "CaseStudy", "Note", "Project", "Framework", "ResearchQuestion", "Hypothesis", "Ontology"], "to": ["Topic", "Concept", "Domain"] },
+    "ABOUT": { "from": ["Paper", "Method", "UseCase", "CaseStudy", "Note", "Thought", "Project", "Framework", "ResearchQuestion", "Hypothesis", "Ontology"], "to": ["Topic", "Concept", "Domain"] },
     "AUTHORED_BY": { "from": ["Paper"], "to": ["Person"] },
     "PUBLISHED_IN": { "from": ["Paper"], "to": ["Venue"] },
     "INVOLVES": { "from": ["CaseStudy"], "to": ["Organisation"] },

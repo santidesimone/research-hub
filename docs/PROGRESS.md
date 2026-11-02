@@ -18,7 +18,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | Served at santidesimone.com/research-hub | done (2026-11-01), tested live | See "Served at santidesimone.com" below. |
 | Publishing settings (default visibility, full public detail) | done (2026-11-01), not deployed yet | See "Publishing settings" below. |
 | 10 Curation: reviewable change plans | done (2026-11-01), tested live from the claude.ai chat | See "Task 10" below. |
-| 11 Library redesign (`docs/UI_REDESIGN.md`) | in progress: steps 1 to 5 of 6 done (2026-11-02), not deployed | See "Task 11" below. |
+| 11 Library redesign (`docs/UI_REDESIGN.md`) | done, all six steps (2026-11-02); not deployed | See "Task 11" below. |
 
 ## Task 0. Baseline against real services
 
@@ -701,3 +701,25 @@ Approved by the owner on 2026-11-02 after three rounds on a clickable mockup (sp
 
 **Not tested / open**
 - Not deployed; migration 014 has not run on production yet (it will on the next deploy). Afterwards, Review › Proposed fixes may hold the hub's plan for the old extracted questions (for example the "design space" one).
+
+### Step 6. Thoughts replace notes; projects retired (2026-11-02)
+
+**Changed**
+- Schema: the `thought` collection, `TURNED_INTO`, retired types (`note` by thought, `project`), headless sidebar groups and `ui_count` (see `schema/CHANGELOG.md`). Retired types are refused at the edges (`POST /api/artifacts/<type>`, Claude's `add_artifact`, 410) and never offered as link targets; the core still reads and writes them (old data, the migration).
+- `web/apps/library/thoughts.js` (new): the thought page (the text, what it is on, Claude's suggestion or "looks like a question" as one button, **Something else…** / **Turn into…** as a popover of the choices with explanations; turned: **Delete the thought** or **Keep it**; kept: a quiet line) and **Your thoughts on this** at the end of every item's Info tab (papers included). Turning uses the ordinary item and link API: a question or hypothesis (the item it was on informs it, or it answers the question it was on), a critique / support / contradiction (kept as the thought, linked to the paper with the text as evidence), a finding (appended to the paper's key findings), a method, or keep. `turnOptions` and `suggestedTurn` in `model.js`.
+- Sidebar: Thoughts first, with the number waiting (the graph now sends a type's `ui_count` field).
+- MCP: `add_thought {text, on?}`; the instructions say when to use it and how to suggest a type (`suggested_as`, `suggested_reason`); `add_artifact` no longer offers notes or projects.
+- Migration `015_thoughts`: every note becomes a kept thought (text, title, `imported_from`, links with their properties); one curation plan per 50 proposes deleting the old notes and all projects; idempotent.
+- `PUT /api/notes/sync` and `hub sync-notes` answer that they are retired; `hub import-notes [dir] [--dry-run]` makes thoughts from Markdown notes once (projects skipped). `scripts/local.sh` imports the example notes that way.
+- Skins: `--node-thought`. The paper's Info no longer lists Cites / Notes for the owner (Connections has them); the public preview keeps them as plain text.
+
+**Tested**
+- Offline: waiting counts, the `ui_count` and `retired` checks, nothing linking to a retired type (and no relation left without a target), 410 from the retired routes and from `assertNotRetired`, the turn options by what the thought is on and by the schema, the suggestion (Claude's, "?", none, one that does not fit), `hub import-notes` (thought, kept, links, DOI lower-cased, projects skipped) and `hub sync-notes` retired, `add_thought` listed and retired types out of `add_artifact`. Mutation-checked: 5 breakages, all caught (one only after a test was added).
+- Integration on a throwaway Neo4j 5: migration 015 (a kept thought with the note's text and origin, links with their properties, one plan proposing the note and the project, nothing deleted, a second run changes nothing, applying the plan removes them and keeps the thought).
+- Browser: add a thought on a paper (the waiting count goes up), the suggested turn makes a question the paper informs, delete the thought, Something else… closes on a tap outside, a critique stays as the thought linked to the paper; all six suites green. Screenshots checked (a stray comma and a printed "null" found and fixed).
+- Found on the way: Docker's virtual disk was full (old anonymous volumes and build cache); pruned with the owner's OK (about 35 GB), the local hub's database untouched.
+
+**Not tested / open**
+- Not deployed. Migrations 014 and 015 will run on production at the next start; then Review › Proposed fixes holds the hub's plans (old extracted questions; old notes and projects) for the owner to apply or reject.
+- `add_thought` was not called from the claude.ai chat yet (offline: listed and described; the core it uses is tested).
+- The "finding" turn was not clicked in the browser (it appends to `key_findings` through the ordinary PATCH, which the owner may always write).

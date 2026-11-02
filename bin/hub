@@ -51,7 +51,7 @@ const HELP = `hub: research hub client   (${url})
     hub audit --accept-all-unchanged [--dry-run]  accept Claude's values that nobody changed (not low-confidence or ungrounded)
 
   Notes, citations, backup
-    hub sync-notes [dir=./content] [--dry-run] [--no-prune]   push Markdown notes and projects to the hub
+    hub import-notes [dir=./content] [--dry-run]   turn Markdown notes (notes/*.md) into thoughts, once (projects are skipped)
     hub enrich                                    add citation edges from OpenAlex
     hub backup [file]                             save the whole graph to one JSON file
     hub restore <file>                            merge a backup back in (never deletes)
@@ -372,14 +372,32 @@ function readNotes(dir) {
     const [key, value] = args; if (!key || value === undefined) fail('usage: hub status <key> <value|none>');
     return show(await call('PUT', '/api/personal?key=' + enc(key), { status: value === 'none' ? null : value }));
   }
-  if (cmd === 'sync-notes') {
+  if (cmd === 'sync-notes') fail('sync-notes is retired: notes are thoughts in the hub now. Run `hub import-notes <dir>` once to bring Markdown notes in as thoughts.');
+  // Markdown notes -> thoughts (state kept), with their links to papers and items. Projects are no longer part of the
+  // hub and are skipped. A note imported before is left alone (its thought key is taken), so running it twice is safe.
+  if (cmd === 'import-notes') {
     const dir = args[0] || 'content';
-    const items = readNotes(dir);
-    const qs = new URLSearchParams();
-    if (flags['no-prune']) qs.set('prune', 'false');
-    if (flags['dry-run']) qs.set('dry_run', 'true');
-    console.error(`${items.length} Markdown file${items.length === 1 ? '' : 's'} in ${dir}`);
-    return show(await call('PUT', '/api/notes/sync?' + qs, { items }));
+    const notes = readNotes(dir).filter((n) => /(^|\/)notes\//.test(n.path) || (n.meta && n.meta.kind === 'note'));
+    const LINKS = { annotates: 'ANNOTATES', critiques: 'CRITIQUES', supports: 'SUPPORTS', contradicts: 'CONTRADICTS' };
+    const out = { imported: [], skipped: [], links: 0, link_errors: [] };
+    for (const n of notes) {
+      const name = n.path.replace(/^.*\//, '').replace(/\.md$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const text = [n.meta.title, n.meta.summary, (n.body || '').trim()].filter(Boolean).join('\n\n');
+      if (!text) { out.skipped.push({ path: n.path, reason: 'empty' }); continue; }
+      if (flags['dry-run']) { out.imported.push({ path: n.path, key: 'thought:note-' + name }); continue; }
+      let key;
+      try {
+        key = (await call('POST', '/api/items', { collection: 'thought', slug: 'note-' + name, fields: { text, title: String(n.meta.title || text).slice(0, 200), state: 'kept', visibility: n.meta.visibility === 'public' ? 'public' : 'private' } })).key;
+      } catch (e) { out.skipped.push({ path: n.path, reason: e.message }); continue; }
+      out.imported.push({ path: n.path, key });
+      for (const [field, rel] of Object.entries(LINKS)) {
+        for (const target of [].concat(n.meta[field] || [])) {
+          try { await call('PUT', `/api/items/${enc(key)}/links`, { rel, target: String(target).toLowerCase().startsWith('doi:') ? 'doi:' + String(target).slice(4).toLowerCase() : target, evidence: rel === 'ANNOTATES' ? undefined : (n.meta.summary || text).slice(0, 2000) }); out.links += 1; } catch (e) { out.link_errors.push({ path: n.path, target, reason: e.message }); }
+        }
+      }
+    }
+    console.error(`${notes.length} note${notes.length === 1 ? '' : 's'} in ${dir}`);
+    return show(out);
   }
   if (cmd === 'enrich') {
     let offset = 0, total = { processed: 0, matched: 0, cites_edges: 0, errors: [] };

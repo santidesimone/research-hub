@@ -77,7 +77,7 @@ if ! curl -fsS -H "Authorization: Bearer $TOKEN" "$URL/api/drive" >/dev/null 2>&
   echo "The app is running but rejected the token in .env (another process may own port 3000). Run: lsof -i :3000"; exit 1
 fi
 
-echo "5/6 example library and notes"
+echo "5/6 example library and thoughts"
 # seed.py needs requests. A Homebrew or system Python refuses pip installs (PEP 668), so fall back to a project virtualenv.
 PY=python3
 if ! $PY -c "import requests" 2>/dev/null; then
@@ -88,7 +88,7 @@ fi
 export HUB_API_TOKEN=$TOKEN
 $PY scripts/seed.py --with-pdfs
 ./bin/hub config --url "$URL" --token "$TOKEN" >/dev/null
-./bin/hub sync-notes ./content
+./bin/hub import-notes ./content >/dev/null || true   # example notes become thoughts (a second run skips them)
 
 echo "6/6 check"
 ./bin/hub search blind signatures | head -5

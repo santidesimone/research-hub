@@ -66,7 +66,7 @@ const seed = require('../../data/seed_papers.json');
 
   // migrations are discoverable and ordered
   const migrate = require('../core/migrate');
-  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', '010_record_status_from_provenance', '011_frameworks_questions_ontologies', '012_oauth', '013_curation', '014_informs', 'personal_001_layer']);
+  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', '010_record_status_from_provenance', '011_frameworks_questions_ontologies', '012_oauth', '013_curation', '014_informs', '015_thoughts', 'personal_001_layer']);
   // personal layer: separate node, driven by hooks, core untouched
   calls.length = 0;
   require('../features/personal').mount({ get() {}, put() {}, delete() {}, post() {} });
@@ -321,7 +321,7 @@ const seed = require('../../data/seed_papers.json');
   const badFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hub-schema-')), 'schema.json');
   fs.writeFileSync(badFile, JSON.stringify({ ...schema, version: 'three' }));
   assert.throws(() => S.load(badFile), /schema\/schema\.json is invalid:[\s\S]*version must be an integer/);
-  assert.deepEqual(Object.keys(schema.types).filter((t) => schema.types[t].collection).sort(), ['case_study', 'framework', 'hypothesis', 'method', 'ontology', 'paper', 'research_question', 'use_case']);
+  assert.deepEqual(Object.keys(schema.types).filter((t) => schema.types[t].collection).sort(), ['case_study', 'framework', 'hypothesis', 'method', 'ontology', 'paper', 'research_question', 'thought', 'use_case']);
   assert.deepEqual(['note', 'project'].map(S.managedBy), ['markdown', 'markdown']);
   assert.deepEqual(['method', 'use_case', 'case_study', 'paper'].map(S.managedBy), ['db', 'db', 'db', 'api']);
   assert.ok(['Topic', 'Concept', 'Domain', 'Person', 'Venue', 'Organisation', 'Dataset'].every((l) => S.entityLabels.includes(l)));
@@ -1077,6 +1077,10 @@ const seed = require('../../data/seed_papers.json');
     const toolNames = (await client.listTools()).tools.map((t) => t.name);
     for (const t of ['get_schema', 'save_analysis', 'search_items', 'get_item', 'describe_graph']) assert.ok(toolNames.includes(t), t);
     for (const t of ['propose_changes', 'apply_plan', 'revert_plan', 'list_plans']) assert.ok(toolNames.includes(t), t);
+    assert.ok(toolNames.includes('add_thought'), 'add_thought');
+    assert.match(client.getInstructions(), /call add_thought/);
+    const addTool = (await client.listTools()).tools.find((t) => t.name === 'add_artifact');
+    assert.ok(!JSON.stringify(addTool.inputSchema).includes('"note"') && !JSON.stringify(addTool.inputSchema).includes('"project"'), 'retired types are not offered to Claude');
     assert.match(client.getInstructions(), /call apply_plan only after the owner says yes/);
     const badOp = await client.callTool({ name: 'propose_changes', arguments: { ops: [{ op: 'explode', key: 'x' }], reason: 'r' } });
     assert.ok(badOp.isError, 'an unknown op is refused before anything runs');
@@ -1146,7 +1150,7 @@ const seed = require('../../data/seed_papers.json');
   const pubView = publicView();
   const colls = pubView.collections;
   assert.deepEqual(colls.map((c) => [c.name, c.slug, c.plural]), [['paper', 'papers', 'Papers'], ['method', 'methods', 'Methods'], ['use_case', 'use-cases', 'Use cases'], ['case_study', 'case-studies', 'Case studies'],
-    ['framework', 'frameworks', 'Frameworks'], ['research_question', 'research-questions', 'Research questions'], ['hypothesis', 'hypotheses', 'Hypotheses'], ['ontology', 'ontologies-and-standards', 'Ontologies and standards']]);
+    ['framework', 'frameworks', 'Frameworks'], ['research_question', 'research-questions', 'Research questions'], ['hypothesis', 'hypotheses', 'Hypotheses'], ['ontology', 'ontologies-and-standards', 'Ontologies and standards'], ['thought', 'thoughts', 'Thoughts']]);
   const pc = colls.find((c) => c.name === 'paper');
   assert.ok(pc.fields.contribution_type.enum.includes('empirical') && pc.fields.authors.ref === 'Person' && !pc.fields.provenance && !pc.fields.key, 'hub-set fields are not offered to the UI');
   assert.ok(pc.relations.some((r) => r.rel === 'CRITIQUES' && r.interpretive) && !pc.relations.some((r) => r.rel === 'ADDRESSES'));
@@ -1361,14 +1365,29 @@ const seed = require('../../data/seed_papers.json');
       reset({ 'GET /api/schema': [200, publicView()] });
       r = await hub(['schema', 'case-studies']);
       assert.ok(/case_type\s+enum\s+core\s+YC\s+deployment\|pilot/.test(r.stdout) && r.stdout.includes('organisations') && r.stdout.includes('Organisation'), r.stdout);
-      r = await hub(['schema', 'gadgets']); assert.equal(r.code, 1); assert.match(r.stderr, /no collection "gadgets" \(paper, method, use_case, case_study, framework, research_question, hypothesis, ontology\)/);
+      r = await hub(['schema', 'gadgets']); assert.equal(r.code, 1); assert.match(r.stderr, /no collection "gadgets" \(paper, method, use_case, case_study, framework, research_question, hypothesis, ontology, thought\)/);
+
+      // import-notes: Markdown notes become thoughts (kept) with their links; projects are skipped; sync-notes says it is retired
+      const cdir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-notes-'));
+      fs.mkdirSync(path.join(cdir, 'notes')); fs.mkdirSync(path.join(cdir, 'projects'));
+      fs.writeFileSync(path.join(cdir, 'notes', 'My Reading.md'), '---\ntitle: Reading notes\nannotates: ["DOI:10.1/ABC"]\ncritiques: "doi:10.2/x"\n---\nTiered wallets matter.\n');
+      fs.writeFileSync(path.join(cdir, 'projects', 'thesis.md'), '---\ntitle: Thesis\n---\nplan\n');
+      seen.length = 0;
+      routes = { 'POST /api/items': (rec) => [201, { key: 'thought:' + rec.body.slug, created: true }], 'PUT /api/items/thought%3Anote-my-reading/links': [200, { created: true }] };
+      r = await hub(['import-notes', cdir]);
+      assert.equal(r.code, 0, r.stderr);
+      const made = seen.find((x) => x.method === 'POST');
+      assert.deepEqual([made.body.collection, made.body.slug, made.body.fields.state, made.body.fields.text], ['thought', 'note-my-reading', 'kept', 'Reading notes\n\nTiered wallets matter.']);
+      assert.deepEqual(seen.filter((x) => x.method === 'PUT').map((x) => [x.body.rel, x.body.target]), [['ANNOTATES', 'doi:10.1/abc'], ['CRITIQUES', 'doi:10.2/x']], 'links kept, DOIs lower-cased');
+      assert.equal(JSON.parse(r.stdout).imported.length, 1, 'the project is skipped');
+      r = await hub(['sync-notes', cdir]); assert.equal(r.code, 1); assert.match(r.stderr, /sync-notes is retired.*import-notes/);
     } finally { fake.close(); }
 
     // every command the CLI handles is in its help and in the README
     const hubSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'bin', 'hub'), 'utf8');
     const readme = fs.readFileSync(path.join(__dirname, '..', '..', 'README.md'), 'utf8');
     const help = hubSrc.slice(hubSrc.indexOf('const HELP'), hubSrc.indexOf('`;', hubSrc.indexOf('const HELP')));
-    const commands = [...hubSrc.matchAll(/cmd === '([a-z-]+)'/g)].map((m) => m[1]).filter((c) => c !== 'help');
+    const commands = [...hubSrc.matchAll(/cmd === '([a-z-]+)'/g)].map((m) => m[1]).filter((c) => c !== 'help' && c !== 'sync-notes'); // sync-notes only says it is retired
     const subs = [...hubSrc.slice(hubSrc.indexOf('async function itemCommand')).matchAll(/sub === '([a-z]+)'/g)].map((m) => 'item ' + m[1]);
     assert.ok(commands.length > 15 && subs.length >= 7);
     for (const c of [...commands, ...subs]) {
@@ -1760,7 +1779,7 @@ const seed = require('../../data/seed_papers.json');
     assert.match(bad8((c) => { c.types.ontology.fields.urls.props.role.https = true; }), /urls.role: https applies to url parts only/);
     assert.match(bad8((c) => { c.types.ontology.fields.version.normalize = 'iri'; c.types.ontology.fields.version.type = 'date'; }), /version: normalize "iri" applies to text fields only/);
     assert.match(bad8((c) => { c.types.hypothesis.title_from = 'direction'; }), /hypothesis: title_from must name a text field/);
-    assert.match(bad8((c) => { c.types.hypothesis.ui_section = 'gadgets'; }), /hypothesis: ui_section must be one of reading, knowledge, inquiry/);
+    assert.match(bad8((c) => { c.types.hypothesis.ui_section = 'gadgets'; }), /hypothesis: ui_section must be one of capture, reading, knowledge, inquiry/);
     assert.match(bad8((c) => { delete c.types.paper.ui_section; }), /paper: ui_section must be one of/, 'every collection names its sidebar group');
     assert.match(bad8((c) => { c.ui_sections.push({ id: 'reading', label: 'Again' }); }), /ui_sections: ids must be unique/);
     assert.match(bad8((c) => { c.ui_sections = []; }), /ui_sections: a list of \{id, label\}/);
@@ -1772,8 +1791,8 @@ const seed = require('../../data/seed_papers.json');
     const paperRels = S8.relationsFrom('Paper');
     assert.deepEqual(paperRels.find((r) => r.rel === 'TESTS'), { rel: 'TESTS', to: ['Hypothesis'], interpretive: true, props: { result: { type: 'enum', enum: ['supported', 'refuted', 'mixed', 'inconclusive'], required: true } } });
     const pv8 = S8.publicView().collections;
-    assert.deepEqual(Object.fromEntries(pv8.map((c) => [c.name, c.ui_section])), { paper: 'reading', method: 'knowledge', use_case: 'knowledge', case_study: 'knowledge', framework: 'knowledge', research_question: 'inquiry', hypothesis: 'inquiry', ontology: 'knowledge' });
-    assert.deepEqual(S8.publicView().sections, [{ id: 'reading', label: 'Reading' }, { id: 'knowledge', label: 'Knowledge' }, { id: 'inquiry', label: 'Inquiry' }]);
+    assert.deepEqual(Object.fromEntries(pv8.map((c) => [c.name, c.ui_section])), { paper: 'reading', method: 'knowledge', use_case: 'knowledge', case_study: 'knowledge', framework: 'knowledge', research_question: 'inquiry', hypothesis: 'inquiry', ontology: 'knowledge', thought: 'capture' });
+    assert.deepEqual(S8.publicView().sections, [{ id: 'capture', label: '' }, { id: 'reading', label: 'Reading' }, { id: 'knowledge', label: 'Knowledge' }, { id: 'inquiry', label: 'Inquiry' }]);
     assert.equal(pv8.find((c) => c.name === 'hypothesis').title_from, 'statement');
     assert.deepEqual(S8.validate('ontology', { title: 'X', urls: [{ role: 'docs', url: 'http://x.org/d' }] }).errors, ['urls: url: must be an https link'], 'http links are refused for ontologies');
     assert.ok(S8.validate('ontology', { title: 'X', urls: [{ role: 'manual', url: 'https://x.org' }] }).warnings.includes('urls: role: expected one of docs, spec, download, repository, other'));
@@ -1925,17 +1944,17 @@ const seed = require('../../data/seed_papers.json');
     // the Library sidebar: the schema's sections in order, each with its collections in schema order
     const M8 = await import('data:text/javascript,' + encodeURIComponent(fs.readFileSync(path.join(__dirname, '..', 'apps', 'library', 'model.js'), 'utf8')));
     const side = M8.sidebarGroups(pv8, S8.publicView().sections);
-    assert.deepEqual(side.map((g) => [g.label, g.items.map((i) => i.id)]), [['Reading', ['paper']], ['Knowledge', ['method', 'use_case', 'case_study', 'framework', 'ontology']], ['Inquiry', ['research_question', 'hypothesis']]]);
-    assert.deepEqual(side[2].items.map((i) => i.label), ['Research questions', 'Hypotheses']);
+    assert.deepEqual(side.map((g) => [g.label, g.items.map((i) => i.id)]), [['', ['thought']], ['Reading', ['paper']], ['Knowledge', ['method', 'use_case', 'case_study', 'framework', 'ontology']], ['Inquiry', ['research_question', 'hypothesis']]]);
+    assert.deepEqual(side[3].items.map((i) => i.label), ['Research questions', 'Hypotheses']);
     const side2 = M8.sidebarGroups([...pv8, { name: 'book', plural: 'Books', ui_section: 'reading' }, { name: 'gadget', plural: 'Gadgets', ui_section: 'nowhere' }], S8.publicView().sections);
-    assert.deepEqual([side2[0].items.map((i) => i.id), side2.at(-1).label, side2.at(-1).items.map((i) => i.id)], [['paper', 'book'], 'Other', ['gadget']], 'a new type lands in its group; an unknown group goes to Other');
+    assert.deepEqual([side2[1].items.map((i) => i.id), side2.at(-1).label, side2.at(-1).items.map((i) => i.id)], [['paper', 'book'], 'Other', ['gadget']], 'a new type lands in its group; an unknown group goes to Other');
     assert.deepEqual(M8.sidebarGroups(pv8, []).map((g) => g.label), ['Other'], 'no sections: everything is still listed');
     assert.deepEqual(M8.collectionCounts([{ labels: ['Artifact', 'Method'] }, { labels: ['Artifact', 'Method'] }, { labels: ['Artifact', 'Paper'] }, { labels: ['Concept'] }], pv8.filter((c) => ['paper', 'method', 'ontology'].includes(c.name)), [{}, {}, {}]),
       { paper: 3, method: 2, ontology: 0 }, 'counts per collection; papers from their own list');
     // the graph filter: sidebar groups, then Vocabulary, then other types; large vocabularies off by default
     const pubLabels = S8.publicView().labels;
     const fg = M8.graphFilterGroups(pubLabels, pv8, S8.publicView().sections, S8.publicView().entities.map((e) => e.label));
-    assert.deepEqual(fg.map((g) => [g.id, g.items.map((l) => l.label)]), [['reading', ['Paper']], ['knowledge', ['Method', 'UseCase', 'CaseStudy', 'Framework', 'Ontology']], ['inquiry', ['ResearchQuestion', 'Hypothesis']],
+    assert.deepEqual(fg.map((g) => [g.id, g.items.map((l) => l.label)]), [['capture', ['Thought']], ['reading', ['Paper']], ['knowledge', ['Method', 'UseCase', 'CaseStudy', 'Framework', 'Ontology']], ['inquiry', ['ResearchQuestion', 'Hypothesis']],
       ['vocabulary', ['Person', 'Concept', 'Topic', 'Domain', 'Venue', 'Organisation', 'Dataset']], ['other', ['Note', 'Project']]]);
     assert.deepEqual(M8.GRAPH_OFF_BY_DEFAULT, ['Concept', 'Person', 'Organisation', 'Venue']);
     assert.ok(M8.GRAPH_OFF_BY_DEFAULT.every((l) => pubLabels.some((x) => x.label === l)), 'every default-off type exists');
@@ -1968,6 +1987,39 @@ const seed = require('../../data/seed_papers.json');
     assert.deepEqual(M8.connectionGroups({ key: 'question:q', links: { out: [], in: [{ rel: 'INFORMS', key: 'doi:1', name: 'P', labels: ['Paper'], role: 'challenges' }] } }, ctxC)[0].rows.map((r) => [r.role, r.tone, r.roleProp]), [['Informed by: challenges', 'disagree', 'challenges']]);
     assert.deepEqual([M8.hypothesisVerdict([]).text, M8.hypothesisVerdict(['supported', 'supported', 'mixed']).text, M8.hypothesisVerdict(['refuted']).text, M8.hypothesisVerdict(['supported']).text, M8.hypothesisVerdict(['supported', 'refuted', 'inconclusive']).counts],
       ['No paper has tested it yet.', '3 papers tested it: 2 support it, 1 mixed.', '1 paper tested it: 1 refutes it.', '1 paper tested it: 1 supports it.', { supported: 1, refuted: 1, mixed: 0, inconclusive: 1 }]);
+    // Thoughts: counted while waiting; notes and projects retired (readable, never created, never linked to)
+    const thoughtC = pv8.find((c) => c.name === 'thought');
+    assert.deepEqual([thoughtC.ui_count, thoughtC.ui_section], [{ field: 'state', value: 'waiting' }, 'capture']);
+    const tn = (state) => ({ labels: ['Artifact', 'Thought'], props: { state } });
+    assert.equal(M8.collectionCounts([tn('waiting'), tn('kept'), tn('waiting'), tn('turned')], [thoughtC]).thought, 2, 'Thoughts counts the waiting ones');
+    assert.match(bad8((c) => { c.types.thought.ui_count = { field: 'state', value: 'gone' }; }), /thought: ui_count needs an enum field of this type/);
+    assert.match(bad8((c) => { c.types.note.retired = 'gadget'; }), /note: retired is true or names the type that replaces it/);
+    assert.ok(!S8.relationsFrom('ResearchQuestion').some((r) => r.to.includes('Project')) && !S8.relationsFrom('Thought').some((r) => r.to.includes('Note')), 'nothing new links to a retired type');
+    assert.ok(!S8.relationsFrom('ResearchQuestion').some((r) => r.rel === 'PART_OF'), 'a relation left with no live target is not offered (a question was PART_OF a project)');
+    assert.throws(() => S8.assertNotRetired('project'), (e) => e.status === 410);
+    assert.throws(() => S8.assertNotRetired('note'), (e) => e.status === 410 && /note is retired: use thought/.test(e.message));
+    S8.assertNotRetired('method');
+    // what a thought can become, given what it is on; the suggested one
+    const turn = (labels, colls = pv8) => M8.turnOptions(labels, colls).map((o) => o.id);
+    assert.deepEqual(turn([]), ['question', 'hypothesis', 'method', 'keep']);
+    assert.deepEqual(turn(['Artifact', 'Paper']), ['question', 'hypothesis', 'critique', 'support', 'contradiction', 'finding', 'method', 'keep']);
+    assert.deepEqual(turn([], pv8.filter((c) => c.name !== 'hypothesis')), ['question', 'method', 'keep'], 'only what the schema has');
+    const onPaper = M8.turnOptions(['Paper'], pv8);
+    assert.deepEqual([M8.suggestedTurn({ text: 'Why is it so? ' }, onPaper).id, M8.suggestedTurn({ text: 'x', suggested_as: 'critique' }, onPaper).id, M8.suggestedTurn({ text: 'plain' }, onPaper)],
+      ['question', 'critique', null]);
+    assert.equal(M8.suggestedTurn({ text: 'x', suggested_as: 'critique' }, M8.turnOptions([], pv8)), null, 'a suggestion that does not fit what the thought is on is not offered');
+    // the retired routes answer 410
+    const appR = require('express')();
+    require('../features/notes').mount(appR); require('../features/artifacts').mount(appR);
+    appR.use((err, _req, res, _next) => res.status(err.status || 500).json({ error: err.message }));
+    const srvR = await new Promise((ok) => { const x = appR.listen(0, '127.0.0.1', () => ok(x)); });
+    try {
+      const rb = `http://127.0.0.1:${srvR.address().port}`;
+      const H = { Authorization: 'Bearer abc', 'Content-Type': 'application/json' };
+      const ns = await fetch(rb + '/api/notes/sync', { method: 'PUT', headers: H, body: '{"items":[]}' });
+      assert.deepEqual([ns.status, /retired/.test((await ns.json()).error)], [410, true]);
+      assert.equal((await fetch(rb + '/api/artifacts/project', { method: 'POST', headers: H, body: '{"title":"x"}' })).status, 410);
+    } finally { srvR.close(); }
     // list entries are plain text: linked names joined, enum words, a count for tables
     assert.deepEqual([M8.plainValue({ type: 'ref', list: true }, [{ key: 'topic:a', name: 'CBDC' }, { name: 'Privacy' }]), M8.plainValue({ type: 'enum' }, 'partly_answered'),
       M8.plainValue({ type: 'object', list: true, label: 'Outcomes' }, [{}, {}]), M8.plainValue({ type: 'text' }, null), M8.plainValue({ type: 'integer' }, 0)],

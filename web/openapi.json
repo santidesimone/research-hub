@@ -1500,7 +1500,7 @@
     "/api/notes/sync": {
       "put": {
         "operationId": "syncNotes",
-        "summary": "Push Markdown notes, methods and projects (what `hub sync-notes` calls)",
+        "summary": "Retired: answers 410. Notes are thoughts in the hub now (migration 015; `hub import-notes` brings Markdown notes in once).",
         "security": [
           {
             "bearerAuth": []

@@ -8,8 +8,8 @@ import { connectionGroups, linkOptions, linkableLabels, noun } from './model.js'
 const enc = encodeURIComponent;
 const linkUrl = (source) => `/api/items/${enc(source)}/links`;
 
-// A popover anchored in `host`, with a transparent scrim behind it that closes it; Esc closes it too.
-function popover(host, content, { cls = '', onClose } = {}) {
+// A popover anchored in `host` (also used by thoughts.js), with a transparent scrim behind it that closes it; Esc closes it too.
+export function popover(host, content, { cls = '', onClose } = {}) {
   host.querySelectorAll(':scope > .popover, :scope > .popscrim').forEach((x) => x.remove());
   const close = () => { scrim.remove(); pop.remove(); document.removeEventListener('keydown', esc, true); if (onClose) onClose(); };
   const esc = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };

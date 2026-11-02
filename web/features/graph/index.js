@@ -4,7 +4,7 @@ const path = require('path');
 const { marked } = require('marked');
 const matter = require('gray-matter');
 const { run } = require('../../core/db');
-const { publicView, entityLabels, safeLabel } = require('../../core/schema');
+const { publicView, entityLabels, safeLabel, schema } = require('../../core/schema');
 const types = require('../../core/types');
 const migrate = require('../../core/migrate');
 const { CONTENT_DIR } = require('../../core/env');
@@ -19,7 +19,8 @@ const config = require('../../core/config');
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // The graph view only needs names and a few facts per node; abstracts, bodies and links load when you open a node.
-const GRAPH_PROPS = ['title', 'name', 'year', 'visibility', 'item_type'];
+// plus the field any type is counted by in the sidebar (ui_count: a thought's state)
+const GRAPH_PROPS = [...new Set(['title', 'name', 'year', 'visibility', 'item_type', ...Object.values(schema.types).filter((t) => t.ui_count).map((t) => t.ui_count.field)])];
 // Every node the hub shows: items and the vocabulary labels in schema.json.
 const NODES = ['Artifact', ...entityLabels.map(safeLabel)].join('|');
 

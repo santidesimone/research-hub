@@ -230,6 +230,18 @@ details.meta summary { cursor: pointer; font-weight: 500; }
 .connsuggest { margin-top: 34px; }
 .connsuggest > .label { margin-bottom: 10px; }
 .suggestrow { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 12px 14px; border: 1px dashed var(--border-strong); border-radius: var(--radius-m); margin-bottom: 8px; font-size: 14px; }
+/* thoughts */
+.thought { margin-top: 14px; }
+.thoughttext { margin: 0 0 8px; font-family: var(--font-heading); font-size: 24px; line-height: 1.4; }
+.thoughton { margin: 0; font-size: 14px; }
+.thoughton .ref, .thoughtson .ref, .donebox .ref { cursor: pointer; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
+.suggestbox { margin-top: 22px; padding: 14px 16px; border-radius: var(--radius-m); background: var(--accent-soft); line-height: 1.5; font-size: 14px; }
+.donebox { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 22px; padding: 14px 16px; border-radius: var(--radius-m); background: var(--ok-soft); font-size: 14px; }
+.keptnote { margin-top: 18px; }
+.popover.turnmenu { left: 0; right: auto; width: min(420px, calc(100vw - 32px)); padding: 8px; }
+.thoughtson { margin-top: 32px; }
+.thoughtson .label { margin-bottom: 8px; }
+.thoughtson form { margin-top: 8px; }
 /* question and hypothesis overviews */
 .inquiry { margin-top: 18px; }
 .inquiry .verdict { margin: 0; font-size: 15.5px; line-height: 1.6; }
@@ -350,7 +362,7 @@ pre.json { background: var(--bg-sunken); border: 1px solid var(--border); border
   .connself { flex-basis: 100%; margin-bottom: 8px; }
   .connselfcard { width: auto; }
   .conncard .role { flex-basis: 96px; }
-  .popover.linkpicker, .popover.rowmenu { position: fixed; top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 75vh; border-radius: var(--radius-l) var(--radius-l) 0 0; }
+  .popover.linkpicker, .popover.rowmenu, .popover.turnmenu { position: fixed; top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 75vh; border-radius: var(--radius-l) var(--radius-l) 0 0; }
   .popover.graphfilter { position: fixed; top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 70vh; border-radius: var(--radius-l) var(--radius-l) 0 0; }
   .detail { padding: 24px 16px 60px; }
   .page { padding: 32px 16px; }

@@ -10,6 +10,7 @@ import { ReviewView, reviewCounts } from './review.js';
 import { itemForm } from './forms.js';
 import { renderFields } from './view.js';
 import { Connections } from './connections.js';
+import { thoughtsOn } from './thoughts.js';
 
 const statusText = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/-/g, ' ') : '');
 const STATUS_CHOICES = ['to-read', 'reading', 'read', 'canonical', 'critique-target'];
@@ -180,7 +181,7 @@ class Library {
       h('button', { type: 'button', class: 'iconbtn small expand', 'aria-label': 'Show the sidebar', title: 'Show the sidebar', onclick: () => this.collapse(false) }, '»'),
       h('div', { class: 'sidescroll' },
         sidebarGroups(this.collections, (S.schema && S.schema.sections) || []).map((g) => h('div', { class: 'navgroup' },
-          h('div', { class: 'navlabel' }, g.label), g.items.map((it) => item(it.id, it.label, counts[it.id])))),
+          g.label && h('div', { class: 'navlabel' }, g.label), g.items.map((it) => item(it.id, it.label, counts[it.id])))),
         h('div', { class: 'navsep' }),
         item('graph', 'Graph'),
         owner && item('review', 'Review', this.reviewWaiting ? this.reviewWaiting.check + this.reviewWaiting.fixes : null),
@@ -326,7 +327,7 @@ class Library {
   relSection(title, items) {
     if (!items.length) return null;
     return h('section', { class: 'rel' }, h('div', { class: 'label' }, title),
-      h('ul', null, items.map((r) => h('li', null, h('span', { class: 'badge outline' }, relName(r.type)),
+      h('ul', null, items.map((r) => h('li', null, h('span', { class: 'muted small' }, relName(r.type)),
         h('a', { onclick: () => this.open(r.key) }, r.title || r.key)))));
   }
   async renderPaperForm(key) {
@@ -409,13 +410,18 @@ class Library {
     if (d.html) info.append(h('div', { class: 'prose', html: d.html }));
     const out = d.out || [], inc = d.in || [];
     const rel = (x) => x;
-    if (isPaper) {
-      [this.relSection('Cites', out.filter((r) => r.type === 'CITES')), this.relSection('Cited by', inc.filter((r) => r.type === 'CITES')),
-        this.relSection('Notes, methods and projects', inc.filter((r) => (r.labels || []).some((l) => ['Note', 'Method', 'Project'].includes(l))))].map(rel).forEach((x) => x && info.append(x));
+    if (this.mode === 'private' && S.owner && where === 'library') {
+      // the owner manages links in Connections
+    } else if (isPaper) {
+      [this.relSection('Cites', out.filter((r) => r.type === 'CITES')), this.relSection('Cited by', inc.filter((r) => r.type === 'CITES'))].map(rel).forEach((x) => x && info.append(x));
     } else {
       [this.relSection('Links to', out.filter((r) => r.type !== 'AUTHORED_BY')), this.relSection('Linked from', inc)].forEach((x) => x && info.append(x));
     }
-    if (isPaper && where === 'library' && this.mode === 'private' && S.owner) info.append(this.fileEditor(d));
+    if (isPaper && where === 'library' && this.mode === 'private' && S.owner) {
+      info.append(this.fileEditor(d));
+      info.append(thoughtsOn(this, d.key, (d.in || []).map((x) => ({ rel: x.type, key: x.key, name: x.title, labels: x.labels })),
+        { onAdded: async () => { await this.loadData(); this.renderNav(); await this.renderDetail(this.detailEl, key, 'library'); } }));
+    }
     // the full public view: every field of a collection item, laid out as on the owner's pages
     const full = this.mode === 'public' && this.graph.detail === 'full';
     const fc = full && this.collOfKey(key);

@@ -564,6 +564,41 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
     await db.exec('MATCH (p:CurationPlan) DELETE p');
   }
 
+  // Task 11 step 6: migration 015. Notes become thoughts (state kept, text, imported_from, links with their
+  // properties); one curation plan proposes deleting the old notes and every project; nothing is deleted until it is
+  // applied; a second run changes nothing; applying the plan removes the notes and projects and keeps the thoughts.
+  {
+    const curation = require('../core/curation');
+    await db.exec("MATCH (c:CurationPlan) DELETE c");
+    const nk = `note:it15-${stamp}`, pk = `project:it15-${stamp}`;
+    await notes.sync([
+      { path: `notes/it15-${stamp}.md`, meta: { title: 'Tiers matter', annotates: [paperKey], critiques: [paperKey], visibility: 'private' }, body: 'The four patterns trade privacy against speed.' },
+      { path: `projects/it15-${stamp}.md`, meta: { title: 'Thesis' }, body: 'plan' },
+    ], { prune: false });
+    await db.exec(`MATCH (n:Note {key: $nk})-[r:CRITIQUES]->() SET r.evidence = 'a passage', r.location = 'p. 3'`, { nk });
+    const m15 = require('../migrations/015_thoughts');
+    await m15.up({ run: db.exec });
+    const tk = `thought:note-it15-${stamp}`;
+    const th = await items.get(tk);
+    assert.deepEqual([th.fields.state, th.fields.title, th.fields.text.includes('The four patterns trade privacy against speed.'), th.extra.imported_from || (await db.run('MATCH (t {key:$k}) RETURN t.imported_from AS f', { k: tk }))[0].f],
+      ['kept', 'Tiers matter', true, nk], 'a kept thought with the note\'s text, and where it came from');
+    const links = await db.run('MATCH (t:Thought {key:$k})-[r]->(x) RETURN type(r) AS t, x.key AS x, r.evidence AS e, r.location AS l ORDER BY t', { k: tk });
+    assert.deepEqual(links.map((l) => [l.t, l.x, l.e, l.l]), [['ANNOTATES', paperKey, null, null], ['CRITIQUES', paperKey, 'a passage', 'p. 3']], 'links copied with their properties');
+    const plan = await db.run("MATCH (c:CurationPlan) WHERE c.reason STARTS WITH 'Migration 015' RETURN c.id AS id, c.ops_json AS ops, c.status AS status");
+    assert.equal(plan.length, 1);
+    const ops = JSON.parse(plan[0].ops).map((o) => o.key);
+    assert.ok(ops.includes(nk) && ops.includes(pk) && plan[0].status === 'proposed', JSON.stringify(ops));
+    assert.equal((await db.run('MATCH (n:Note {key:$k}) RETURN count(n) AS c', { k: nk }))[0].c, 1, 'nothing deleted yet');
+    await m15.up({ run: db.exec });
+    assert.equal((await db.run('MATCH (t:Thought {key:$k})-[r]->() RETURN count(r) AS c', { k: tk }))[0].c, 2, 'a second run copies nothing twice');
+    assert.equal((await db.run("MATCH (c:CurationPlan) WHERE c.reason STARTS WITH 'Migration 015' RETURN count(c) AS c"))[0].c, 1, 'one plan');
+    await curation.apply(plan[0].id);
+    assert.equal((await db.run('MATCH (n) WHERE n.key IN $k RETURN count(n) AS c', { k: [nk, pk] }))[0].c, 0, 'applied: notes and projects gone');
+    assert.equal((await items.get(tk)).fields.state, 'kept', 'the thought stays');
+    await artifacts.remove(tk);
+    await db.exec('MATCH (c:CurationPlan) DELETE c');
+  }
+
   // clean up
   await artifacts.remove(paperKey);
   await db.exec("MATCH (n:Artifact) WHERE n.key STARTS WITH 'method:it-' OR n.key STARTS WITH 'note:it-' OR n.key STARTS WITH 'project:it-' OR n.key STARTS WITH 'usecase:offline-payments-' DETACH DELETE n");

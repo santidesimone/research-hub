@@ -1,17 +1,12 @@
-// PUT /api/notes/sync: the target of `hub sync-notes`. All the logic is in core/notes.js.
-const express = require('express');
+// PUT /api/notes/sync was the target of `hub sync-notes` (Markdown notes and projects). Retired in Task 11: notes are
+// thoughts in the database (migration 015 imported them), and projects are gone. The route answers 410 so an old
+// CLI says why instead of failing obscurely.
 const { HttpError } = require('../../core/errors');
 const { requireOwner } = require('../../core/auth');
-const notes = require('../../core/notes');
 
 module.exports = {
   name: 'notes',
   mount(app) {
-    app.put('/api/notes/sync', requireOwner, express.json({ limit: '25mb' }), (req, res, next) => {
-      const items = req.body && req.body.items;
-      if (!Array.isArray(items)) return next(new HttpError(400, 'Send {"items": [{"path": "notes/x.md", "meta": {...}, "body": "..."}]}'));
-      notes.sync(items, { prune: req.query.prune !== 'false', allowEmpty: req.query.allow_empty === 'true', dryRun: req.query.dry_run === 'true' })
-        .then((r) => res.json(r)).catch(next);
-    });
+    app.put('/api/notes/sync', requireOwner, (_req, _res, next) => next(new HttpError(410, 'sync-notes is retired: notes are now thoughts in the hub (add them in the Library, or ask Claude)')));
   },
 };

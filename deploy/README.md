@@ -86,7 +86,7 @@ Open the printed URL (`.../research-hub/`). First start applies the graph migrat
 Sign in with the token, then load data from your computer: `hub add 10.1007/978-1-4757-0602-4_18 --file https://arxiv.org/pdf/...`, or `python scripts/seed.py` with `HUB_URL` set to the deployed address.
 `MIN_INSTANCES=1` in front of the command keeps one instance warm (no wait on the first request, about $8-10/month). Check Drive with `hub drive`.
 
-Your Markdown notes are not in the image. Keep them in a folder (ideally a git repo) and push them with `hub sync-notes ./content`.
+Notes live in the hub as thoughts (no files to deploy). Markdown notes you still have on disk come in once with `hub import-notes ./content`.
 
 ## 4b. Budget guard (recommended, free)
 
@@ -160,7 +160,7 @@ Test: `curl -I https://santidesimone.com/research-hub/healthz` should be `200`.
 ./bin/hub query "MATCH (p:Paper) RETURN p.title, p.year ORDER BY p.year DESC LIMIT 5"
 ./bin/hub add 10.1007/978-1-4757-0602-4_18 --file https://arxiv.org/pdf/... --status reading
 ./bin/hub pdf <paper key> ./paper.pdf        # uploads to your Drive and links it
-./bin/hub sync-notes ./content               # Markdown notes, methods, projects
+./bin/hub import-notes ./content             # Markdown notes become thoughts, once
 ```
 
 ## 7. Back up (Neo4j is the only copy)

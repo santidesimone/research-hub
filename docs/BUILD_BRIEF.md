@@ -111,6 +111,8 @@ Steps, one commit each, each with offline tests (mutation-checked), browser chec
 4. **Connections and Link….** One tab per item that shows every link as a simple diagram grouped by type, with ⋯ (change role, note, unlink); a generic Link… picker over every type and the roles the schema allows; Claude's suggested links with Link / Dismiss.
 5. **Questions and hypotheses.** `INFORMS` (role, note, location) from sources to questions and hypotheses; `ANSWERS` many-to-many; a paper's own question as `stated_question`; analysis matches papers to existing questions instead of creating them; a migration folds `ASKED_IN`/`ADDRESSED_BY` and extracted questions in (copy first, deletes only through a curation plan); question and hypothesis pages as in the spec.
 6. **Thoughts** replace Notes: database-managed, attached to any item, `add_thought` over MCP, the inbox with Claude's suggested type and "Something else…" popover, delete on one click after turning it into an item; import of existing Markdown notes; `sync-notes` retired. **Projects removed** (any existing nodes go through a curation plan).
+
+Status: built, all six steps (2026-11-02); see `docs/PROGRESS.md`. Deploy pending.
 Then deploy.
 
 ## Out of scope for now

@@ -13,6 +13,7 @@ const { BASE } = require('../../core/env');
 const { run } = require('../../core/db');
 const { schema, fieldsOf, relationsFrom } = require('../../core/schema');
 const artifacts = require('../../core/artifacts');
+const { assertNotRetired } = require('../../core/schema');
 const query = require('../../core/query');
 const links = require('../../core/links');
 const config = require('../../core/config');
@@ -74,12 +75,13 @@ async function withUpload(result, uploadUrl) {
 
 function buildServer({ uploadUrl = null } = {}) {
   const s = new McpServer({ name: 'research-hub', version: pkg.version }, {
-    instructions: 'Tools for the owner\'s research hub: a Neo4j knowledge graph with collections (papers, methods, use cases, case studies, frameworks, research questions, hypotheses, ontologies and standards) plus notes and projects. '
+    instructions: 'Tools for the owner\'s research hub: a Neo4j knowledge graph with collections (papers, methods, use cases, case studies, frameworks, research questions, hypotheses, ontologies and standards, thoughts). '
       + 'To analyse something, call get_schema for its collection, then save_analysis once with every field you are confident about: it saves directly. '
       + 'Use search_items and get_item to read collections; call describe_graph before writing Cypher. '
       + 'When the owner shares a paper (a PDF in the chat, a link, a DOI): find its DOI, call get_schema for papers, then save_analysis once (doi, your analysis). '
       + 'For the file: if there is a public PDF URL on an allow-listed host (arXiv), pass it as file_url with copy_to_drive true, or call copy_pdf_to_drive. '
       + 'Files attached in the chat do not reach the hub: when the reply has upload_url, give it to the owner so they can drop the PDF there. '
+      + 'When the owner says "note this" or shares a passing idea, call add_thought (on the item it is about). To process the inbox, list thoughts in state waiting (search_items collection thought) and either suggest what each could become (save_analysis on the thought: suggested_as and suggested_reason) or, after the owner agrees, create the item and link it. Research questions and hypotheses are the owner\'s: create them only when asked. '
       + 'To fix the graph (merge duplicates, remove a wrong link, delete junk, rename a concept), call propose_changes, show the owner the plan, and call apply_plan only after the owner says yes; revert_plan undoes an applied plan.',
   });
 
@@ -125,14 +127,26 @@ function buildServer({ uploadUrl = null } = {}) {
   }, safe(async ({ overwrite, ...item }) => withUpload(await artifacts.add('paper', item, { overwrite: Boolean(overwrite) }), uploadUrl)));
 
   s.registerTool('add_artifact', {
-    description: 'Add a method, note or project (any non-paper type in schema.json). Relation arrays take artifact keys.',
+    description: 'Add an item of a non-paper type in schema.json (notes and projects are retired: use add_thought). Relation arrays take artifact keys.',
     inputSchema: {
-      type: z.enum(Object.keys(schema.types).filter((t) => t !== 'paper')), title: z.string(), summary: z.string().optional(), body: z.string().optional().describe('Markdown'),
+      type: z.enum(Object.keys(schema.types).filter((t) => t !== 'paper' && !schema.types[t].retired)), title: z.string(), summary: z.string().optional(), body: z.string().optional().describe('Markdown'),
       visibility: z.enum(['public', 'private']).optional(), concepts: z.array(z.string()).optional(),
       relations: z.record(z.array(z.string())).optional().describe('e.g. {"annotates": ["doi:10.1/x"], "uses": ["method:tdd"]}'),
       overwrite: z.boolean().optional(),
     },
-  }, safe(({ type, relations, overwrite, ...rest }) => artifacts.add(type, { ...rest, ...(relations || {}) }, { overwrite: Boolean(overwrite) })));
+  }, safe(({ type, relations, overwrite, ...rest }) => { assertNotRetired(type); return artifacts.add(type, { ...rest, ...(relations || {}) }, { overwrite: Boolean(overwrite) }); }));
+
+  if (items) {
+    s.registerTool('add_thought', {
+      description: 'Save a short thought of the owner\'s in the Thoughts inbox, optionally on an item (paper, question, hypothesis, method …). It waits there until the owner turns it into a question, hypothesis, critique, finding, method or keeps it as a note.',
+      inputSchema: { text: z.string().min(1).max(4000), on: z.string().optional().describe('key of the item the thought is about') },
+    }, safe(async ({ text, on }) => {
+      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const t = await items.create({ collection: 'thought', slug: `${stamp}-${Math.random().toString(36).slice(2, 8)}`, fields: { text } });
+      if (on) await items.link(t.key, { rel: 'ANNOTATES', target: on });
+      return { key: t.key, on: on || null, state: 'waiting' };
+    }));
+  }
 
   if (items && analysis) {
     const confidence = z.enum(['low', 'medium', 'high']);
