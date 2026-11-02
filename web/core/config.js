@@ -55,6 +55,9 @@ function get(env = process.env) {
     // the hub's public address (https://santidesimone.com), when it differs from what the request says (a proxy that rewrites Host)
     publicUrl: (env.PUBLIC_URL || '').replace(/\/+$/, ''),
     maxUploadBytes: num(env.MAX_UPLOAD_MB, 30) * 1024 * 1024, // Cloud Run rejects request bodies over 32 MB
+    // PUBLIC_ACCESS=1 lets visitors without the token see the public preview (items marked public, as Settings says).
+    // Off (the default): everything is behind the token, and the publishing settings cannot be changed.
+    publicAccess: ['1', 'true', 'yes', 'on'].includes(String(env.PUBLIC_ACCESS || '').toLowerCase()),
     publicCacheSeconds: num(env.PUBLIC_CACHE_SECONDS, 60),
     logFormat: env.LOG_FORMAT || (production ? 'json' : 'pretty'),
   };

@@ -23,6 +23,12 @@ export default {
       body));
     let current;
     try { current = await api('/api/settings/publishing'); } catch (e) { body.replaceChildren(h('div', { class: 'alert' }, e.message)); return; }
+    if (!current.public_access) {
+      body.replaceChildren(h('section', { class: 'card', style: { marginTop: '18px' } },
+        h('div', { class: 'label' }, 'Public access is off'),
+        h('p', { class: 'muted small', style: { marginTop: '10px' } }, 'Everything is behind your token: visitors only get the sign-in page, whatever an item\'s visibility says. To publish items, start the hub with PUBLIC_ACCESS=1; these settings then decide what visitors see.')));
+      return;
+    }
 
     const row = (name) => {
       const spec = CHOICES[name];

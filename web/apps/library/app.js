@@ -166,7 +166,7 @@ class Library {
     this.toolbarEl.replaceChildren(...[
       seg(sections, inMore ? 'more' : this.section, (id) => this.goSection(id), 'collbar'), more,
       h('div', { class: 'spacer' }),
-      S.owner && seg([['private', 'Private'], ['public', 'Public preview']], this.mode, (m) => m !== this.mode && this.setMode(m))].filter(Boolean));
+      S.owner && S.publicAccess && seg([['private', 'Private'], ['public', 'Public preview']], this.mode, (m) => m !== this.mode && this.setMode(m))].filter(Boolean));
     this.bannerEl.classList.toggle('hidden', this.mode !== 'public');
   }
 

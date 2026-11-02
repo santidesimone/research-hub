@@ -1540,9 +1540,10 @@ const seed = require('../../data/seed_papers.json');
       assert.deepEqual(vis.meta, {}); assert.deepEqual(vis.extra, { custom: 'ok' }); assert.deepEqual(vis.links, { out: [], in: [] });
       assert.deepEqual(vis.provenance, { summary: { by: 'claude' } });
 
-      // the routes: settings are owner only; the public item exists only in full mode, and only for public items
+      // the routes: settings are owner only; the public item exists only in full mode, and only for public items.
+      // PUBLIC_ACCESS off (the default): nothing is public and the settings cannot be changed.
       const appP = require('express')();
-      require('../features/publishing').mount(appP);
+      require('../features/publishing').mount(appP); require('../features/session').mount(appP); require('../features/graph').mount(appP);
       appP.use((err, _req, res, _next) => res.status(err.status || 500).json({ error: err.message }));
       const srvP = await new Promise((ok) => { const x = appP.listen(0, '127.0.0.1', () => ok(x)); });
       const pBase = `http://127.0.0.1:${srvP.address().port}`;
@@ -1552,7 +1553,26 @@ const seed = require('../../data/seed_papers.json');
           assert.equal((await fetch(pBase + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'GET' ? undefined : '{}' })).status, 401, `${m} ${u} is owner only`);
         }
         setting = null; fresh();
-        assert.deepEqual(await (await fetch(pBase + '/api/settings/publishing', { headers: OWN })).json(), { default_visibility: 'private', public_detail: 'basic' });
+        delete process.env.PUBLIC_ACCESS;
+        assert.deepEqual(await (await fetch(pBase + '/api/settings/publishing', { headers: OWN })).json(), { default_visibility: 'private', public_detail: 'basic', public_access: false });
+        assert.equal((await (await fetch(pBase + '/api/me')).json()).public_access, false);
+        for (const [m, u, b] of [['PUT', '/api/settings/publishing', '{"public_detail":"full"}'], ['POST', '/api/settings/publishing/apply', '{"visibility":"public"}']]) {
+          const r = await fetch(pBase + u, { method: m, headers: OWN, body: b });
+          assert.equal(r.status, 409, `${m} ${u}: refused while public access is off`); assert.match((await r.json()).error, /PUBLIC_ACCESS/);
+        }
+        setting = { public_detail: 'full' };
+        const pubRow = { key: 'method:pub', labels: ['Artifact', 'Method'], props: { key: 'method:pub', title: 'Pub', visibility: 'public' } };
+        runImpl = async (q) => (q.includes('HubSetting') ? [setting] : q.includes('RETURN a.key AS key') ? [pubRow] : q.includes('AS inc') ? [{ labels: pubRow.labels, props: pubRow.props, out: [], inc: [] }] : []);
+        fresh();
+        assert.equal((await fetch(pBase + '/api/public')).status, 401, 'no public preview without the token');
+        assert.equal((await fetch(pBase + '/api/public/items/method%3Apub')).status, 401, 'no public item without the token, even in full mode');
+        const ownPub = await fetch(pBase + '/api/public', { headers: OWN });
+        assert.equal(ownPub.status, 200); assert.match(ownPub.headers.get('cache-control'), /^private/, 'owner-only: never in a shared cache');
+        process.env.PUBLIC_ACCESS = '1';
+        setting = null; fresh();
+        assert.equal((await (await fetch(pBase + '/api/me')).json()).public_access, true);
+        const anonPub = await fetch(pBase + '/api/public');
+        assert.equal(anonPub.status, 200); assert.match(anonPub.headers.get('cache-control'), /^public/);
         assert.equal((await fetch(pBase + '/api/settings/publishing', { method: 'PUT', headers: OWN, body: '{"public_detail":"loud"}' })).status, 400);
         const methodRow = { labels: ['Artifact', 'Method'], props: { key: 'method:pub', title: 'Pub', collection: 'method', visibility: 'public', summary: 'S', source_path: '/Users/me' }, out: [], inc: [] };
         runImpl = async (q) => (q.includes('HubSetting') ? (setting ? [setting] : []) : q.includes('RETURN a.key AS key') ? [{ key: 'method:pub', labels: ['Artifact', 'Method'], props: methodRow.props }] : q.includes('AS inc') ? [methodRow] : []);
@@ -1564,7 +1584,7 @@ const seed = require('../../data/seed_papers.json');
         const gotItem = await got.json();
         assert.equal(gotItem.fields.summary, 'S'); assert.ok(!JSON.stringify(gotItem).includes('/Users/me'), 'no local paths');
         assert.equal((await fetch(pBase + '/api/public/items/method%3Aprivate')).status, 404, 'only items in the public export');
-      } finally { await new Promise((ok) => srvP.close(ok)); }
+      } finally { await new Promise((ok) => srvP.close(ok)); delete process.env.PUBLIC_ACCESS; }
     } finally { fakeDb.exec = realExec; setting = null; fresh(); runImpl = async () => []; }
   }
 

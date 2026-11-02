@@ -550,3 +550,26 @@ The owner wanted everything public and transparent, and the choice easy to chang
 - Not deployed: production still runs the previous version (private, basic) until `deploy/deploy.sh`; then switch Settings to public and everything, and press "Make all public".
 - (`npm run test:integration` passed on a throwaway Neo4j 5 after this change.)
 - A visitor's browser may keep the public preview for `PUBLIC_CACHE_SECONDS` (60) after a change.
+
+## Login page at the root (2026-11-01)
+
+- Not signed in, the root (`/research-hub/`) is a login page (the token form, without the top bar's own Sign in button); signing in opens the Library. The public preview is still at `/library` for anyone with the link, and the sign-in dialog elsewhere is unchanged. One form (`signInForm` in `web/public/shell/shell.js`) serves both.
+- Tested in Chrome on a throwaway hub (`public-mobile.js`): the root shows the form and no library, fits a 390px phone, a wrong token shows the error, the right one lands on `/library` as owner; the other browser checks unchanged and green; `npm test` green. Not deployed yet.
+
+## Everything behind the token: PUBLIC_ACCESS (2026-11-01)
+
+The owner wants the hub completely private for now: no public view at all, and the publishing settings not usable.
+
+**Changed**
+- `PUBLIC_ACCESS` in `web/core/config.js` (and `_env.example`), off by default. Off: `/api/public` and `/api/public/items` need the token (and `/api/public` is then `Cache-Control: private` with `Vary`, so the site's CDN never keeps it), and `PUT /api/settings/publishing` and `.../apply` answer 409. `/api/me` reports `public_access`.
+- UI: with public access off, every address shows the sign-in form to anyone not signed in, with no app menu and no second Sign in button; signing in keeps you on the page you asked for (the root opens the Library). The Library hides "Public preview", and Settings says public access is off instead of showing the switches.
+- The publishing code stays: `PUBLIC_ACCESS=1` brings back the public preview and Settings as they were.
+- CI starts two hubs on the same database (one with public access for the existing visitor checks, one without for the new `web/test/browser/private.js`), the second after the first is ready (migrations).
+
+**Tested**
+- Offline: both modes for `/api/me`, `/api/public` (401 without the token when off, private cache header for the owner, public when on), the public item (401 when off even in full mode), and the settings (409 when off). Mutation-checked: 5 breakages, all caught.
+- Browser, a public-access hub and a private hub on one throwaway database: `private.js` (every address, including the Library, a collection, Query, Settings and an unknown path, is only the form; the page asks only for session, apps and schema; data endpoints 401; sign in on a page and stay there; no Public preview toggle; Settings shows the notice; no console or CSP errors), then `owner.js`, `public-mobile.js` and `publishing.js` on the public-access hub, all green.
+
+**Not tested / open**
+- Not deployed. `deploy/deploy.sh` does not set `PUBLIC_ACCESS`, so production is private after the next deploy.
+- The CI change runs on the first push.

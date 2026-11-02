@@ -56,6 +56,31 @@ const noOverflow = async (page) => page.evaluate(() => document.documentElement.
     expect(!p1.length, p1.slice(0, 4).join(' || '));
   });
 
+  /* the root: a login page for anyone not signed in (phone width) */
+  const land = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage();
+  const p3 = [], a3 = [];
+  watch(land, p3, a3);
+  await step('anonymous: the root is a login page; signing in opens the Library', async () => {
+    await land.goto(U + '/');
+    await land.waitForSelector('form.login input[type=password]');
+    expect(!(await land.$('.list')), 'no library at the root');
+    expect(!(await land.$('.topbar button:has-text("Sign in")')), 'one sign-in form, not a second button in the top bar');
+    expect(await noOverflow(land), 'the login page fits a phone');
+    await land.screenshot({ path: OUT + '/m0-login.png' });
+    await land.fill('form.login input[type=password]', 'wrong-token');
+    await land.click('form.login button[type=submit]');
+    await land.waitForSelector('form.login .alert:not(.hidden)');
+    await land.fill('form.login input[type=password]', TOK);
+    await land.click('form.login button[type=submit]');
+    await land.waitForSelector('.badge.ok:has-text("Owner")');
+    await land.waitForSelector('.list .item');
+    expect(new URL(land.url()).pathname === new URL(U).pathname.replace(/\/$/, '') + '/library', land.url());
+  });
+  await step('login page: no errors besides the rejected token', async () => {
+    const others = p3.filter((p) => !/HTTP 40[13] .*\/api\/login/.test(p) && !/status of 40[13]/.test(p)); // the wrong token above
+    expect(!others.length, others.slice(0, 4).join(' || '));
+  });
+
   /* mobile width, as the owner */
   const mob = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const p2 = [], a2 = [];

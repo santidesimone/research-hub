@@ -73,11 +73,14 @@ module.exports = {
     }));
 
     // Public preview: cached and revalidated, so a CDN or the browser can answer most requests.
-    app.get('/api/public', async (req, res, next) => {
+    app.get('/api/public', (req, res, next) => (config.get().publicAccess ? next() : requireOwner(req, res, next)), async (req, res, next) => {
       try {
         const c = await publicExport.read();
         const ttl = config.get().publicCacheSeconds;
-        res.set('Cache-Control', `public, max-age=${ttl}`).set('ETag', c.etag);
+        // owner-only while PUBLIC_ACCESS is off: then no shared cache (the site's CDN) may keep it
+        if (config.get().publicAccess) res.set('Cache-Control', `public, max-age=${ttl}`);
+        else res.set('Cache-Control', 'private, no-cache').vary('Authorization').vary('Cookie');
+        res.set('ETag', c.etag);
         if (req.fresh) return res.status(304).end();
         res.type('json').send(c.text);
       } catch (e) { next(e); }

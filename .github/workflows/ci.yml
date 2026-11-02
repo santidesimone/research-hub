@@ -48,6 +48,7 @@ jobs:
           --health-interval 10s --health-timeout 5s --health-retries 12
     env:
       HUB_URL: http://127.0.0.1:18082
+      HUB_PRIVATE_URL: http://127.0.0.1:18083
       HUB_API_TOKEN: ci-only-token-not-a-secret-0123456789
     steps:
       - uses: actions/checkout@v4
@@ -65,9 +66,13 @@ jobs:
           NEO4J_PASSWORD: ci-password-1234
           PORT: '18082'
         run: |
-          nohup node server.js > /tmp/hub.log 2>&1 &
-          for i in $(seq 1 60); do curl -fsS "$HUB_URL/readyz" && exit 0; sleep 1; done
-          cat /tmp/hub.log; exit 1
+          # two hubs on the same database: one with public access (the public preview checks), one without (the default).
+          # The second starts once the first has applied the migrations.
+          up() { for i in $(seq 1 60); do curl -fsS "$1/readyz" && return 0; sleep 1; done; cat /tmp/hub*.log; return 1; }
+          PUBLIC_ACCESS=1 nohup node server.js > /tmp/hub.log 2>&1 &
+          up "$HUB_URL"
+          PORT=18083 nohup node server.js > /tmp/hub-private.log 2>&1 &
+          up "$HUB_PRIVATE_URL"
       - name: playwright-core (outside the repo; not a project dependency)
         run: mkdir -p /tmp/pw && cd /tmp/pw && npm init -y > /dev/null && npm install --no-audit --no-fund playwright-core@1.47.2
       - name: Browser checks (Library)
@@ -79,6 +84,7 @@ jobs:
         run: |
           mkdir -p "$OUT"
           node test/browser/seed.js
+          node test/browser/private.js
           node test/browser/owner.js
           node test/browser/public-mobile.js
           node test/browser/publishing.js

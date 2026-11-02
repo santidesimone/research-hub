@@ -200,11 +200,11 @@ On failure, the e2e job uploads the server log and screenshots. `deploy/cloudbui
 ## Security checklist
 - Rate limits are per client IP. `deploy.sh` sets `TRUST_PROXY=2` (your site's rewrite plus Cloud Run), so the IP comes from what the proxies saw, not from headers a client can write. If you serve the run.app URL directly, deploy with `TRUST_PROXY=1`. Expensive endpoints (query, MCP, analysis, audit, backup and restore, import and export, enrich, notes sync) share a smaller budget (`HEAVY_RATE_LIMIT_PER_MIN`, 120/min), and sign-in allows 10 failed attempts per IP per 10 minutes. `bin/hub` waits and retries when it is rate limited.
 - In production, unexpected errors reach clients (REST and MCP) only as "Internal error" with a request id; the details go to the log.
-- The public preview is a whitelist: public items and whitelisted fields only. A case study marked `internal` or `confidential` never appears, even with `visibility: public`, and organisations never do.
+- Everything is behind the token unless the service runs with `PUBLIC_ACCESS=1` (`deploy.sh` does not set it). With it, visitors see a public preview: public items, with the whitelisted fields or every field as Settings says; Drive copies, Drive ids, local paths and your reading status never; a case study marked `confidential` never, and organisations never.
 - Production start-up refuses a missing or short `HUB_API_TOKEN`, the default Neo4j password and a half-configured Drive. It warns about `TRUST_PROXY=true`, a Neo4j password under 12 characters, a missing `OPENALEX_EMAIL` and `MAX_UPLOAD_MB` above 32.
 - Server-side downloads (PDF copies, ontology snapshots) are https only, from allow-listed hosts (`PDF_FETCH_ALLOWED_HOSTS`, `SNAPSHOT_FETCH_ALLOWED_HOSTS`), with every redirect re-checked. Uploads to Drive accept only the listed file types (pdf, owl, rdf, ttl, jsonld, xml, xsd, json, csv, zip, txt) and are shared by link.
 
-- The UI and API reject everything private without the token; anonymous visitors only get the public preview.
+- The UI and API reject everything without the token; anonymous visitors get only the sign-in page (or, with `PUBLIC_ACCESS=1`, the public preview).
 - `/mcp` and `/api/*` need the token; sessions are a signed cookie (HttpOnly, SameSite=Lax, Secure over https); changes made with the cookie also need an `X-Hub` header.
 - Ten wrong sign-in attempts from one address blocks that address for ten minutes; every `/api` route is rate limited per address (`RATE_LIMIT_PER_MIN`).
 - The page is served with a Content-Security-Policy (per-request nonce) and the usual security headers; production refuses to start with a weak token.

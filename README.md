@@ -10,7 +10,7 @@ A self-hosted personal research hub built around a knowledge graph. **Neo4j is t
   notes/*.md on your computer ──► hub sync-notes ──► Neo4j
 ```
 
-Everything runs inside a **shell** (top bar with an app switcher, sign-in, theme). **Apps** are folders (`web/apps/<id>/`): Home, **Library** (papers list, reader and graph view) and **Query** (Cypher console). The look is a **skin** (`web/skins/<name>/`: a file of design tokens). Anonymous visitors see only the public preview; you sign in with your token to see everything.
+Everything runs inside a **shell** (top bar with an app switcher, sign-in, theme). **Apps** are folders (`web/apps/<id>/`): Home, **Library** (papers list, reader and graph view) and **Query** (Cypher console). The look is a **skin** (`web/skins/<name>/`: a file of design tokens). Everything is behind your token: anyone not signed in gets only the sign-in page, on every address. Signed in, you land in the Library (or on the page you asked for). A public preview for visitors exists but is off unless the server runs with `PUBLIC_ACCESS=1`.
 
 **One codebase, two modes.** Locally you run `docker compose up` for Neo4j and `npm start`. On Google Cloud the same image runs on Cloud Run. Only environment variables differ (`_env.example`); `web/core/config.js` reads them in one place and is forgiving locally but strict in production (see "Local and cloud").
 
@@ -59,13 +59,13 @@ The same features work in both: links, notes sync, search, backup, MCP, CLI. Mov
 
 ## Using it
 
-Open http://localhost:3000/ . Without signing in you only see the public preview. Click **Sign in** and enter your `HUB_API_TOKEN`.
+Open http://localhost:3000/ : it asks for your `HUB_API_TOKEN` and then opens the Library.
 
 - **Apps menu** (grid icon, top left): Home, Library, Query. Each app has its own address: `/library`, `/library?view=graph&key=<key>`, `/console`. Links are shareable and survive a reload. (With `BASE_PATH=/research-hub` they all live under `/research-hub/...`.)
 - **Library, Papers view**: searchable list on the left (title, author, topic, venue; sort and status filter); on the right the paper with two tabs: **Info** (metadata, abstract, topics, DOI link, what cites it, your notes about it, and the **file link**) and **Reader**. A Google Drive link is embedded in the reader; other links open in a new tab, with a "try to show it here" button for sites that allow embedding. In Info you can paste a link, **Upload PDF** (to your Drive) or remove the link. Up/down arrows move through the list. The dropdown next to the title sets **your status** (personal layer).
 - **Library, Graph view**: node size follows connections; click a node to highlight its neighbours and see its detail; legend chips toggle node types; "Open in library" jumps to the list.
 - **Private / Public preview** (owner only): the preview shows exactly what visitors see: nodes marked public, with what **Settings** allows (below).
-- **Settings** (owner only): whether new items are public or private by default, and whether visitors see *basic details* (title, authors, year, venue, DOI, link, summary) or *everything* (abstracts, Claude's analysis, note text, open file links such as arXiv). Copies in your Google Drive, Drive file ids, paths on your computer and your reading status are never shown. It also has *Make all public* / *Make all private* for the items you already have. The same switches are `GET`/`PUT /api/settings/publishing` and `POST /api/settings/publishing/apply`.
+- **Settings** (owner only; only with `PUBLIC_ACCESS=1`, otherwise it says public access is off): whether new items are public or private by default, and whether visitors see *basic details* (title, authors, year, venue, DOI, link, summary) or *everything* (abstracts, Claude's analysis, note text, open file links such as arXiv). Copies in your Google Drive, Drive file ids, paths on your computer and your reading status are never shown. It also has *Make all public* / *Make all private* for the items you already have. The same switches are `GET`/`PUT /api/settings/publishing` and `POST /api/settings/publishing/apply`.
 - **Query app** (owner): read-only Cypher with a results table and example queries.
 - **Neo4j Browser** (graph pictures of query results): http://localhost:7474 (login `neo4j` / `hubpassword`).
 
@@ -216,7 +216,7 @@ Open `/library`. The **Collections bar** has All, Papers, Methods, Use cases, Ca
   - An edit sends only the fields you changed, and those become yours (`by: owner`, reviewed).
   - A paper's DOI, authors and venue come from the source and are read-only.
 - **Audit:** Claude's low-confidence values and links, ungrounded findings, new vocabulary, older schema versions, empty fields and unreviewed items, with one-click **Accept** and **Edit** (opens the form at that field).
-- **Anonymous visitors** see only the public preview: public items, with basic details or every field as Settings says, and no forms or audit.
+- **Anonymous visitors** get only the sign-in page. With `PUBLIC_ACCESS=1` they see the public preview instead: public items, with basic details or every field as Settings says, and no forms or audit.
 
 **Frameworks, research questions, hypotheses, ontologies** (`docs/ADDENDUM_frameworks_questions_ontologies.md`):
 - A paper, question, project or case study is `FRAMED_BY` a framework, and a framework's page lists everything framed by it.

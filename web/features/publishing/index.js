@@ -3,9 +3,11 @@
 //   PUT  /api/settings/publishing          owner: change default_visibility and/or public_detail
 //   POST /api/settings/publishing/apply    owner: give every item the same visibility ({visibility})
 //   GET  /api/public/items/<key>           anyone, only while public_detail is 'full': a public item with all its fields
+// With PUBLIC_ACCESS off (the default) nothing is public: the public item needs the token and the settings cannot be changed.
 // Keys contain ':' and, for DOIs, '/': send them URL-encoded (encodeURIComponent).
 const express = require('express');
 const { requireOwner } = require('../../core/auth');
+const config = require('../../core/config');
 const { HttpError } = require('../../core/errors');
 const publishing = require('../../core/publishing');
 const publicExport = require('../../core/public-export');
@@ -14,6 +16,9 @@ const items = require('../../core/items');
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const json = express.json({ limit: '16kb' });
 const PUBLIC_ITEM = /^\/api\/public\/items\/(.+)$/;
+const publicOnly = (req, res, next) => (config.get().publicAccess ? next() : requireOwner(req, res, next));
+const changeable = (_req, _res, next) => next(config.get().publicAccess ? undefined
+  : new HttpError(409, 'Public access is off on this server (PUBLIC_ACCESS): everything is behind the token, so publishing settings cannot be changed.'));
 
 // A field value as visitors may see it: links to items that are not public, and links into the owner's Drive, are left out.
 function scrub(v, publicKeys) {
@@ -40,21 +45,21 @@ module.exports = {
   name: 'publishing',
   publicItem,
   mount(app) {
-    app.get('/api/settings/publishing', requireOwner, wrap(async (_req, res) => res.json(await publishing.get())));
+    app.get('/api/settings/publishing', requireOwner, wrap(async (_req, res) => res.json({ ...(await publishing.get()), public_access: config.get().publicAccess })));
 
-    app.put('/api/settings/publishing', requireOwner, json, wrap(async (req, res) => {
+    app.put('/api/settings/publishing', requireOwner, changeable, json, wrap(async (req, res) => {
       const out = await publishing.set(req.body || {});
       publicExport.invalidate();
       res.json(out);
     }));
 
-    app.post('/api/settings/publishing/apply', requireOwner, json, wrap(async (req, res) => {
+    app.post('/api/settings/publishing/apply', requireOwner, changeable, json, wrap(async (req, res) => {
       const out = await publishing.applyToAll((req.body || {}).visibility);
       publicExport.invalidate();
       res.json(out);
     }));
 
-    app.get(PUBLIC_ITEM, wrap(async (req, res) => {
+    app.get(PUBLIC_ITEM, publicOnly, wrap(async (req, res) => {
       const key = req.params[0];
       const exp = await publicExport.read();
       const { detail, nodes } = JSON.parse(exp.text);

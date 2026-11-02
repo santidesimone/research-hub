@@ -44,6 +44,7 @@ GOOGLE_REFRESH_TOKEN=
 # ---- Tuning (defaults are fine)
 # RATE_LIMIT_PER_MIN=600          per IP, all /api
 # HEAVY_RATE_LIMIT_PER_MIN=120    per IP: query, mcp, analysis, audit, backup/restore, import/export, enrich, notes sync
+# PUBLIC_ACCESS=1                 let visitors without the token see items marked public (off: everything is behind the token)
 # PUBLIC_CACHE_SECONDS=60         how long the public preview is cached
 # NEO4J_POOL_SIZE=20
 # LOG_FORMAT=pretty               json in production, pretty locally

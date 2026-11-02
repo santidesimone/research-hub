@@ -1,7 +1,7 @@
 // Shared helpers for the shell and every app (apps receive these through ctx, or may import this file).
 export const HUB = window.HUB;
 export const BASE = HUB.base;
-export const state = { owner: false, writes: false, apps: [], features: [], schema: null };
+export const state = { owner: false, writes: false, publicAccess: false, apps: [], features: [], schema: null };
 
 export function h(tag, attrs, ...kids) {
   const e = document.createElement(tag);

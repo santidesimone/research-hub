@@ -8,6 +8,6 @@ module.exports = {
   mount(app) {
     app.post('/api/login', express.json({ limit: '2kb' }), login);
     app.post('/api/logout', logout);
-    app.get('/api/me', (req, res) => res.json({ owner: isOwner(req), writes: Boolean(config.get().token) }));
+    app.get('/api/me', (req, res) => res.json({ owner: isOwner(req), writes: Boolean(config.get().token), public_access: config.get().publicAccess }));
   },
 };
