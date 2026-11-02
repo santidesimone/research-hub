@@ -124,6 +124,7 @@ async function saveLink(key, fromLabel, l, { model, force }, label) {
   if (!l || typeof l !== 'object') return { skipped: { link: label, reason: 'expected {rel, target, ...}' } };
   const rel = items.relName(l.rel);
   const spec = schema.relation_types[rel];
+  if (spec.retired) return { skipped: { link: label, rel, reason: `${rel} is retired: use ${spec.retired}` } };
   const targets = relTargets(rel, fromLabel);
   if (!targets.length) return { skipped: { link: label, rel, reason: `${rel} does not start at a ${fromLabel}` } };
   if (l.confidence != null && !['low', 'medium', 'high'].includes(l.confidence)) return { skipped: { link: label, rel, reason: 'confidence must be low, medium or high' } };
@@ -164,11 +165,16 @@ async function saveLinks(key, fromLabel, links, opts) {
 }
 
 // A paper analysis may extract the frameworks the paper uses, the research questions it states and the hypotheses it
-// tests. Each is matched to an existing item by its exact title (or text, acronym, alias), or created by Claude
-// (questions and hypotheses with origin: extracted), then linked: paper FRAMED_BY framework, question ASKED_IN paper,
-// paper TESTS hypothesis (with result, evidence, location). -> { frameworks, research_questions, hypotheses, skipped, flagged }
+// tests. Questions and hypotheses are the owner's: an analysis never creates them.
+// - frameworks: matched by exact title (or acronym, alias) or created, then paper FRAMED_BY framework.
+// - research_questions: the paper's own questions become its stated_question (text). One that is word for word one
+//   of the owner's questions also gets paper INFORMS question.
+// - hypotheses: matched to one of the owner's hypotheses by its exact statement, then paper TESTS hypothesis (with
+//   result, evidence, location); one that matches none is reported, not created.
+// -> { frameworks, research_questions, hypotheses, skipped, flagged }
 async function extractFromPaper(paperKey, extract, opts) {
   const report = { frameworks: [], research_questions: [], hypotheses: [], skipped: [], flagged: [] };
+  const stated = [];
   for (const [list, coll] of Object.entries(EXTRACT)) {
     for (const [i, entry] of (extract[list] || []).entries()) {
       const at = `extract.${list}[${i}]`;
@@ -187,6 +193,19 @@ async function extractFromPaper(paperKey, extract, opts) {
         if (found.length > 1) { report.skipped.push({ extract: at, reason: `"${fields.title}" matches more than one ${coll}` }); continue; }
         let key = found[0];
         let created = false;
+        if (list === 'research_questions') {
+          stated.push(fields.title.trim());
+          if (key) {
+            const r = await saveLink(paperKey, 'Paper', { rel: 'INFORMS', target: key, evidence, location, confidence }, opts, at);
+            if (r.skipped) report.skipped.push({ extract: at, ...r.skipped });
+            report[list].push({ stated: true, key, linked: Boolean(r.done) });
+          } else report[list].push({ stated: true, key: null, linked: false });
+          continue;
+        }
+        if (list === 'hypotheses' && !key) {
+          report.skipped.push({ extract: at, reason: `"${fields.title}" is not one of the owner's hypotheses: not created (record it in the analysis, or the owner adds the hypothesis and it can be linked)` });
+          continue;
+        }
         if (key) {
           const { title, ...more } = fields; // fill what is empty on the existing item; never rename it
           if (Object.keys(more).length) await items.write(key, more, opts);
@@ -199,8 +218,7 @@ async function extractFromPaper(paperKey, extract, opts) {
           }
         }
         const link = list === 'frameworks' ? [paperKey, 'Paper', { rel: 'FRAMED_BY', target: key, evidence, location, confidence }]
-          : list === 'research_questions' ? [key, 'ResearchQuestion', { rel: 'ASKED_IN', target: paperKey, evidence, location, confidence }]
-            : [paperKey, 'Paper', { rel: 'TESTS', target: key, result, evidence, location, confidence }];
+          : [paperKey, 'Paper', { rel: 'TESTS', target: key, result, evidence, location, confidence }];
         const r = await saveLink(link[0], link[1], link[2], opts, at);
         report[list].push({ key, created, linked: Boolean(r.done) });
         if (r.skipped) report.skipped.push({ extract: at, ...r.skipped });
@@ -210,6 +228,11 @@ async function extractFromPaper(paperKey, extract, opts) {
         report.skipped.push({ extract: at, reason: e.message });
       }
     }
+  }
+  // the paper's own questions, as text on the paper (an owner value is never overwritten)
+  if (stated.length) {
+    const r = await items.write(paperKey, { stated_question: [...new Set(stated)].join('\n') }, opts);
+    if (r && r.skipped && r.skipped.length) report.skipped.push({ extract: 'extract.research_questions', reason: `stated_question kept: ${r.skipped.map((x) => x.reason || x).join(', ')}` });
   }
   return report;
 }

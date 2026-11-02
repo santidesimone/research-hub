@@ -138,7 +138,7 @@ function toItem(row) {
   const known = new Set([...Object.keys(all), ...Object.keys(all).map((f) => `${f}_json`), ...Object.entries(all).flatMap(([f, spec]) => partNames(f, spec)), ...(typeDef(c).props || [])]);
   const p = row.props;
   const extra = Object.fromEntries(Object.entries(p).filter(([k]) => !known.has(k) && !SYSTEM.has(k)));
-  const link = (e) => ({ rel: e.rel, key: e.key, name: e.name, labels: e.labels.filter((l) => l !== 'Artifact'), ...pick(e.r, ['field', 'evidence', 'location', 'confidence', 'by', 'at', 'model', 'status', 'source', 'result', 'external_iri']) });
+  const link = (e) => ({ rel: e.rel, key: e.key, name: e.name, labels: e.labels.filter((l) => l !== 'Artifact'), ...pick(e.r, ['field', 'evidence', 'location', 'confidence', 'by', 'at', 'model', 'status', 'source', 'result', 'role', 'external_iri']) });
   return {
     key: p.key, collection: c, record_status: p.record_status || null, schema_version: p.schema_version ?? null, managed: p.managed || null,
     created_at: p.created_at || null, updated_at: p.updated_at || null,
@@ -397,6 +397,7 @@ function relationProps(rel, body) {
 async function link(key, body = {}) {
   const rel = relName(body.rel);
   const spec = schema.relation_types[rel];
+  if (spec.retired) throw new HttpError(400, `${rel} is retired: use ${spec.retired}`);
   for (const [k, max] of [['evidence', 2000], ['location', 200]]) {
     if (body[k] != null && (typeof body[k] !== 'string' || body[k].length > max)) throw new HttpError(400, `${k} must be text of at most ${max} characters`);
   }

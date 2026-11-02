@@ -286,7 +286,7 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
     await items.link(p1, { rel: 'TESTS', target: h.h1, result: 'supported', evidence: 'joint growth in table 3', location: 'p. 9' });
     await items.link(p2, { rel: 'TESTS', target: h.h1, result: 'refuted', evidence: 'merchant-led adoption', location: 's. 4' });
     await items.link(p1, { rel: 'TESTS', target: h.h2, result: 'supported', evidence: 'switching costs', location: 'p. 11' });
-    await items.link(q, { rel: 'ADDRESSED_BY', target: p1 });
+    await items.link(p1, { rel: 'INFORMS', target: q, role: 'supports', evidence: 'the adoption data' });
     const fibo = await mk('ontology', { title: T8('Financial Industry Business Ontology'), acronym: T8('FIBO'), kind: 'ontology', iri: 'https://spec.edmcouncil.org/fibo/ontology/', urls: [{ role: 'docs', url: 'https://spec.edmcouncil.org/fibo/' }] });
     const fnd = await mk('ontology', { title: T8('FIBO Foundations'), kind: 'ontology', parent: T8('FIBO') });
     const unused = await mk('ontology', { title: T8('An ontology nobody uses'), kind: 'taxonomy' });
@@ -300,7 +300,7 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
     assert.deepEqual((await C('MATCH (p:Paper)-[:FRAMED_BY]->(:Framework {key: $f}) RETURN p.key AS key', { f: fw.tsm })).map((r) => r.key), [p1], 'papers using a given framework');
     assert.deepEqual((await C(`MATCH (hy:Hypothesis)<-[t:TESTS]-(:Paper) WHERE hy.title ENDS WITH $tag WITH hy, collect(DISTINCT t.result) AS rs
        WHERE 'supported' IN rs AND 'refuted' IN rs RETURN hy.key AS key, hy.status AS status`)), [{ key: h.h1, status: 'mixed' }], 'hypotheses with conflicting test results');
-    assert.deepEqual((await C(`MATCH (rq:ResearchQuestion {status: 'open'}) WHERE rq.title ENDS WITH $tag AND NOT (rq)-[:ADDRESSED_BY]->(:Paper) RETURN rq.key AS key`)).map((r) => r.key), [q2], 'open questions no paper addresses');
+    assert.deepEqual((await C(`MATCH (rq:ResearchQuestion {status: 'open'}) WHERE rq.title ENDS WITH $tag AND NOT (:Paper)-[:INFORMS]->(rq) RETURN rq.key AS key`)).map((r) => r.key), [q2], 'open questions no paper informs');
     assert.deepEqual((await C('MATCH (o:Ontology) WHERE o.title ENDS WITH $tag AND NOT (o)-[:USED_BY]->() AND NOT ()-[:PART_OF]->(o) AND NOT (o)-[:PART_OF]->() RETURN o.key AS key')).map((r) => r.key), [unused], 'ontologies used by no item');
     assert.deepEqual((await C('MATCH (:Ontology)-[:USED_BY]->(u:UseCase) WHERE u.title ENDS WITH $tag RETURN u.key AS key')).map((r) => r.key), [uc], 'use cases that reference an ontology');
     assert.deepEqual((await items.list({ collection: 'hypothesis', q: 'redemption trust ' + tag })).items.map((x) => x.key), [h.h3], 'statements are in the full-text index');
@@ -318,7 +318,7 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
     const labels8 = new Set(before8.nodes.flatMap((n) => n.labels));
     for (const l of ['Framework', 'ResearchQuestion', 'Hypothesis', 'Ontology']) assert.ok(labels8.has(l), `backup covers ${l}`);
     const types8 = new Set(before8.rels.map((r) => r.type));
-    for (const t of ['FRAMED_BY', 'DERIVED_FROM', 'ANSWERS', 'TESTS', 'ADDRESSED_BY', 'USED_BY', 'PART_OF']) assert.ok(types8.has(t), `backup covers ${t}`);
+    for (const t of ['FRAMED_BY', 'DERIVED_FROM', 'ANSWERS', 'TESTS', 'INFORMS', 'USED_BY', 'PART_OF']) assert.ok(types8.has(t), `backup covers ${t}`);
     assert.ok(before8.rels.some((r) => r.type === 'TESTS' && r.props.result === 'refuted'));
     await db.exec('UNWIND $keys AS k MATCH (n {key: k}) DETACH DELETE n', { keys: mine8 });
     await backup.restore(dump8);
@@ -521,6 +521,46 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
 
     for (const k of [p1, p2, t1, t2]) await artifacts.remove(k);
     await db.exec('MATCH (c) WHERE (c:Concept OR c:Topic) AND c.key IN $k DETACH DELETE c', { k: [cA.key, cB.key, oldC.key, tl[0].key] });
+    await db.exec('MATCH (p:CurationPlan) DELETE p');
+  }
+
+  // Task 11: migration 014 on old data. ASKED_IN and ADDRESSED_BY become INFORMS with their properties, a question's
+  // text becomes its paper's stated_question, and extracted questions nothing else uses are proposed for deletion
+  // in one curation plan (not deleted). A second run changes nothing.
+  {
+    const T = (s) => `${s} ${tag} m14`;
+    const mk = async (collection, fields) => (await items.create({ collection, fields })).key;
+    const pA = await mk('paper', { title: T('A paper that asks') });
+    const meth = await mk('method', { title: T('A method that addresses') });
+    const qx = await mk('research_question', { text: T('Can patterns be reduced to a few') });
+    const qy = await mk('research_question', { text: T('Is the question still used') });
+    const qown = await mk('research_question', { text: T('My own question') });
+    const hy = await mk('hypothesis', { statement: T('A hypothesis answering qy') });
+    await items.link(hy, { rel: 'ANSWERS', target: qy });
+    await db.exec("MATCH (q:ResearchQuestion) WHERE q.key IN $k SET q.origin = 'extracted'", { k: [qx, qy] });
+    await db.exec(`MATCH (q {key: $qx}), (p {key: $pA}) CREATE (q)-[:ASKED_IN {evidence: 'in the introduction', location: 'p. 1', by: 'claude', status: 'auto', confidence: 'medium'}]->(p)
+      WITH p MATCH (q2 {key: $qy}) CREATE (q2)-[:ASKED_IN {by: 'claude'}]->(p)
+      WITH p MATCH (q3 {key: $qown}), (m {key: $meth}) CREATE (q3)-[:ADDRESSED_BY {evidence: 'its procedure', by: 'owner', status: 'reviewed'}]->(m)`, { qx, qy, qown, pA, meth });
+    const m14 = require('../migrations/014_informs');
+    await m14.up({ run: db.exec });
+    const rels = async () => db.exec(`MATCH (a)-[r]->(b) WHERE a.key IN $k OR b.key IN $k RETURN a.key AS a, type(r) AS t, b.key AS b, properties(r) AS r ORDER BY a, t, b`, { k: [pA, meth, qx, qy, qown] });
+    const after = await rels();
+    assert.ok(!after.some((x) => ['ASKED_IN', 'ADDRESSED_BY'].includes(x.t)), 'the old relationships are gone');
+    const inf = (a, b) => after.find((x) => x.t === 'INFORMS' && x.a === a && x.b === b);
+    assert.deepEqual([inf(pA, qx).r.evidence, inf(pA, qx).r.location, inf(pA, qx).r.migrated_from, inf(meth, qown).r.by, inf(meth, qown).r.migrated_from], ['in the introduction', 'p. 1', 'ASKED_IN', 'owner', 'ADDRESSED_BY'], 'INFORMS with the same properties');
+    assert.ok(inf(pA, qy), 'every ASKED_IN moved');
+    const paperA = await items.get(pA);
+    assert.deepEqual(paperA.fields.stated_question.split('\n').sort(), [T('Can patterns be reduced to a few'), T('Is the question still used')].sort(), "the paper's own questions");
+    assert.equal(paperA.provenance.stated_question.by, 'claude', "written as Claude's value, so the owner's would win");
+    const plans = await db.exec("MATCH (c:CurationPlan) WHERE c.reason STARTS WITH 'Migration 014' RETURN c.status AS status, c.ops_json AS ops");
+    assert.equal(plans.length, 1);
+    assert.deepEqual([plans[0].status, JSON.parse(plans[0].ops)], ['proposed', [{ op: 'delete', key: qx }]], 'only the extracted question nothing else uses, proposed, not deleted');
+    assert.ok((await items.get(qx)).key === qx, 'still there until the owner applies the plan');
+    await m14.up({ run: db.exec });
+    assert.deepEqual(await rels(), after, 'a second run changes nothing');
+    assert.equal((await items.get(pA)).fields.stated_question, paperA.fields.stated_question);
+    assert.equal((await db.exec("MATCH (c:CurationPlan) WHERE c.reason STARTS WITH 'Migration 014' RETURN count(c) AS n"))[0].n, 1, 'one plan');
+    for (const k of [pA, meth, qx, qy, qown, hy]) await artifacts.remove(k);
     await db.exec('MATCH (p:CurationPlan) DELETE p');
   }
 

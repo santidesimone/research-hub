@@ -33,7 +33,7 @@
       "collection": true,
       "ui_section": "reading",
       "managed": "api",
-      "schema_version": 1,
+      "schema_version": 2,
       "props": [],
       "fields": {
         "authors": { "type": "ref", "ref": "Person", "rel": "AUTHORED_BY", "list": true, "by": ["S"], "tier": "core", "label": "Authors", "help": "Ordered." },
@@ -56,6 +56,7 @@
         "domain": { "type": "ref", "ref": "Domain", "rel": "ABOUT", "by": ["C"], "tier": "standard", "label": "Domain" },
         "theoretical_framework": { "type": "longtext", "by": ["C"], "tier": "deep", "label": "Theoretical framework" },
         "research_problem": { "type": "longtext", "by": ["C"], "tier": "core", "label": "Research problem" },
+        "stated_question": { "type": "longtext", "by": ["C", "Y"], "tier": "standard", "label": "Its own research question", "help": "The question the paper itself sets out to answer, in its words. Your own research questions are separate items that this paper can inform." },
         "main_claim": { "type": "longtext", "by": ["C"], "tier": "core", "label": "Main claim" },
         "contributions": { "type": "object", "list": true, "props": { "text": "text", "kind": "text" }, "by": ["C"], "tier": "standard", "label": "Contributions", "help": "kind: novel, extension or application." },
         "approach": { "type": "longtext", "by": ["C"], "tier": "standard", "label": "Approach" },
@@ -84,7 +85,7 @@
       "detail_groups": [
         { "label": "Bibliographic", "fields": ["authors", "year", "date", "venue", "item_type", "doi", "arxiv_id", "url", "abstract", "peer_review", "open_access", "citation_count", "citation_count_at", "language"] },
         { "label": "Classification", "fields": ["contribution_type", "research_design", "paradigm", "domain", "theoretical_framework"] },
-        { "label": "Content", "fields": ["research_problem", "main_claim", "contributions", "approach", "evidence", "analysis_methods", "key_findings", "limitations_stated", "limitations_observed", "assumptions", "threats_to_validity", "reproducibility", "implications", "future_work", "conflicts_funding"] },
+        { "label": "Content", "fields": ["research_problem", "stated_question", "main_claim", "contributions", "approach", "evidence", "analysis_methods", "key_findings", "limitations_stated", "limitations_observed", "assumptions", "threats_to_validity", "reproducibility", "implications", "future_work", "conflicts_funding"] },
         { "label": "Appraisal", "fields": ["relevance", "relevance_reason", "reading_depth", "rigor", "rigor_reason", "novelty", "novelty_reason", "confidence_in_findings"] }
       ]
     },
@@ -256,15 +257,15 @@
       "fields": {
         "text": { "type": "longtext", "by": ["Y", "C"], "tier": "core", "label": "Question" },
         "kind": { "type": "enum", "enum": ["descriptive", "explanatory", "exploratory", "evaluative"], "by": ["Y", "C"], "tier": "core", "label": "Kind" },
-        "origin": { "type": "enum", "enum": ["own", "extracted"], "default": "own", "by": ["Sys", "Y"], "tier": "core", "label": "Origin", "help": "Extracted: taken from a paper." },
+        "origin": { "type": "enum", "enum": ["own", "extracted"], "default": "own", "by": ["Sys"], "tier": "core", "label": "Origin", "help": "Provenance only, never shown: extracted questions came from paper analyses before migration 014." },
         "status": { "type": "enum", "enum": ["open", "partly_answered", "answered", "dropped"], "by": ["Y"], "tier": "standard", "label": "Status" },
         "scope": { "type": "longtext", "by": ["Y", "C"], "tier": "standard", "label": "Scope" },
         "rationale": { "type": "longtext", "by": ["Y", "C"], "tier": "deep", "label": "Rationale" }
       },
-      "list_columns": ["title", "kind", "status", "origin"],
-      "filters": ["kind", "status", "origin", "topics"],
+      "list_columns": ["title", "status", "kind"],
+      "filters": ["kind", "status", "topics"],
       "detail_groups": [
-        { "label": "Question", "fields": ["text", "kind", "origin", "status"] },
+        { "label": "Question", "fields": ["text", "kind", "status"] },
         { "label": "Framing", "fields": ["scope", "rationale"] }
       ]
     },
@@ -288,13 +289,13 @@
         "dependent_variables": { "type": "text", "list": true, "by": ["Y", "C"], "tier": "standard", "label": "Dependent variables" },
         "direction": { "type": "enum", "enum": ["positive", "negative", "no_effect", "non_directional"], "by": ["Y", "C"], "tier": "standard", "label": "Direction" },
         "status": { "type": "enum", "enum": ["untested", "supported", "refuted", "mixed", "inconclusive"], "default": "untested", "by": ["Sys", "Y"], "tier": "standard", "label": "Status", "help": "Derived from the TESTS links (papers that tested it); set it yourself to override." },
-        "origin": { "type": "enum", "enum": ["own", "extracted"], "default": "own", "by": ["Sys", "Y"], "tier": "core", "label": "Origin" },
+        "origin": { "type": "enum", "enum": ["own", "extracted"], "default": "own", "by": ["Sys"], "tier": "core", "label": "Origin", "help": "Provenance only, never shown." },
         "operationalisation": { "type": "longtext", "by": ["Y", "C"], "tier": "deep", "label": "Operationalisation" }
       },
-      "list_columns": ["title", "status", "direction", "origin"],
-      "filters": ["status", "direction", "origin", "topics"],
+      "list_columns": ["title", "status", "direction"],
+      "filters": ["status", "direction", "topics"],
       "detail_groups": [
-        { "label": "Hypothesis", "fields": ["statement", "direction", "status", "origin"] },
+        { "label": "Hypothesis", "fields": ["statement", "direction", "status"] },
         { "label": "Variables", "fields": ["independent_variables", "dependent_variables", "operationalisation"] }
       ]
     },
@@ -392,8 +393,7 @@
     "framed_by": "FRAMED_BY",
     "competes_with": "COMPETES_WITH",
     "sub_question_of": "SUB_QUESTION_OF",
-    "asked_in": "ASKED_IN",
-    "addressed_by": "ADDRESSED_BY",
+    "informs": "INFORMS",
     "part_of": "PART_OF",
     "derived_from": "DERIVED_FROM",
     "answers": "ANSWERS",
@@ -427,8 +427,9 @@
     "FRAMED_BY": { "from": ["Paper", "ResearchQuestion", "Project", "CaseStudy"], "to": ["Framework"] },
     "COMPETES_WITH": { "from": ["Framework"], "to": ["Framework"] },
     "SUB_QUESTION_OF": { "from": ["ResearchQuestion"], "to": ["ResearchQuestion"] },
-    "ASKED_IN": { "from": ["ResearchQuestion"], "to": ["Paper"] },
-    "ADDRESSED_BY": { "from": ["ResearchQuestion"], "to": ["Paper", "Method", "CaseStudy"] },
+    "ASKED_IN": { "from": ["ResearchQuestion"], "to": ["Paper"], "retired": "INFORMS", "help": "Retired: migration 014 made each one an INFORMS from the paper, and the question's text the paper's stated_question." },
+    "ADDRESSED_BY": { "from": ["ResearchQuestion"], "to": ["Paper", "Method", "CaseStudy"], "retired": "INFORMS", "help": "Retired: migration 014 made each one an INFORMS from the source." },
+    "INFORMS": { "from": ["Paper", "Method", "CaseStudy", "UseCase", "Framework", "Ontology", "Note"], "to": ["ResearchQuestion", "Hypothesis"], "props": { "role": { "type": "enum", "enum": ["background", "supports", "challenges"] } }, "help": "A source relevant to one of your questions or hypotheses. role: how (optional); evidence: why it matters; location: where. A paper that tested a hypothesis is TESTS." },
     "PART_OF": { "from": ["ResearchQuestion", "Ontology"], "to": ["Project", "Ontology"], "pairs": { "ResearchQuestion": ["Project"], "Ontology": ["Ontology"] } },
     "DERIVED_FROM": { "from": ["Hypothesis"], "to": ["Framework"] },
     "ANSWERS": { "from": ["Hypothesis"], "to": ["ResearchQuestion"] },

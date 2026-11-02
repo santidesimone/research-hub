@@ -102,6 +102,7 @@ function check(s) {
   for (const [field, rel] of Object.entries(s.relations || {})) if (!relTypes[rel]) out.push(`relations.${field}: ${rel} is not in relation_types`);
   for (const [rel, r] of Object.entries(relTypes)) {
     if (!/^[A-Z][A-Z_]*$/.test(rel)) out.push(`relation_types.${rel}: use UPPER_SNAKE_CASE`);
+    if (r.retired != null && (!relTypes[r.retired] || relTypes[r.retired].retired)) out.push(`relation_types.${rel}: retired must name the relation that replaces it`);
     for (const l of [...(r.from || []), ...(r.to || [])]) if (!labels.has(l)) out.push(`relation_types.${rel}: unknown label ${l}`);
     for (const [from, tos] of Object.entries(r.pairs || {})) {
       if (!(r.from || []).includes(from)) out.push(`relation_types.${rel}.pairs: ${from} is not in from`);
@@ -144,7 +145,8 @@ function safeRel(rel) {
 const relTargets = (rel, fromLabel) => relTargetsIn(schema, rel, fromLabel);
 const relAllows = (rel, fromLabel, toLabels) => relTargets(rel, fromLabel).some((l) => toLabels.includes(l));
 // The relations an item of this label can start, with where they may point and their own properties.
-const relationsFrom = (label) => Object.entries(schema.relation_types).filter(([rel]) => relTargets(rel, label).length)
+// what a type can link to now (a retired relation stays readable, for old data and backups, but is never offered)
+const relationsFrom = (label) => Object.entries(schema.relation_types).filter(([rel, r]) => !r.retired && relTargets(rel, label).length)
   .map(([rel, r]) => ({ rel, to: relTargets(rel, label), interpretive: Boolean(r.interpretive), ...(r.props ? { props: r.props } : {}) }));
 
 // Every field of a type: the common ones (collections only) plus its own.

@@ -66,7 +66,7 @@ const seed = require('../../data/seed_papers.json');
 
   // migrations are discoverable and ordered
   const migrate = require('../core/migrate');
-  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', '010_record_status_from_provenance', '011_frameworks_questions_ontologies', '012_oauth', '013_curation', 'personal_001_layer']);
+  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', '010_record_status_from_provenance', '011_frameworks_questions_ontologies', '012_oauth', '013_curation', '014_informs', 'personal_001_layer']);
   // personal layer: separate node, driven by hooks, core untouched
   calls.length = 0;
   require('../features/personal').mount({ get() {}, put() {}, delete() {}, post() {} });
@@ -1868,27 +1868,41 @@ const seed = require('../../data/seed_papers.json');
     assert.equal((await items.link(rq.key, { rel: 'PART_OF', target: 'project:hub' })).created, true);
     assert.equal((await items.link(hy.key, { rel: 'DERIVED_FROM', target: fw.key })).created, true);
     assert.equal((await items.link(hy.key, { rel: 'ANSWERS', target: rq.key })).created, true);
+    // sources INFORM questions and hypotheses (with an optional role); the old ASKED_IN and ADDRESSED_BY are retired
+    G.set('doi:10.8/p4', { labels: ['Artifact', 'Paper'], props: { key: 'doi:10.8/p4', title: 'Paper four', collection: 'paper', schema_version: 2 }, out: [] });
+    assert.equal((await items.link('doi:10.8/p4', { rel: 'INFORMS', target: rq.key, role: 'challenges', evidence: 'argues the opposite' })).created, true);
+    assert.ok(G.get('doi:10.8/p4').out.some((e) => e.rel === 'INFORMS' && e.to === rq.key && e.r.role === 'challenges' && e.r.by === 'owner'));
+    assert.deepEqual((await items.get(rq.key)).links.in.find((l) => l.rel === 'INFORMS').role, 'challenges', 'the role reads back');
+    await assert.rejects(() => items.link('doi:10.8/p4', { rel: 'INFORMS', target: rq.key, role: 'loves' }), (e) => e.status === 400 && /role must be one of background, supports, challenges/.test(e.message));
+    await assert.rejects(() => items.link(rq.key, { rel: 'ASKED_IN', target: 'doi:10.8/p4' }), (e) => e.status === 400 && /ASKED_IN is retired: use INFORMS/.test(e.message));
+    assert.ok(!S8.relationsFrom('ResearchQuestion').some((r) => ['ASKED_IN', 'ADDRESSED_BY'].includes(r.rel)), 'retired relations are not offered');
+    assert.match(bad8((c) => { c.relation_types.ASKED_IN.retired = 'NOPE'; }), /ASKED_IN: retired must name the relation that replaces it/);
+    const viaRetired = await analysis.save({ collection: 'research_question', key: rq.key, model: 'claude-x', links: [{ rel: 'ADDRESSED_BY', target: 'doi:10.8/p4' }] });
+    assert.match(viaRetired.links_skipped[0].reason, /ADDRESSED_BY is retired: use INFORMS/);
 
-    // a paper analysis extracts frameworks, questions and tested hypotheses
+    // a paper analysis extracts frameworks, the paper's own questions (as text) and tests of the owner's hypotheses
+    await items.create({ collection: 'hypothesis', fields: { statement: 'Redemption risk reduces trust in stablecoins', direction: 'negative' } });
     G.set('doi:10.8/p3', { labels: ['Artifact', 'Paper'], props: { key: 'doi:10.8/p3', title: 'Paper three', collection: 'paper', schema_version: 1 }, out: [] });
     const ex = await analysis.save({ collection: 'paper', key: 'doi:10.8/p3', model: 'claude-x', extract: {
       frameworks: [{ name: 'two-sided markets' }, { name: 'Path dependence', framework_kind: 'theoretical', evidence: 'the lock-in argument', location: 's. 2' }],
       research_questions: [{ text: 'Why do stablecoins struggle to replace card payments?' }, { text: 'Do merchants accept stablecoins?', kind: 'descriptive' }],
       hypotheses: [{ statement: 'Adoption requires simultaneous merchant and consumer growth', result: 'refuted', evidence: 'adoption grew one-sided', location: 'table 4' },
         { statement: 'Redemption risk reduces trust in stablecoins', direction: 'negative', result: 'supported', evidence: 'survey' },
-        { statement: 'No result given', evidence: 'x' }, { statement: 'No passage', result: 'supported' }, { kind: 'no statement' }],
+        { statement: 'No result given', evidence: 'x' }, { statement: 'No passage', result: 'supported' }, { kind: 'no statement' },
+        { statement: 'Interchange fees fall', result: 'supported', evidence: 'fees dropped', location: 'p. 9' }],
     } });
     const E = ex.extracted;
     assert.deepEqual(E.frameworks.map((x) => [x.key, x.created, x.linked]), [[fw.key, false, true], ['framework:path-dependence', true, true]], 'found by an alias, or created from a full entry');
-    assert.deepEqual(E.research_questions.map((x) => [x.key, x.created]), [[rq.key, false], ['question:do-merchants-accept-stablecoins', true]]);
-    assert.deepEqual(E.hypotheses.map((x) => [x.key, x.created]), [[hy.key, false], ['hypothesis:redemption-risk-reduces-trust-in-stablecoins', true]]);
-    assert.deepEqual(E.skipped.map((x) => x.extract), ['extract.hypotheses[2]', 'extract.hypotheses[3]', 'extract.hypotheses[4]'], 'no result, no passage, no statement: nothing created');
-    assert.ok(!G.has('hypothesis:no-result-given') && !G.has('hypothesis:no-passage'));
-    assert.equal(G.get('question:do-merchants-accept-stablecoins').props.origin, 'extracted');
-    assert.equal(G.get('hypothesis:redemption-risk-reduces-trust-in-stablecoins').props.origin, 'extracted');
-    assert.equal(G.get(rq.key).props.origin, 'own', 'an existing own question stays own');
-    assert.ok(G.get('question:do-merchants-accept-stablecoins').out.some((e) => e.rel === 'ASKED_IN' && e.to === 'doi:10.8/p3'), 'the question is ASKED_IN the paper');
+    assert.deepEqual(E.research_questions.map((x) => [x.key, x.stated, x.linked]), [[rq.key, true, true], [null, true, false]], 'stated by the paper; linked when it is word for word one of yours');
+    assert.ok(!G.has('question:do-merchants-accept-stablecoins'), 'an analysis never creates a question');
+    assert.equal(G.get('doi:10.8/p3').props.stated_question, 'Why do stablecoins struggle to replace card payments?\nDo merchants accept stablecoins?', 'the paper\'s own questions, as text');
+    assert.deepEqual(E.hypotheses.map((x) => [x.key, x.created]), [[hy.key, false], ['hypothesis:redemption-risk-reduces-trust-in-stablecoins', false]], 'matched to the owner\'s hypotheses');
+    assert.deepEqual(E.skipped.map((x) => x.extract), ['extract.hypotheses[2]', 'extract.hypotheses[3]', 'extract.hypotheses[4]', 'extract.hypotheses[5]'], 'no result, no passage, no statement, not one of yours: nothing created');
+    assert.match(E.skipped[3].reason, /not one of the owner's hypotheses: not created/);
+    assert.ok(!G.has('hypothesis:no-result-given') && !G.has('hypothesis:no-passage') && !G.has('hypothesis:interchange-fees-fall'));
     const p3 = G.get('doi:10.8/p3').out;
+    assert.ok(p3.some((e) => e.rel === 'INFORMS' && e.to === rq.key && e.r.by === 'claude'), 'the paper INFORMS the matching question');
+    assert.ok(!p3.some((e) => e.rel === 'ASKED_IN'));
     assert.ok(p3.some((e) => e.rel === 'FRAMED_BY' && e.to === 'framework:path-dependence' && e.r.location === 's. 2'));
     assert.deepEqual(p3.filter((e) => e.rel === 'TESTS').map((e) => [e.to, e.r.result, e.r.by]).sort(), [[hy.key, 'refuted', 'claude'], ['hypothesis:redemption-risk-reduces-trust-in-stablecoins', 'supported', 'claude']]);
     assert.deepEqual([H().status, G.get('hypothesis:redemption-risk-reduces-trust-in-stablecoins').props.status], ['refuted', 'supported'], 'statuses derived from the new tests');
@@ -1949,13 +1963,19 @@ const seed = require('../../data/seed_papers.json');
     assert.deepEqual(M8.linkOptions(hyp, ['Venue'], pv8), [], 'nothing the schema does not allow');
     const kinds = M8.linkableLabels(hyp, pv8);
     assert.ok(kinds.includes('Paper') && kinds.includes('ResearchQuestion') && kinds.includes('Framework') && !kinds.includes('Venue'), kinds.join(','));
+    // INFORMS offers the plain link and each role; a hypothesis's evidence in words
+    assert.deepEqual(M8.linkOptions(paperC, ['Artifact', 'ResearchQuestion'], pv8).filter((o) => o.rel === 'INFORMS').map((o) => o.label), ['Informs', 'Informs: background', 'Informs: supports', 'Informs: challenges']);
+    assert.deepEqual(M8.connectionGroups({ key: 'question:q', links: { out: [], in: [{ rel: 'INFORMS', key: 'doi:1', name: 'P', labels: ['Paper'], role: 'challenges' }] } }, ctxC)[0].rows.map((r) => [r.role, r.tone, r.roleProp]), [['Informed by: challenges', 'disagree', 'challenges']]);
+    assert.deepEqual([M8.hypothesisVerdict([]).text, M8.hypothesisVerdict(['supported', 'supported', 'mixed']).text, M8.hypothesisVerdict(['refuted']).text, M8.hypothesisVerdict(['supported']).text, M8.hypothesisVerdict(['supported', 'refuted', 'inconclusive']).counts],
+      ['No paper has tested it yet.', '3 papers tested it: 2 support it, 1 mixed.', '1 paper tested it: 1 refutes it.', '1 paper tested it: 1 supports it.', { supported: 1, refuted: 1, mixed: 0, inconclusive: 1 }]);
     // list entries are plain text: linked names joined, enum words, a count for tables
     assert.deepEqual([M8.plainValue({ type: 'ref', list: true }, [{ key: 'topic:a', name: 'CBDC' }, { name: 'Privacy' }]), M8.plainValue({ type: 'enum' }, 'partly_answered'),
       M8.plainValue({ type: 'object', list: true, label: 'Outcomes' }, [{}, {}]), M8.plainValue({ type: 'text' }, null), M8.plainValue({ type: 'integer' }, 0)],
     ['CBDC, Privacy', 'partly answered', '2 outcomes', '', '0']);
     const hf = pv8.find((c) => c.name === 'hypothesis').fields;
-    assert.deepEqual(M8.createFields(hf, { statement: 'S', status: 'untested', origin: 'own', direction: null, title: null }), { statement: 'S' }, 'hub-managed defaults are not sent as owner values');
-    assert.deepEqual(M8.createFields(hf, { statement: 'S', status: 'refuted', origin: 'extracted' }), { statement: 'S', status: 'refuted', origin: 'extracted' }, 'a changed one is the owner\'s choice');
+    assert.deepEqual(M8.createFields(hf, { statement: 'S', status: 'untested', direction: null, title: null }), { statement: 'S' }, 'hub-managed defaults are not sent as owner values');
+    assert.deepEqual(M8.createFields(hf, { statement: 'S', status: 'refuted' }), { statement: 'S', status: 'refuted' }, 'a changed one is the owner\'s choice');
+    assert.ok(!hf.origin && !pv8.find((c) => c.name === 'research_question').fields.origin, 'origin is provenance only: never offered to the UI');
 
     // migration 011
     const m011 = require('../migrations/011_frameworks_questions_ontologies');

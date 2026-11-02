@@ -62,7 +62,7 @@ export class CurationView {
     return h('pre', { class: 'json' }, JSON.stringify(c, null, 2));
   }
   plan(p) {
-    const who = p.by === 'claude' ? `Claude${p.model ? ' (' + p.model + ')' : ''}` : 'you';
+    const who = p.by === 'claude' ? `Claude${p.model ? ' (' + p.model + ')' : ''}` : p.by === 'hub' ? 'the hub' : 'you';
     const when = (p.applied_at || p.reverted_at || p.rejected_at || p.at || '').slice(0, 16).replace('T', ' ');
     const actions = h('div', { class: 'actions' });
     const act = (label, path, cls, confirmLabel) => {

@@ -18,7 +18,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | Served at santidesimone.com/research-hub | done (2026-11-01), tested live | See "Served at santidesimone.com" below. |
 | Publishing settings (default visibility, full public detail) | done (2026-11-01), not deployed yet | See "Publishing settings" below. |
 | 10 Curation: reviewable change plans | done (2026-11-01), tested live from the claude.ai chat | See "Task 10" below. |
-| 11 Library redesign (`docs/UI_REDESIGN.md`) | in progress: steps 1 to 4 of 6 done (2026-11-02), not deployed | See "Task 11" below. |
+| 11 Library redesign (`docs/UI_REDESIGN.md`) | in progress: steps 1 to 5 of 6 done (2026-11-02), not deployed | See "Task 11" below. |
 
 ## Task 0. Baseline against real services
 
@@ -683,3 +683,21 @@ Approved by the owner on 2026-11-02 after three rounds on a clickable mockup (sp
 
 **Not tested / open**
 - Not deployed. "Change how it relates" writes the new link before removing the old one (two requests, not one transaction); a failure between them leaves both, which the owner sees and can unlink.
+
+### Step 5. Questions and hypotheses are yours (2026-11-02)
+
+**Changed**
+- Schema: `INFORMS` (with an optional role); `ASKED_IN` and `ADDRESSED_BY` retired (readable, never created); `paper.stated_question` (paper `schema_version` 2); `origin` hidden. See `schema/CHANGELOG.md`.
+- `web/core/analysis.js`: an analysis never creates questions or hypotheses. A paper's stated questions become `stated_question`; one that matches an owner question exactly also gets INFORMS; a tested hypothesis is linked only to an existing one, else reported in `skipped`. Retired relations are skipped in `links`. MCP guidance tells Claude to list the owner's questions and hypotheses and propose INFORMS / TESTS links (low confidence: shown as suggestions).
+- `web/core/items.js`: a retired relation is refused (400); a link's `role` reads back. `web/core/schema.js`: `retired` checked, and left out of what the UI and MCP offer.
+- Migration `014_informs`: old links become INFORMS with their properties, stated questions move to the paper, and a curation plan (by "the hub") proposes deleting extracted questions nothing else uses; idempotent.
+- `web/apps/library/inquiry.js` (new): the question page (broader question, hypothesis cards with their verdict, narrower questions, sources that inform it) and the hypothesis page (verdict sentence, evidence bar, papers that tested it, other sources, questions it answers), with Link… where useful. Status moves into the header. `hypothesisVerdict` in `model.js`.
+- Connections: INFORMS offers the plain link and each role; editing a note or changing a role keeps the other property.
+
+**Tested**
+- Offline: INFORMS with a role (stored, read back, bad role refused), retired relations refused and not offered, the schema check for `retired`, extraction (stated questions as text, the exact match linked, nothing created, a hypothesis that is not the owner's skipped), `origin` out of the UI, the role options, the verdict wording and counts. Mutation-checked: 6 breakages, all caught (one only after a test was added).
+- Integration on a throwaway Neo4j 5: migration 014 on old-style data (properties carried over, both relations moved, stated questions on the paper as Claude's value, one plan proposing only the unused extracted question, nothing deleted, a second run changes nothing); the Task 8 competency questions now use INFORMS.
+- Browser: the question page (hypothesis verdict, a source that challenges it, status in the header, no pills), the hypothesis page (verdict, bar, tests, the question it answers), Link… from a question with a role (stored on the paper); all six suites green.
+
+**Not tested / open**
+- Not deployed; migration 014 has not run on production yet (it will on the next deploy). Afterwards, Review › Proposed fixes may hold the hub's plan for the old extracted questions (for example the "design space" one).

@@ -55,10 +55,10 @@ export const GRAPH_OFF_BY_DEFAULT = ['Concept', 'Person', 'Organisation', 'Venue
 // Headings for links, by direction: a framework lists the papers framing on it, a hypothesis the papers testing it,
 // an ontology its modules and users. Other relations read as their name.
 const REL_HEADINGS = {
-  out: { FRAMED_BY: 'Framed by', TESTS: 'Tests', USED_BY: 'Used by', PART_OF: 'Part of', DERIVED_FROM: 'Derived from', ANSWERS: 'Answers',
+  out: { FRAMED_BY: 'Framed by', TESTS: 'Tests', USED_BY: 'Used by', PART_OF: 'Part of', DERIVED_FROM: 'Derived from', ANSWERS: 'Answers', INFORMS: 'Informs',
     ASKED_IN: 'Asked in', ADDRESSED_BY: 'Addressed by', SUB_QUESTION_OF: 'Sub-question of', COMPETES_WITH: 'Competes with', ALIGNS_WITH: 'Aligns with' },
   in: { FRAMED_BY: 'Framed by this', TESTS: 'Tested by', USED_BY: 'Uses this', PART_OF: 'Parts', DERIVED_FROM: 'Hypotheses derived from this',
-    ANSWERS: 'Hypotheses answering this', ASKED_IN: 'Questions asked here', ADDRESSED_BY: 'Questions it addresses', SUB_QUESTION_OF: 'Sub-questions',
+    ANSWERS: 'Answered by', INFORMS: 'Informed by', ASKED_IN: 'Questions asked here', ADDRESSED_BY: 'Questions it addresses', SUB_QUESTION_OF: 'Sub-questions',
     COMPETES_WITH: 'Competing with this', BUILDS_ON: 'Built on by', DEFINED_IN: 'Concepts defined here' },
 };
 const relWords = (rel) => rel.toLowerCase().replace(/_/g, ' ');
@@ -69,7 +69,8 @@ export const BIBLIO_RELS = ['AUTHORED_BY', 'PUBLISHED_IN', 'PUBLISHED_BY'];
 export const relRole = (dir, rel, result) => relHeading(dir, rel) + (result ? `: ${result}` : '');
 // Agrees, disagrees, mixed or neutral, for the colour of a role.
 export function relTone(rel, result) {
-  if (result) return result === 'supported' ? 'agree' : result === 'refuted' ? 'disagree' : 'mixed';
+  if (result === 'background') return 'neutral';
+  if (result) return ['supported', 'supports'].includes(result) ? 'agree' : ['refuted', 'challenges'].includes(result) ? 'disagree' : 'mixed';
   return ['SUPPORTS'].includes(rel) ? 'agree' : ['CONTRADICTS', 'CRITIQUES', 'COMPETES_WITH'].includes(rel) ? 'disagree' : 'neutral';
 }
 // Claude's links that nobody has looked at and Claude was unsure of: offered as suggestions to link or dismiss.
@@ -89,8 +90,8 @@ export function connectionGroups(item, { collections, sections = [], labels = []
     const t = typeOfLink(l.labels, labels);
     const id = t ? t.label : (l.labels || [])[0] || 'Other';
     if (!groups.has(id)) groups.set(id, { id, label: t ? t.plural || t.label : id, name: t ? t.name : null, rows: [] });
-    groups.get(id).rows.push({ dir, rel: l.rel, key: l.key, name: l.name || l.key, role: relRole(dir, l.rel, l.result), tone: relTone(l.rel, l.result),
-      note: l.evidence || null, location: l.location || null, result: l.result || null, field: l.field || null, by: l.by || null,
+    groups.get(id).rows.push({ dir, rel: l.rel, key: l.key, name: l.name || l.key, role: relRole(dir, l.rel, l.result || l.role), tone: relTone(l.rel, l.result || l.role),
+      note: l.evidence || null, location: l.location || null, result: l.result || null, roleProp: l.role || null, field: l.field || null, by: l.by || null,
       suggested: isSuggestion(l), source: dir === 'out' ? item.key : l.key, target: dir === 'out' ? l.key : item.key });
   };
   for (const l of item.links.out) add(l, 'out');
@@ -100,12 +101,14 @@ export function connectionGroups(item, { collections, sections = [], labels = []
 }
 
 // How this item may relate to a target, from the schema: links it can make (out) and links the target's collection
-// can make to it (in). A relation with a required enum property (TESTS: result) becomes one option per value.
+// can make to it (in). A relation with an enum property becomes one option per value (TESTS: result), plus the plain
+// relation when the property is optional (INFORMS, with or without a role).
 export function linkOptions(coll, targetLabels, collections) {
   const out = [];
   const expand = (dir, r) => {
-    const req = Object.entries(r.props || {}).find(([, p]) => p.required && p.type === 'enum');
-    if (!req) { out.push({ dir, rel: r.rel, props: {}, label: relRole(dir, r.rel) }); return; }
+    const req = Object.entries(r.props || {}).find(([, p]) => p.type === 'enum');
+    if (!req || !req[1].required) out.push({ dir, rel: r.rel, props: {}, label: relRole(dir, r.rel) });
+    if (!req) return;
     for (const v of req[1].enum) out.push({ dir, rel: r.rel, props: { [req[0]]: v }, label: relRole(dir, r.rel, v) });
   };
   for (const r of coll.relations) if (!BIBLIO_RELS.includes(r.rel) && r.to.some((l) => targetLabels.includes(l))) expand('out', r);
@@ -121,6 +124,18 @@ export function linkableLabels(coll, collections) {
   for (const r of coll.relations) if (!BIBLIO_RELS.includes(r.rel)) r.to.forEach((l) => set.add(l));
   for (const c of collections) if (c.relations.some((r) => !BIBLIO_RELS.includes(r.rel) && r.to.includes(coll.label))) set.add(c.label);
   return [...set];
+}
+
+// A hypothesis's evidence in words, from the results of the papers that tested it:
+// "3 papers tested it: 2 support it, 1 mixed." Counts give the bar's widths (supported, mixed or inconclusive, refuted).
+export function hypothesisVerdict(results) {
+  const n = results.length;
+  const c = { supported: 0, refuted: 0, mixed: 0, inconclusive: 0 };
+  for (const r of results) if (c[r] != null) c[r] += 1;
+  if (!n) return { n, counts: c, text: 'No paper has tested it yet.' };
+  const parts = [[c.supported, c.supported === 1 ? 'supports it' : 'support it'], [c.mixed, 'mixed'], [c.inconclusive, 'inconclusive'], [c.refuted, c.refuted === 1 ? 'refutes it' : 'refute it']]
+    .filter(([k]) => k).map(([k, w]) => `${k} ${w}`);
+  return { n, counts: c, text: `${n} ${n === 1 ? 'paper' : 'papers'} tested it: ${parts.join(', ')}.` };
 }
 
 // How many items of each collection the loaded graph holds: { collection name: count }. Papers count from their own list.

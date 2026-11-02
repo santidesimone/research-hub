@@ -274,8 +274,9 @@ A Concept may carry `external_iri`, pointing at a specific term in an ontology, 
 | FRAMED_BY | Paper, Research question, Project, Case study to Framework | Replaces the free-text `theoretical_framework` on Paper with a link (keep the old text field readable for one schema version) |
 | BUILDS_ON, COMPETES_WITH | Framework to Framework | e.g. Chartalism competes with Metallism. BUILDS_ON also stays Paper to Paper as above |
 | SUB_QUESTION_OF | Research question to Research question | |
-| ASKED_IN | Research question to Paper | for extracted questions |
-| ADDRESSED_BY | Research question to Paper, Method, Case study | |
+| ~~ASKED_IN~~ | Research question to Paper | Retired in Task 11 (migration 014): an INFORMS from the paper; the question's text is the paper's `stated_question` |
+| ~~ADDRESSED_BY~~ | Research question to Paper, Method, Case study | Retired in Task 11 (migration 014): an INFORMS from the source |
+| INFORMS | Paper, Method, Case study, Use case, Framework, Ontology to Research question, Hypothesis | Task 11. A source relevant to the owner's question or hypothesis; optional `role` (background, supports, challenges), `evidence` (the note), `location` |
 | PART_OF | Research question to Project; Ontology to Ontology | |
 | DERIVED_FROM | Hypothesis to Framework | |
 | ANSWERS | Hypothesis to Research question | |

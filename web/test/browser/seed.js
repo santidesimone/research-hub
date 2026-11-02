@@ -27,6 +27,9 @@ const DATA = [
   ['PUT', '/api/items/doi%3A10.1007%2F978-1-4757-0602-4_18/links', { rel: 'TESTS', target: 'hypothesis:adoption-requires-simultaneous-merchant-and-consumer-growth', result: 'supported', evidence: 'payments grow on both sides', location: 'p. 201' }],
   ['PUT', '/api/items/doi%3A10.3390%2Ffi13050130/links', { rel: 'TESTS', target: 'hypothesis:adoption-requires-simultaneous-merchant-and-consumer-growth', result: 'refuted', evidence: 'adoption led by merchants' }],
   ['PUT', '/api/items/ontology%3Afinancial-industry-business-ontology/links', { rel: 'USED_BY', target: 'usecase:offline-retail-payments' }],
+  // Task 11: the hypothesis answers the question; a paper informs the question (challenges it)
+  ['PUT', '/api/items/hypothesis%3Aadoption-requires-simultaneous-merchant-and-consumer-growth/links', { rel: 'ANSWERS', target: 'question:why-do-stablecoins-struggle-to-replace-card-payments' }],
+  ['PUT', '/api/items/doi%3A10.3390%2Ffi13050130/links', { rel: 'INFORMS', target: 'question:why-do-stablecoins-struggle-to-replace-card-payments', role: 'challenges', evidence: 'custody, not adoption, is the obstacle', location: 's. 5' }],
 ];
 (async () => {
   for (const entry of DATA) {

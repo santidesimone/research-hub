@@ -4,6 +4,7 @@ import { h, icon, api, toast } from '../../shell/ui.js';
 import { isEmpty, noun, plainValue } from './model.js';
 import { renderFields } from './view.js';
 import { Connections } from './connections.js';
+import { questionOverview, hypothesisOverview } from './inquiry.js';
 import { itemForm, picker, vocabSearch } from './forms.js';
 
 export class CollectionView {
@@ -142,7 +143,8 @@ export function itemDetail(lib, coll, item, { onChanged, skip = [], compact = fa
   const wrap = h('article', { class: 'doc' });
   const open = (k) => lib.openKey(k);
   if (!compact) {
-    wrap.append(h('div', { class: 'eyebrow' }, [noun(coll.label), item.record_status === 'auto' ? 'not reviewed' : item.record_status === 'reviewed' ? 'reviewed' : null].filter(Boolean).join(' · ')),
+    const inquiryStatus = ['research_question', 'hypothesis'].includes(coll.name) && item.fields.status ? String(item.fields.status).replace(/_/g, ' ') : null;
+    wrap.append(h('div', { class: 'eyebrow' }, [noun(coll.label), inquiryStatus, item.record_status === 'auto' ? 'not reviewed' : item.record_status === 'reviewed' ? 'reviewed' : null].filter(Boolean).join(' · ')),
     h('h1', null, item.fields.title || item.key));
     if (item.fields.tldr) wrap.append(h('p', { class: 'lead tldr' }, item.fields.tldr));
   }
@@ -156,9 +158,12 @@ export function itemDetail(lib, coll, item, { onChanged, skip = [], compact = fa
   wrap.append(h('div', { class: 'actions' },
     h('button', { class: 'btn btn-sm', onclick: () => lib.goSection(coll.name, { key: item.key, edit: true }) }, 'Edit'), delBtn,
     h('span', { class: 'faint small' }, item.key)));
-  const info = h('div', { class: 'tabpane' }, renderFields(item, coll, { onRef: open, skip: compact ? ['title', ...skip] : ['title', 'tldr', ...skip] }),
-    coll.name === 'ontology' && snapshotPanel(item, onChanged));
   const conn = new Connections(lib, coll, item, { onChanged });
+  // questions and hypotheses open on their overview (inquiry.js); their text and status are in the header already
+  const overview = coll.name === 'research_question' ? questionOverview(lib, item, conn) : coll.name === 'hypothesis' ? hypothesisOverview(lib, item, conn) : null;
+  const more = overview ? [coll.fields.text ? 'text' : 'statement', 'status'] : [];
+  const info = h('div', { class: 'tabpane' }, overview, renderFields(item, coll, { onRef: open, skip: compact ? ['title', ...more, ...skip] : ['title', 'tldr', ...more, ...skip] }),
+    coll.name === 'ontology' && snapshotPanel(item, onChanged));
   const connEl = h('div', { class: 'tabpane' }, conn.render());
   const tabs = h('div', { class: 'tabs', role: 'tablist' });
   const setTab = (id) => {

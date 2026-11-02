@@ -89,11 +89,12 @@ export class Connections {
         { id: 'note', label: r.note || r.location ? 'Edit the note' : 'Add a note', onclick: note },
         { id: 'unlink', label: 'Unlink', danger: true, onclick: () => { p.close(); this.act(() => this.unlink(r), 'Unlinked'); } }]));
     const change = () => {
-      const opts = linkOptions(this.coll, this.labelsOfKey(r.key), this.lib.collections).filter((o) => !(o.dir === r.dir && o.rel === r.rel && (o.props.result || null) === r.result));
+      const same = (o) => o.dir === r.dir && o.rel === r.rel && (o.props.result || o.props.role || null) === (r.result || r.roleProp || null);
+      const opts = linkOptions(this.coll, this.labelsOfKey(r.key), this.lib.collections).filter((o) => !same(o));
       p.pop.replaceChildren(h('button', { type: 'button', class: 'linkbtn back', onclick: main }, '← Back'),
         opts.length ? optionList(opts.map((o) => ({ label: o.label, onclick: () => { p.close(); this.act(async () => {
           await this.put(o.dir, o.rel, r.key, { ...o.props, evidence: r.note || undefined, location: r.location || undefined });
-          await this.unlink(r);
+          if (o.rel !== r.rel || o.dir !== r.dir) await this.unlink(r); // the same relation is written again with the new value
         }, 'Changed'); } }))) : h('p', { class: 'faint small' }, 'The schema allows no other way to link these two.'));
     };
     const note = () => {
@@ -101,7 +102,7 @@ export class Connections {
       const loc = h('input', { class: 'input', 'aria-label': 'Location', placeholder: 'Page or section', value: r.location || '' });
       p.pop.replaceChildren(h('button', { type: 'button', class: 'linkbtn back', onclick: main }, '← Back'),
         h('form', { class: 'noteform', onsubmit: (e) => { e.preventDefault(); p.close(); this.act(() => this.put(r.dir, r.rel, r.key, {
-          evidence: ev.value.trim() || undefined, location: loc.value.trim() || undefined, ...(r.result ? { result: r.result } : {}) }), 'Note saved'); } },
+          evidence: ev.value.trim() || undefined, location: loc.value.trim() || undefined, ...(r.result ? { result: r.result } : {}), ...(r.roleProp ? { role: r.roleProp } : {}) }), 'Note saved'); } },
         ev, loc, h('div', { class: 'actions' }, h('button', { type: 'submit', class: 'btn btn-sm btn-primary' }, 'Save'))));
       ev.focus();
     };
@@ -142,7 +143,7 @@ export class Connections {
       p.pop.replaceChildren(h('button', { type: 'button', class: 'linkbtn back', onclick: start }, '← Back'),
         h('p', { class: 'faint small', style: { margin: '10px 0 2px' } }, 'How does it relate to'), h('p', { class: 'linkwhat' }, x.name),
         h('div', { class: 'row-flex' }, ev, loc),
-        optionList(opts.map((o) => ({ id: `${o.dir}:${o.rel}:${o.props.result || ''}`, label: o.label, onclick: () => { p.close(); this.act(() => this.put(o.dir, o.rel, x.key, {
+        optionList(opts.map((o) => ({ id: `${o.dir}:${o.rel}:${Object.values(o.props)[0] || ''}`, label: o.label, onclick: () => { p.close(); this.act(() => this.put(o.dir, o.rel, x.key, {
           ...o.props, evidence: ev.value.trim() || undefined, location: loc.value.trim() || undefined }), 'Linked'); } }))));
     };
     const start = () => {

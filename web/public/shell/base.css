@@ -230,6 +230,27 @@ details.meta summary { cursor: pointer; font-weight: 500; }
 .connsuggest { margin-top: 34px; }
 .connsuggest > .label { margin-bottom: 10px; }
 .suggestrow { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 12px 14px; border: 1px dashed var(--border-strong); border-radius: var(--radius-m); margin-bottom: 8px; font-size: 14px; }
+/* question and hypothesis overviews */
+.inquiry { margin-top: 18px; }
+.inquiry .verdict { margin: 0; font-size: 15.5px; line-height: 1.6; }
+.tone-agree { color: var(--ok); } .tone-disagree { color: var(--danger); } .tone-mixed { color: var(--warn); } .tone-neutral { color: var(--info); }
+.evbar { display: flex; height: 8px; max-width: 420px; margin-top: 12px; border-radius: 99px; overflow: hidden; background: var(--surface-2); }
+.evbar .ev-agree { background: var(--ok); } .evbar .ev-mixed { background: var(--warn); } .evbar .ev-disagree { background: var(--danger); }
+.inqsec { margin-top: 26px; }
+.inqhead { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
+.inqlist { list-style: none; margin: 0; padding: 0; }
+.inqlist li { display: flex; gap: 12px; align-items: baseline; padding: 10px 0; border-top: 1px solid var(--border); font-size: 14.5px; }
+.inqlist.plain li { border: 0; padding: 4px 0; }
+.inqlist .res { flex: 0 0 104px; font-weight: 600; font-size: 13.5px; }
+.inqlist small { display: block; margin-top: 3px; font-size: 13px; color: var(--text-muted); }
+.inquiry .ref, .partof .ref { cursor: pointer; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
+.inqempty { margin: 0; font-size: 14px; }
+.partof { margin: 0; font-size: 14px; }
+.hypcards { display: grid; gap: 10px; }
+.hypcard { display: block; width: 100%; text-align: left; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-m); background: var(--surface); cursor: pointer; }
+.hypcard:hover { border-color: var(--border-strong); }
+.hyptitle { display: block; font-family: var(--font-heading); font-size: 17px; line-height: 1.4; }
+.hypverdict { display: block; margin-top: 6px; font-size: 13.5px; }
 .suggestrow a { cursor: pointer; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
 .canvas { position: relative; flex: 1; min-height: 0; background: var(--graph-bg); }
 .canvas > div { position: absolute; inset: 0; }

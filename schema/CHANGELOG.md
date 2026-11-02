@@ -2,6 +2,14 @@
 
 Every change to `schema/schema.json`, with the reason. The spec is `docs/SCHEMA_DESIGN.md`. A per-type `schema_version` is raised when that type's fields change. Items below the current version form the audit worklist, so a change is never silently applied to old items.
 
+## v3, questions and hypotheses are the owner's (2026-11-02)
+
+Why: Task 11 step 5 (`docs/UI_REDESIGN.md` section 3). Questions and hypotheses are created by the owner and informed by sources; a paper's own question is a fact about the paper.
+- New relation **INFORMS** (Paper, Method, CaseStudy, UseCase, Framework, Ontology, Note to ResearchQuestion, Hypothesis), optional `role` (background, supports, challenges). Field-map key `informs`.
+- **ASKED_IN** and **ADDRESSED_BY** are `retired` (new key: names the replacement, checked at start-up): kept for old data and backups, never offered or created (400 on the API, skipped in analyses). Migration `014_informs` turns each into an INFORMS with the same properties, writes the questions' text into their papers' `stated_question` (as Claude's value), and proposes, in one curation plan, deleting extracted questions nothing else uses.
+- **paper** gets `stated_question` (longtext, Claude or owner, standard; in Content). `schema_version` 1 to 2, so existing papers appear under "Older schema version" until re-analysed.
+- `origin` on questions and hypotheses is hub-set provenance only (`by: Sys`): out of forms, lists and filters.
+
 ## v3, plural names for vocabulary (2026-11-02)
 
 Why: Task 11 step 4. Connections and the graph filter group links by type and need a plural heading ("People", not "Persons").

@@ -599,7 +599,7 @@
           },
           "extract": {
             "type": "object",
-            "description": "Papers only. What the paper contains: each entry is matched to an existing item by its exact title (or text, acronym, alias) or created by Claude, then linked. Questions and hypotheses created this way get origin: extracted. A hypothesis status is derived from all TESTS results.",
+            "description": "Papers only. What the paper contains. Frameworks are matched by exact title (or acronym, alias) or created, then FRAMED_BY. Research questions become the paper's stated_question (text); one matching an owner question word for word also gets INFORMS. Hypotheses are linked with TESTS only when the statement is exactly one of the owner's; questions and hypotheses are never created. A hypothesis status is derived from all TESTS results.",
             "properties": {
               "frameworks": {
                 "type": "array",
@@ -612,14 +612,14 @@
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "description": "{text, kind, ...}: linked question ASKED_IN paper"
+                  "description": "{text}: the paper's own question, kept as its stated_question"
                 }
               },
               "hypotheses": {
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "description": "{statement, direction, ..., result (supported|refuted|mixed|inconclusive), evidence, location, confidence}: linked paper TESTS hypothesis"
+                  "description": "{statement, result (supported|refuted|mixed|inconclusive), evidence, location, confidence}: paper TESTS the owner's hypothesis with that exact statement"
                 }
               }
             }

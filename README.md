@@ -224,7 +224,9 @@ Open `/library`. The **sidebar** groups the collections by purpose, as the schem
 
 **Frameworks, research questions, hypotheses, ontologies** (`docs/ADDENDUM_frameworks_questions_ontologies.md`):
 - A paper, question, project or case study is `FRAMED_BY` a framework, and a framework's page lists everything framed by it.
-- A hypothesis is `DERIVED_FROM` a framework and `ANSWERS` a question. Papers test it (`TESTS`, with a result: supported, refuted, mixed or inconclusive).
+- A hypothesis is `DERIVED_FROM` a framework and `ANSWERS` any number of questions (or none). Papers test it (`TESTS`, with a result: supported, refuted, mixed or inconclusive).
+- **Sources inform your questions and hypotheses** (`INFORMS`, from a paper, method, case study, use case, framework or ontology), with an optional role (background, supports, challenges), a note (`evidence`) and a location. Questions and hypotheses are yours: you create them (or ask Claude to), then link what bears on them.
+- **A question's page** opens on its hypotheses, each with its verdict ("Mixed. 2 papers tested it: 1 supports it, 1 refutes it."), its narrower questions and the sources that inform it. **A hypothesis's page** opens on its verdict and evidence bar, the papers that tested it, other relevant sources and the questions it answers. Both have **Link…** where it is useful. Whether an item was ever taken from a paper (`origin`) is kept as provenance and not shown.
 - **Hypothesis status is derived from all the tests:** one paper supporting and one refuting give "mixed". If you set the status yourself, that stands until you clear it.
 - Questions and hypotheses take their title from their text when none is given.
 - An ontology or standard is a descriptive record: name, acronym, IRI, https links (stored, never fetched), publisher, version and licence. It can be `PART_OF` another (a FIBO module) and `USED_BY` use cases, case studies, papers and projects. Its classes and terms are never imported.
@@ -294,7 +296,7 @@ curl -H "$H" -H "Content-Type: application/json" -X POST http://127.0.0.1:3000/a
   - the research questions it states;
   - the hypotheses it tests, each with its result, the passage and a location.
 
-  Each is matched to an existing item by its exact title, or created (questions and hypotheses get `origin: extracted`), then linked (`FRAMED_BY`, `ASKED_IN`, `TESTS`). A tested hypothesis without a result or a passage is not created.
+  Frameworks are matched by exact title or created, then linked (`FRAMED_BY`). **Research questions and hypotheses are yours: an analysis never creates them.** The questions a paper states become its `stated_question` (text, in Analysis); one that is word for word one of your questions also gets `INFORMS`. A tested hypothesis is linked (`TESTS`) only when its statement is exactly one of yours; otherwise it is reported in `skipped`. To connect a paper to your questions and hypotheses, Claude adds `INFORMS` or `TESTS` links in `links`; with `confidence: low` they show up as suggestions in the paper's Connections tab.
 - **The audit** (`GET /api/audit`): counts and lists of low-confidence fields and links, empty Core and Standard fields, ungrounded findings, items below their type's `schema_version`, vocabulary Claude created, and unreviewed items. `POST /api/audit/accept` (`{key, fields?, links?}` or `{vocab}`) marks values reviewed, which protects them from re-runs like your own edits.
 - **Single-object fields** (`evidence`, `period`, `threats_to_validity` ...) also keep each part as a plain property for Cypher: `MATCH (p:Paper) WHERE p.evidence__n > 100`.
 
