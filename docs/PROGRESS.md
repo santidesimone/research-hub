@@ -17,7 +17,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | 9 Claude chat connector: OAuth for MCP, upload link | done (2026-10-31), tested live from the claude.ai chat | See "Task 9" below. |
 | Served at santidesimone.com/research-hub | done (2026-11-01), tested live | See "Served at santidesimone.com" below. |
 | Publishing settings (default visibility, full public detail) | done (2026-11-01), not deployed yet | See "Publishing settings" below. |
-| 10 Curation: reviewable change plans | done (2026-11-01), not deployed yet | See "Task 10" below. |
+| 10 Curation: reviewable change plans | done (2026-11-01), tested live from the claude.ai chat | See "Task 10" below. |
 
 ## Task 0. Baseline against real services
 
@@ -592,6 +592,9 @@ The owner ran a quality analysis from the claude.ai chat (2026-11-01). Claude ap
 - Browser: `web/test/browser/curation.js` (plans proposed through the API shown with their changes and conflicts, Reject, Apply with a confirm click merges, Undo restores, a key opens the item, no console or CSP errors), then `owner.js`, `public-mobile.js`, `publishing.js` and `private.js` green.
 
 **Not tested / open**
-- Not deployed; not tried from the claude.ai chat yet (the acceptance's live step).
+- Live (2026-11-02, revision `research-hub-00009`): from a new claude.ai chat, Claude verified with `run_cypher` that `concept:privacy-enhancing-technologies` and `concept:cbdc` were linked only from `paper:a1a7425c09`, which also links to the matching Topics; proposed `plan:48ef09f4e802` (two deletes, no orphans, no files); the owner said yes; Claude applied it and confirmed the result. Reported by the owner from the chat; not re-checked from Claude Code (its old connector points at the closed run.app address).
+- Learned: claude.ai keeps a connector's tool list from when it was connected; after a deploy that adds tools, reconnect the connector and start a new chat.
+- Not tried live: merge, unlink, rename and Undo (all covered by the integration and browser tests).
+- The cause of those duplicates is still there: `add_paper` turns `topic:` tags into Concept nodes by slug (bypassing the matcher), while `save_analysis` puts `topics` on Topic nodes. Proposed next: tags through the matcher to Topic, and `merge` across vocabulary labels when the schema allows every moved relationship.
 - Not done: the hub's `year` is stored as a float by the paper writer (seen while testing types); harmless, but worth a migration later.
 - Seen in the owner's chat run, not investigated: Claude's `topics` write on `paper:a1a7425c09` was skipped as an owner value although the field reads empty (an `ABOUT` link without provenance makes the field count as the owner's).
