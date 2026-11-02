@@ -18,7 +18,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | Served at santidesimone.com/research-hub | done (2026-11-01), tested live | See "Served at santidesimone.com" below. |
 | Publishing settings (default visibility, full public detail) | done (2026-11-01), not deployed yet | See "Publishing settings" below. |
 | 10 Curation: reviewable change plans | done (2026-11-01), tested live from the claude.ai chat | See "Task 10" below. |
-| 11 Library redesign (`docs/UI_REDESIGN.md`) | in progress: step 1 of 6 done (2026-11-02), not deployed | See "Task 11" below. |
+| 11 Library redesign (`docs/UI_REDESIGN.md`) | in progress: steps 1 and 2 of 6 done (2026-11-02), not deployed | See "Task 11" below. |
 
 ## Task 0. Baseline against real services
 
@@ -638,3 +638,18 @@ Approved by the owner on 2026-11-02 after three rounds on a clickable mockup (sp
 
 **Not tested / open**
 - Not deployed. List entries still show status pills; step 2 restyles them.
+
+### Step 2. Calm lists and pages (2026-11-02)
+
+**Changed**
+- List entries (papers, All, every collection): more padding, titles up to three lines, status and venue (or the schema's list columns) as one line of plain text; the type is a word in All; "Not reviewed" as text. `plainValue` in `model.js` turns any field value into that line.
+- Item pages: the status, "public" and review state are plain text; a paper's topics are an "About" line of links; linked values in fields are comma-separated links, not pills (`renderValue`).
+- Analysis: who wrote a field (Claude, source, you), its tier, the low-confidence and ungrounded flags and the empty fields are small coloured words (CSS only; the same elements and classes, so the audit links and tests still find them).
+- Form pickers keep their removable tokens (they are inputs, not displays).
+
+**Tested**
+- Offline: `plainValue` (links joined, enum words, a count for tables, empty, zero). Mutation-checked: 1 breakage, caught.
+- Browser: all six suites green on a throwaway hub; screenshots checked for the list and the Analysis tab.
+
+**Not tested / open**
+- Not deployed.

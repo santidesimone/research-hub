@@ -1,8 +1,8 @@
 // Generic list + detail for a collection (methods, use cases, case studies), built from the schema: list columns,
 // filters, sorting, grouped fields with provenance, typed links, and create / edit / delete. Owner, private library.
 import { h, icon, api, toast } from '../../shell/ui.js';
-import { isEmpty, noun } from './model.js';
-import { renderFields, renderLinks, renderValue } from './view.js';
+import { isEmpty, noun, plainValue } from './model.js';
+import { renderFields, renderLinks } from './view.js';
 import { itemForm, linkForm, picker, vocabSearch } from './forms.js';
 
 export class CollectionView {
@@ -74,8 +74,7 @@ export class CollectionView {
     const cols = this.coll.list_columns.filter((f) => f !== 'title');
     ul.replaceChildren(...this.items.map((it) => h('li', null, h('button', { type: 'button', class: 'item' + (it.key === this.lib.sel ? ' active' : ''), 'data-key': it.key, onclick: () => this.lib.goSection(this.coll.name, { key: it.key }) },
       h('div', { class: 't' }, it.title || it.key),
-      h('div', { class: 'm' }, it.record_status === 'auto' && h('span', { class: 'badge info', title: 'Not reviewed yet' }, 'auto'),
-        cols.map((f) => !isEmpty(it[f]) && h('span', { class: 'col', title: this.name(f) }, renderValue(this.coll.fields[f], it[f]))))))),
+      h('div', { class: 'm' }, h('span', { class: 'grow' }, [...cols.filter((f) => !isEmpty(it[f])).map((f) => plainValue(this.coll.fields[f], it[f])), it.record_status === 'auto' && 'Not reviewed'].filter(Boolean).join(' · ')))))),
     this.cursor ? h('li', { class: 'center' }, h('button', { class: 'btn btn-sm', onclick: () => this.more() }, 'Load more')) : '');
   }
 
@@ -142,8 +141,7 @@ export function itemDetail(lib, coll, item, { onChanged, skip = [], compact = fa
   const wrap = h('article', { class: 'doc' });
   const open = (k) => lib.openKey(k);
   if (!compact) {
-    wrap.append(h('div', { class: 'eyebrow' }, noun(coll.label), item.record_status === 'auto' && h('span', { class: 'badge info' }, 'not reviewed'),
-      item.record_status === 'reviewed' && h('span', { class: 'badge ok' }, 'reviewed')),
+    wrap.append(h('div', { class: 'eyebrow' }, [noun(coll.label), item.record_status === 'auto' ? 'not reviewed' : item.record_status === 'reviewed' ? 'reviewed' : null].filter(Boolean).join(' · ')),
     h('h1', null, item.fields.title || item.key));
     if (item.fields.tldr) wrap.append(h('p', { class: 'lead tldr' }, item.fields.tldr));
   }

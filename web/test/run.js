@@ -1915,6 +1915,10 @@ const seed = require('../../data/seed_papers.json');
     assert.deepEqual(M8.sidebarGroups(pv8, []).map((g) => g.label), ['Other'], 'no sections: everything is still listed');
     assert.deepEqual(M8.collectionCounts([{ labels: ['Artifact', 'Method'] }, { labels: ['Artifact', 'Method'] }, { labels: ['Artifact', 'Paper'] }, { labels: ['Concept'] }], pv8.filter((c) => ['paper', 'method', 'ontology'].includes(c.name)), [{}, {}, {}]),
       { paper: 3, method: 2, ontology: 0 }, 'counts per collection; papers from their own list');
+    // list entries are plain text: linked names joined, enum words, a count for tables
+    assert.deepEqual([M8.plainValue({ type: 'ref', list: true }, [{ key: 'topic:a', name: 'CBDC' }, { name: 'Privacy' }]), M8.plainValue({ type: 'enum' }, 'partly_answered'),
+      M8.plainValue({ type: 'object', list: true, label: 'Outcomes' }, [{}, {}]), M8.plainValue({ type: 'text' }, null), M8.plainValue({ type: 'integer' }, 0)],
+    ['CBDC, Privacy', 'partly answered', '2 outcomes', '', '0']);
     const hf = pv8.find((c) => c.name === 'hypothesis').fields;
     assert.deepEqual(M8.createFields(hf, { statement: 'S', status: 'untested', origin: 'own', direction: null, title: null }), { statement: 'S' }, 'hub-managed defaults are not sent as owner values');
     assert.deepEqual(M8.createFields(hf, { statement: 'S', status: 'refuted', origin: 'extracted' }), { statement: 'S', status: 'refuted', origin: 'extracted' }, 'a changed one is the owner\'s choice');

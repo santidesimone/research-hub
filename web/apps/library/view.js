@@ -15,9 +15,10 @@ export function renderValue(spec, v, { onRef } = {}) {
   if (isEmpty(v)) return h('span', { class: 'faint' }, '—');
   if (spec.type === 'ref') {
     const list = Array.isArray(v) ? v : [v];
-    return h('span', { class: 'chips inline' }, list.map((x) => (x.key && onRef
-      ? h('button', { type: 'button', class: 'chip', onclick: () => onRef(x.key) }, x.name || x.key)
-      : h('span', { class: 'chip static', title: x.key ? null : 'text from an older version (not linked yet)' }, x.name || x.key))));
+    // plain words separated by commas, each linked item a link (no pills)
+    return h('span', { class: 'reflist' }, list.flatMap((x, i) => [i ? ', ' : '', x.key && onRef
+      ? h('a', { class: 'ref', 'data-key': x.key, onclick: () => onRef(x.key) }, x.name || x.key)
+      : h('span', { title: x.key ? null : 'text from an older version (not linked yet)' }, x.name || x.key)]));
   }
   if (spec.type === 'object') {
     const parts = Object.keys(spec.props || {});

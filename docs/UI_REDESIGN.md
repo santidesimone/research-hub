@@ -71,7 +71,10 @@ Every collection uses today's Papers layout. There are no full-width title rows.
   - **Suggested by Claude:** links Claude proposes, each with a reason, and Link / Dismiss.
 - **Your thoughts on this:** each item page ends with its thoughts and a one-line field to add one.
 - Methods, frameworks and the other knowledge types use the same two panes, without the reading-only bits (status,
-  Read PDF, Reader).
+  Read PDF, Reader). Their page has two tabs: **Info** (every field, grouped) and **Connections**. Analysis is for
+  sources, where Claude analyses a paper or a book.
+- **Plain words, not pills, on pages too:** linked values (topics, authors) are comma-separated links; who wrote a
+  field and its tier are small coloured words; empty fields are one comma-separated line.
 
 ## 3. Questions and hypotheses: your own, informed by sources
 

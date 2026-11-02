@@ -11,7 +11,7 @@ import { CurationView } from './curation.js';
 import { itemForm, linkForm } from './forms.js';
 import { renderFields, renderLinks } from './view.js';
 
-const STATUS_CLASS = { canonical: 'ok', reading: 'info', 'critique-target': 'warn', active: 'accent' };
+const statusText = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/-/g, ' ') : '');
 const STATUS_CHOICES = ['to-read', 'reading', 'read', 'canonical', 'critique-target'];
 const relName = (t) => t.toLowerCase().replace(/_/g, ' ');
 const keyQuery = (k) => encodeURIComponent(k);
@@ -269,9 +269,8 @@ class Library {
       return h('li', null, h('button', { type: 'button', class: 'item' + (p.key === this.sel ? ' active' : ''), 'data-key': p.key, onclick: () => this.open(p.key) },
         h('div', { class: 't' }, p.props.title),
         h('div', { class: 'a' }, [shortAuthors(p.props), p.props.year].filter(Boolean).join(' · ')),
-        h('div', { class: 'm' }, st && h('span', { class: 'badge ' + (STATUS_CLASS[st] || '') }, st),
-          this.section !== 'paper' && h('span', { class: 'badge outline' }, (this.mainLabel(p.labels || []).plural || '').replace(/s$/, '')),
-          h('span', { class: 'grow' }, p.props.venue || ''), p.has_file && icon('pdf', 16, 'faint'))));
+        h('div', { class: 'm' }, h('span', { class: 'grow' }, [this.section !== 'paper' && this.mainLabel(p.labels || []).label, statusText(st), p.props.venue].filter(Boolean).join(' · ')),
+          p.has_file && icon('pdf', 16, 'faint'))));
     }));
     const active = ul.querySelector('.item.active');
     if (active) active.scrollIntoView({ block: 'nearest' });
@@ -351,9 +350,7 @@ class Library {
     const st = this.statusOf(d.key);
     const canEdit = this.mode === 'private' && S.owner && S.features.includes('personal');
     const badges = h('div', { class: 'row-flex', style: { marginTop: '12px' } },
-      !canEdit && st && h('span', { class: 'badge ' + (STATUS_CLASS[st] || '') }, st),
-      p.visibility === 'public' && h('span', { class: 'badge outline' }, 'public'),
-      p.venue && h('span', { class: 'muted', style: { fontSize: '14px' } }, p.venue));
+      h('span', { class: 'muted', style: { fontSize: '14px' } }, [!canEdit && statusText(st), p.venue, p.visibility === 'public' && 'Public'].filter(Boolean).join(' · ')));
     if (canEdit) badges.prepend(this.statusSelect(d.key, st));
     wrap.append(badges);
 
@@ -389,7 +386,8 @@ class Library {
     if (p.summary) info.append(h('p', { class: 'muted', style: { marginTop: '22px', lineHeight: '1.7' } }, p.summary));
     if (p.abstract) info.append(h('div', { class: 'abstract' }, h('div', { class: 'label' }, 'Abstract'), h('p', null, p.abstract)));
     const topics = (d.out || []).filter((r) => r.type === 'ABOUT');
-    if (topics.length) info.append(h('div', { class: 'chips' }, topics.map((t) => h('button', { class: 'chip', onclick: () => { this.q = t.title; this.go({ view: 'list', key: null }); if (this.view === 'list') { this.searchEl.value = this.q; this.renderList(); } } }, t.title))));
+    // topics as plain words, each a search in this list
+    if (topics.length) info.append(h('p', { class: 'topics' }, h('span', { class: 'label' }, 'About'), ' ', topics.flatMap((t, i) => [i ? ', ' : '', h('a', { onclick: () => { this.q = t.title; this.go({ view: 'list', key: null }); if (this.view === 'list') { this.searchEl.value = this.q; this.renderList(); } } }, t.title)])));
     if (d.html) info.append(h('div', { class: 'prose', html: d.html }));
     const out = d.out || [], inc = d.in || [];
     const rel = (x) => x;
@@ -449,7 +447,7 @@ class Library {
       const reload = () => { el.replaceChildren(); this.fillAnalysis(el, key); };
       el.replaceChildren(
         h('div', { class: 'row-flex legendline' }, h('span', { class: 'faint small' }, 'Written by:'), h('span', { class: 'prov prov-claude' }, 'Claude'), h('span', { class: 'prov prov-source' }, 'source'), h('span', { class: 'prov prov-owner' }, 'you'),
-          item.record_status && h('span', { class: 'badge ' + (item.record_status === 'reviewed' ? 'ok' : 'info') }, item.record_status === 'reviewed' ? 'reviewed' : 'not reviewed')),
+          item.record_status && h('span', { class: 'faint small' }, '· ' + (item.record_status === 'reviewed' ? 'reviewed' : 'not reviewed'))),
         renderFields(item, coll, { onRef: (k) => this.openKey(k), showEmpty: true, skip: ['title'] }),
         renderLinks(item, { onOpen: (k) => this.openKey(k), onRemove: async (l) => {
           try { await api(`/api/items/${keyQuery(key)}/links?rel=${encodeURIComponent(l.rel)}&target=${keyQuery(l.key)}`, { method: 'DELETE' }); toast('Link removed'); reload(); } catch (e) { toast(e.message, 'error'); }

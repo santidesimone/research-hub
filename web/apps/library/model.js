@@ -37,6 +37,14 @@ export function collectionCounts(nodes, collections, papers = null) {
 // Which collection a node belongs to, from its labels.
 export const collectionOf = (labels, collections) => (collections.find((c) => (labels || []).includes(c.label)) || null);
 
+// A value as one line of plain text, for list entries: names of linked items, lists joined, objects summarised.
+export function plainValue(spec, v) {
+  const one = (x) => (x && typeof x === 'object' ? x.name || x.title || x.key || Object.values(x).filter((y) => y != null && typeof y !== 'object').join(' ') : String(x).replace(/_/g, ' '));
+  if (v == null || v === '') return '';
+  if (spec && spec.type === 'object' && spec.list && Array.isArray(v)) return `${v.length} ${(spec.label || 'entries').toLowerCase()}`;
+  return (Array.isArray(v) ? v : [v]).map(one).filter(Boolean).join(', ');
+}
+
 export const isEmpty = (v) => v == null || v === '' || (Array.isArray(v) && v.length === 0)
   || (typeof v === 'object' && !Array.isArray(v) && Object.values(v).every((x) => x == null || x === ''));
 
