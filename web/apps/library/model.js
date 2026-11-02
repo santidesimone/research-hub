@@ -1,6 +1,6 @@
 // Library logic that needs no DOM: addresses, form values, what changed, provenance labels. Tested from web/test/run.js.
 
-export const SECTIONS = ['all', 'graph', 'audit'];
+export const SECTIONS = ['all', 'graph', 'audit', 'curation'];
 
 // /library/<slug>?key=..&edit=1  ->  { section, key, edit }. Older links (/library?key=..&view=graph) keep working.
 export function parseRoute(rest, query, collections) {

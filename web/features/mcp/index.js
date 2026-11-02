@@ -22,6 +22,7 @@ const files = tryRequire('../papers/files');
 const personal = tryRequire('../personal');
 const items = tryRequire('../../core/items');
 const analysis = tryRequire('../../core/analysis');
+const curation = tryRequire('../../core/curation');
 const pkg = require('../../package.json');
 
 const COLLECTIONS = Object.keys(schema.types).filter((t) => schema.types[t].collection);
@@ -78,7 +79,8 @@ function buildServer({ uploadUrl = null } = {}) {
       + 'Use search_items and get_item to read collections; call describe_graph before writing Cypher. '
       + 'When the owner shares a paper (a PDF in the chat, a link, a DOI): find its DOI, call get_schema for papers, then save_analysis once (doi, your analysis). '
       + 'For the file: if there is a public PDF URL on an allow-listed host (arXiv), pass it as file_url with copy_to_drive true, or call copy_pdf_to_drive. '
-      + 'Files attached in the chat do not reach the hub: when the reply has upload_url, give it to the owner so they can drop the PDF there.',
+      + 'Files attached in the chat do not reach the hub: when the reply has upload_url, give it to the owner so they can drop the PDF there. '
+      + 'To fix the graph (merge duplicates, remove a wrong link, delete junk, rename a concept), call propose_changes, show the owner the plan, and call apply_plan only after the owner says yes; revert_plan undoes an applied plan.',
   });
 
   s.registerTool('describe_graph', { description: 'Describe the graph: labels, relationship types, properties, patterns, conventions and example queries. Call this before run_cypher.', inputSchema: {} },
@@ -210,6 +212,39 @@ function buildServer({ uploadUrl = null } = {}) {
       description: "Set the owner's personal status for an artifact (e.g. to-read, reading, read, canonical, critique-target). null clears it.",
       inputSchema: { key: z.string(), status: z.string().nullable() },
     }, safe(async ({ key, status }) => { await personal.setState(key, { status }); return { key, status }; }));
+  }
+
+  if (curation) {
+    const OP = z.object({
+      op: z.enum(['merge', 'unlink', 'delete', 'rename']),
+      keep: z.string().optional().describe('merge: the key that survives'),
+      drop: z.string().optional().describe('merge: the key merged into keep, then deleted'),
+      take: z.array(z.string()).optional().describe('merge: fields where drop\'s value should replace keep\'s (otherwise keep\'s wins)'),
+      from: z.string().optional().describe('unlink: start of the relationship'),
+      rel: z.string().optional().describe('unlink: relationship type, e.g. ABOUT'),
+      to: z.string().optional().describe('unlink: end of the relationship'),
+      key: z.string().optional().describe('delete or rename: the node'),
+      name: z.string().optional().describe('rename: the new name (vocabulary only)'),
+    });
+    s.registerTool('propose_changes', {
+      description: 'Propose a change plan to fix the graph; NOTHING changes yet. Operations: merge {keep, drop, take?} (duplicates of the same kind: relationships, empty fields, '
+        + 'the file link and the owner\'s status move to keep; vocabulary keeps drop\'s name as an alias), unlink {from, rel, to}, delete {key} (with the vocabulary only it used), '
+        + 'rename {key, name} (vocabulary only; the old name stays as an alias). Several ops may go in one plan; they apply together or not at all. '
+        + 'The reply lists every change, field conflicts and Drive files that would go to the trash. Show it to the owner in plain words and ask; call apply_plan only after a clear yes.',
+      inputSchema: { ops: z.array(OP).min(1).max(50), reason: z.string().max(2000).describe('Why, in one or two sentences (it goes in the curation log)'), model: z.string().optional() },
+    }, safe(async ({ ops, reason, model }) => curation.propose(ops, { reason, by: 'claude', model: model || null })));
+    s.registerTool('apply_plan', {
+      description: 'Apply a proposed plan, in one transaction. ONLY after the owner has approved this exact plan in the conversation. Refused if the data changed since it was proposed (propose again).',
+      inputSchema: { id: z.string() },
+    }, safe(async ({ id }) => curation.apply(id)));
+    s.registerTool('revert_plan', {
+      description: 'Undo an applied plan: the data goes back exactly as it was. Refused if it was changed again since (revert the later plans first).',
+      inputSchema: { id: z.string() },
+    }, safe(async ({ id }) => curation.revert(id)));
+    s.registerTool('list_plans', {
+      description: 'The curation log: plans with their status (proposed, applied, rejected, reverted), newest first.',
+      inputSchema: { status: z.enum(['proposed', 'applied', 'rejected', 'reverted']).optional() },
+    }, safe(async ({ status }) => curation.list({ status })));
   }
   return s;
 }

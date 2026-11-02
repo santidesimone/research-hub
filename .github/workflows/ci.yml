@@ -85,6 +85,7 @@ jobs:
           mkdir -p "$OUT"
           node test/browser/seed.js
           node test/browser/private.js
+          node test/browser/curation.js
           node test/browser/owner.js
           node test/browser/public-mobile.js
           node test/browser/publishing.js

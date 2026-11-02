@@ -687,6 +687,121 @@
             "description": "{frameworks, research_questions, hypotheses: [{key, created, linked}], skipped}"
           }
         }
+      },
+      "CurationOp": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "description": "merge {keep, drop, take?}, unlink {from, rel, to}, delete {key}, rename {key, name}",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "merge",
+              "unlink",
+              "delete",
+              "rename"
+            ]
+          },
+          "keep": {
+            "type": "string"
+          },
+          "drop": {
+            "type": "string"
+          },
+          "take": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "from": {
+            "type": "string"
+          },
+          "rel": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "CurationPlan": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "proposed",
+              "applied",
+              "rejected",
+              "reverted"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "by": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "at": {
+            "type": "string"
+          },
+          "applied_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reverted_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rejected_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CurationOp"
+            }
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Per op: what moves, is copied, conflicts (keep wins unless in take), aliases added, the personal layer, files"
+          },
+          "drive_trash": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Drive file ids that go to the trash on apply (out of it on revert)"
+          }
+        }
       }
     }
   },
@@ -2772,6 +2887,324 @@
           },
           "404": {
             "description": "Not public, or the owner shows basic details only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/curation/plans": {
+      "get": {
+        "operationId": "listPlans",
+        "summary": "The curation log, newest first",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "proposed",
+                "applied",
+                "rejected",
+                "reverted"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "maximum": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{plans}"
+          }
+        }
+      },
+      "post": {
+        "operationId": "proposePlan",
+        "summary": "Propose a change plan (nothing changes yet): the exact changes, field conflicts and Drive files affected",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ops"
+                ],
+                "properties": {
+                  "ops": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/CurationOp"
+                    },
+                    "maxItems": 50
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurationPlan"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A bad op",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown key or link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Rename to a name another node already has",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/curation/plans/{id}": {
+      "get": {
+        "operationId": "getPlan",
+        "summary": "One plan",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurationPlan"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/curation/plans/{id}/apply": {
+      "post": {
+        "operationId": "applyPlan",
+        "summary": "Apply a proposed plan in one transaction",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurationPlan"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not proposed, or the data changed since it was proposed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/curation/plans/{id}/reject": {
+      "post": {
+        "operationId": "rejectPlan",
+        "summary": "Reject a proposed plan",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurationPlan"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not proposed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/curation/plans/{id}/revert": {
+      "post": {
+        "operationId": "revertPlan",
+        "summary": "Undo an applied plan exactly",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurationPlan"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not applied, or changed again since",
             "content": {
               "application/json": {
                 "schema": {

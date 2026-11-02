@@ -17,6 +17,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | 9 Claude chat connector: OAuth for MCP, upload link | done (2026-10-31), tested live from the claude.ai chat | See "Task 9" below. |
 | Served at santidesimone.com/research-hub | done (2026-11-01), tested live | See "Served at santidesimone.com" below. |
 | Publishing settings (default visibility, full public detail) | done (2026-11-01), not deployed yet | See "Publishing settings" below. |
+| 10 Curation: reviewable change plans | done (2026-11-01), not deployed yet | See "Task 10" below. |
 
 ## Task 0. Baseline against real services
 
@@ -573,3 +574,24 @@ The owner wants the hub completely private for now: no public view at all, and t
 **Not tested / open**
 - Not deployed. `deploy/deploy.sh` does not set `PUBLIC_ACCESS`, so production is private after the next deploy.
 - The CI change runs on the first push.
+
+## Task 10. Curation: reviewable change plans
+
+The owner ran a quality analysis from the claude.ai chat (2026-11-01). Claude applied what it could (fields, links, a status), but could not merge the duplicate PET and CBDC vocabulary, and held back a DOI to avoid a second paper record. Curation closes that gap without giving Claude write access.
+
+**Changed**
+- `web/core/curation-ops.js` (new, pure): merge, unlink, delete and rename as functions from one snapshot of the touched nodes (with every relationship and the personal layer) to the next; refusals with the step number; a fingerprint that ignores property order.
+- `web/core/curation.js` (new): snapshots loaded from Neo4j with their types kept through JSON (integers, datetimes), the difference between two snapshots written in one transaction (apply: before to after; revert: after to before), plans as `(:CurationPlan)` (migration `013_curation`), stale plans and late reverts refused (409), rename to a name another node has refused. After a commit: `afterWrite`/`afterRemove` hooks, hypotheses whose TESTS changed recomputed, hub-uploaded Drive files trashed (a moved file never) and untrashed on revert (`drive.untrash`, new).
+- `web/features/curation` (new): `POST`/`GET /api/curation/plans`, `GET .../<id>`, `POST .../<id>/apply | reject | revert`, owner only. MCP: `propose_changes`, `apply_plan`, `revert_plan`, `list_plans`; the server instructions tell Claude to apply only after the owner says yes.
+- Library: a **Curation** section (owner, next to Audit): plans to review, applied, all; each with its changes, conflicts and Drive warnings; Apply (confirm click), Reject, Undo (confirm click); keys open the item.
+- Found on the way: `updated_at` written by curation used the machine's offset; now UTC like `datetime()`.
+
+**Tested**
+- Offline: every rule of every op on a fixture (moves, the duplicate link and the self-citation dropped, keep's link properties kept, copied fields with provenance and record_status, conflicts and `take`, merged_from, file moved or trashed, status moved or kept, vocabulary aliases with the matcher's fields, unlink, delete with orphans and file, rename, refusals, steps on removed keys, a pure input), fingerprints, the type codec, routes owner only, the MCP tools. Mutation-checked: 10 breakages, all caught.
+- Integration on a throwaway Neo4j 5: merge two papers and revert to exactly the same graph (values, and Neo4j types compared with `valueType`), a stale plan and a late revert refused, merge two concepts (the matcher then maps the old name to the survivor) and revert, a rename collision refused, rename (the old name still finds it) and revert, delete with an orphan concept and the personal layer and revert, plans not in a backup.
+- Browser: `web/test/browser/curation.js` (plans proposed through the API shown with their changes and conflicts, Reject, Apply with a confirm click merges, Undo restores, a key opens the item, no console or CSP errors), then `owner.js`, `public-mobile.js`, `publishing.js` and `private.js` green.
+
+**Not tested / open**
+- Not deployed; not tried from the claude.ai chat yet (the acceptance's live step).
+- Not done: the hub's `year` is stored as a float by the paper writer (seen while testing types); harmless, but worth a migration later.
+- Seen in the owner's chat run, not investigated: Claude's `topics` write on `paper:a1a7425c09` was skipped as an owner value although the field reads empty (an `ABOUT` link without provenance makes the field count as the owner's).

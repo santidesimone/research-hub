@@ -211,6 +211,11 @@ pre.json { background: var(--bg-sunken); border: 1px solid var(--border); border
 .auditlist { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 6px; }
 .auditlist li { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); }
 .auditlist a { cursor: pointer; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
+.curation .change { margin-top: 12px; }
+.curation .facts { margin: 6px 0 0; padding-left: 18px; color: var(--text-muted); font-size: 14px; }
+.curation .keylink { cursor: pointer; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; word-break: break-all; }
+.curation .conflicts { margin-top: 8px; font-size: 13px; }
+.curation .conflicts th { text-align: left; }
 
 /* collections under "More", grouped collections, results of tests */
 .moremenu { position: relative; }

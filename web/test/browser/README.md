@@ -14,7 +14,7 @@ docker run -d --rm --name hub-browser-neo4j -p 17687:7687 -e NEO4J_AUTH=neo4j/th
 mkdir -p /tmp/pw && (cd /tmp/pw && npm i playwright-core@1.47.2)
 # 3. data, then the checks (each seed is single use: run it on a fresh database)
 export HUB_URL=http://127.0.0.1:18082 HUB_API_TOKEN=$(cat /tmp/tok) NODE_PATH=/tmp/pw/node_modules
-node web/test/browser/seed.js && node web/test/browser/private.js && node web/test/browser/owner.js && node web/test/browser/public-mobile.js && node web/test/browser/publishing.js
+node web/test/browser/seed.js && node web/test/browser/private.js && node web/test/browser/curation.js && node web/test/browser/owner.js && node web/test/browser/public-mobile.js && node web/test/browser/publishing.js
 ```
 
 Screenshots go to `$OUT` (default: the system temp folder).

@@ -417,6 +417,92 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
     await db.exec('MATCH (c:OAuthCode) DELETE c');
   }
 
+  // Task 10: curation plans on a real graph. Merge two papers and two concepts, rename, unlink, delete with an orphan;
+  // every revert gives back exactly the graph before (values and Neo4j types); stale plans and late reverts are refused.
+  {
+    const curation = require('../core/curation');
+    const personal = require('../features/personal');
+    const T = `It curation ${stamp}`;
+    const sorted = (o) => (Array.isArray(o) ? o.map(sorted) : o && typeof o === 'object' ? Object.fromEntries(Object.keys(o).sort().map((k) => [k, sorted(o[k])])) : o);
+    const graph = async () => { const d = await backup.exportAll(); return [...d.nodes, ...d.rels].map((x) => JSON.stringify(sorted(x))); }; // property order is not stable
+    const sameGraph = (now, then, msg) => {
+      const a = new Set(now), b = new Set(then);
+      const gone = then.filter((x) => !a.has(x)), extra = now.filter((x) => !b.has(x));
+      assert.ok(!gone.length && !extra.length && now.length === then.length, `${msg}\nmissing: ${gone.join('\n')}\nextra: ${extra.join('\n')}`);
+    };
+    const cA = await vocab.resolve('concept', `${T} zeta proofs`);
+    const cB = await vocab.resolve('concept', `${T} omega circuits`);
+    const p1 = (await artifacts.add('paper', { title: `${T} paper`, creators: ['Ada Lovelace'], date: '2024' })).key;
+    const p2 = (await artifacts.add('paper', { title: `${T} paper copy`, creators: ['Ada Lovelace'], date: '2023', abstractNote: 'only on the copy' })).key;
+    await items.link(p1, { rel: 'ABOUT', target: cA.key });
+    await items.link(p2, { rel: 'ABOUT', target: cA.key });
+    await items.link(p2, { rel: 'ABOUT', target: cB.key });
+    await personal.setState(p2, { status: 'reading' });
+    await db.exec('CALL db.awaitIndexes(60)');
+    const start = await graph();
+    const TYPES = 'MATCH (p:Paper {key:$k}) RETURN valueType(p.year) AS year, valueType(p.created_at) AS created, valueType(p.author_lasts) AS lasts';
+    const typesBefore = await db.run(TYPES, { k: p2 });
+
+    // merge the papers: the abstract is copied, the year conflicts (keep's stays), the ABOUT to cA is not doubled, the status moves
+    const plan = await curation.propose([{ op: 'merge', keep: p1, drop: p2 }], { reason: 'duplicate', by: 'claude', model: 'm' });
+    assert.equal(plan.status, 'proposed');
+    const [ch] = plan.changes;
+    assert.ok(ch.copied.includes('abstract'), JSON.stringify(ch));
+    assert.deepEqual(ch.conflicts.map((c) => c.field).sort(), ['title', 'year']);
+    assert.equal(ch.moved_links.ABOUT, 1); assert.equal(ch.personal, `your status moves to ${p1}`);
+    sameGraph(await graph(), start, 'proposing changes nothing');
+    await curation.apply(plan.id);
+    const [m] = await db.run(`MATCH (p:Paper {key:$k}) OPTIONAL MATCH (p)-[:ABOUT]->(c) OPTIONAL MATCH (s:Personal)-[:FOR]->(p)
+      RETURN p.abstract AS abstract, p.year AS year, p.merged_from AS from, collect(DISTINCT c.key) AS about, s.status AS status`, { k: p1 });
+    assert.deepEqual({ ...m, about: m.about.sort() }, { abstract: 'only on the copy', year: 2024, from: [p2], about: [cA.key, cB.key].sort(), status: 'reading' });
+    assert.equal((await db.run('MATCH (p {key:$k}) RETURN count(p) AS c', { k: p2 }))[0].c, 0);
+    await assert.rejects(() => curation.apply(plan.id), (e) => e.status === 409, 'applied once only');
+    await curation.revert(plan.id);
+    sameGraph(await graph(), start, 'revert gives back exactly the graph before');
+    assert.deepEqual(await db.run(TYPES, { k: p2 }), typesBefore, 'Neo4j types survive the round trip: ' + JSON.stringify(typesBefore));
+    assert.match(typesBefore[0].created, /ZONED DATETIME/);
+    assert.equal((await curation.get(plan.id)).status, 'reverted');
+
+    // a stale plan is refused; a revert after a later change is refused
+    const stale = await curation.propose([{ op: 'merge', keep: p1, drop: p2 }]);
+    await items.update(p1, { summary: 'changed after the plan' });
+    await assert.rejects(() => curation.apply(stale.id), (e) => e.status === 409 && /changed since/.test(e.message));
+    await curation.reject(stale.id);
+    const late = await curation.propose([{ op: 'unlink', from: p2, rel: 'ABOUT', to: cB.key }]);
+    await curation.apply(late.id);
+    await items.link(p2, { rel: 'ABOUT', target: cB.key });
+    await assert.rejects(() => curation.revert(late.id), (e) => e.status === 409);
+    const fixed = await graph();
+
+    // concepts: merge cB into cA, then the matcher maps cB's name to cA; rename with the old name kept as an alias
+    const cm = await curation.propose([{ op: 'merge', keep: cA.key, drop: cB.key }]);
+    assert.deepEqual(cm.changes[0].aliases_added, [`${T} omega circuits`]);
+    await curation.apply(cm.id);
+    assert.equal((await vocab.resolve('concept', `${T} omega circuits`, { create: false })).key, cA.key);
+    await curation.revert(cm.id);
+    sameGraph(await graph(), fixed, 'revert');
+    await assert.rejects(() => curation.propose([{ op: 'rename', key: cA.key, name: `${T} omega circuits` }]), (e) => e.status === 409 && /merge/.test(e.message));
+    const rn = await curation.propose([{ op: 'rename', key: cA.key, name: `${T} zeta proof systems` }]);
+    await curation.apply(rn.id);
+    assert.equal((await vocab.resolve('concept', `${T} zeta proofs`, { create: false })).key, cA.key, 'the old name still finds it');
+    await curation.revert(rn.id);
+    sameGraph(await graph(), fixed, 'revert');
+
+    // delete p2: its links, its status and the concept only it used (cB) go; revert brings all of it back
+    const dl = await curation.propose([{ op: 'delete', key: p2 }]);
+    assert.deepEqual(dl.changes[0].orphans, [cB.key]); assert.equal(dl.changes[0].personal, true);
+    await curation.apply(dl.id);
+    assert.equal((await db.run('MATCH (n) WHERE n.key IN $k RETURN count(n) AS c', { k: [p2, cB.key, 'personal:' + p2] }))[0].c, 0);
+    await curation.revert(dl.id);
+    sameGraph(await graph(), fixed, 'revert');
+    assert.ok((await curation.list({ status: 'reverted' })).plans.length >= 4);
+    assert.ok(!(await backup.exportAll()).nodes.some((n) => n.labels.includes('CurationPlan')), 'plans are not part of a backup');
+
+    for (const k of [p1, p2]) await artifacts.remove(k);
+    await db.exec('MATCH (c:Concept) WHERE c.key IN $k DETACH DELETE c', { k: [cA.key, cB.key] });
+    await db.exec('MATCH (p:CurationPlan) DELETE p');
+  }
+
   // clean up
   await artifacts.remove(paperKey);
   await db.exec("MATCH (n:Artifact) WHERE n.key STARTS WITH 'method:it-' OR n.key STARTS WITH 'note:it-' OR n.key STARTS WITH 'project:it-' OR n.key STARTS WITH 'usecase:offline-payments-' DETACH DELETE n");

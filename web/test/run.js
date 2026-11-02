@@ -66,7 +66,7 @@ const seed = require('../../data/seed_papers.json');
 
   // migrations are discoverable and ordered
   const migrate = require('../core/migrate');
-  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', '010_record_status_from_provenance', '011_frameworks_questions_ontologies', '012_oauth', 'personal_001_layer']);
+  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', '010_record_status_from_provenance', '011_frameworks_questions_ontologies', '012_oauth', '013_curation', 'personal_001_layer']);
   // personal layer: separate node, driven by hooks, core untouched
   calls.length = 0;
   require('../features/personal').mount({ get() {}, put() {}, delete() {}, post() {} });
@@ -1076,6 +1076,10 @@ const seed = require('../../data/seed_papers.json');
     await client.connect(new StreamableHTTPClientTransport(new URL(aBase + '/mcp'), { requestInit: { headers: { Authorization: 'Bearer abc' } } }));
     const toolNames = (await client.listTools()).tools.map((t) => t.name);
     for (const t of ['get_schema', 'save_analysis', 'search_items', 'get_item', 'describe_graph']) assert.ok(toolNames.includes(t), t);
+    for (const t of ['propose_changes', 'apply_plan', 'revert_plan', 'list_plans']) assert.ok(toolNames.includes(t), t);
+    assert.match(client.getInstructions(), /call apply_plan only after the owner says yes/);
+    const badOp = await client.callTool({ name: 'propose_changes', arguments: { ops: [{ op: 'explode', key: 'x' }], reason: 'r' } });
+    assert.ok(badOp.isError, 'an unknown op is refused before anything runs');
     assert.equal(client.getServerVersion().version, require('../package.json').version);
     assert.match(client.getInstructions(), /call get_schema for its collection, then save_analysis once/);
     const call = async (name, args) => { const r = await client.callTool({ name, arguments: args }); assert.ok(!r.isError, `${name}: ${r.content[0].text}`); return JSON.parse(r.content[0].text); };
@@ -1586,6 +1590,128 @@ const seed = require('../../data/seed_papers.json');
         assert.equal((await fetch(pBase + '/api/public/items/method%3Aprivate')).status, 404, 'only items in the public export');
       } finally { await new Promise((ok) => srvP.close(ok)); delete process.env.PUBLIC_ACCESS; }
     } finally { fakeDb.exec = realExec; setting = null; fresh(); runImpl = async () => []; }
+  }
+
+  /* ------------------------------------------------------------ Task 10: curation operations (pure) and routes */
+  {
+    const cops = require('../core/curation-ops');
+    const curation = require('../core/curation');
+    const neo4jDriver = require('neo4j-driver');
+    const now = { $datetime: '2026-11-01T12:00:00Z' };
+    const fixture = () => ({
+      nodes: {
+        'doi:1': { labels: ['Artifact', 'Paper'], props: { key: 'doi:1', title: 'Zero knowledge payments', year: { $int: '2024' }, summary: 'mine', record_status: 'reviewed',
+          provenance_json: JSON.stringify({ summary: { by: 'owner', status: 'reviewed' } }), updated_at: { $datetime: '2026-01-01T00:00:00Z' } } },
+        'paper:x': { labels: ['Artifact', 'Paper'], props: { key: 'paper:x', title: 'Zero-knowledge payments', year: { $int: '2023' }, summary: 'theirs', abstract: 'A',
+          key_findings_json: '[{"text":"f"}]', provenance_json: JSON.stringify({ key_findings: { by: 'claude', status: 'auto' }, summary: { by: 'claude', status: 'auto' } }),
+          file_url: 'https://drive.google.com/file/d/AAAAAAAAAAAA/view', drive_file_id: 'AAAAAAAAAAAA', merged_from: ['paper:old'] } },
+        'concept:zk': { labels: ['Concept'], props: { key: 'concept:zk', name: 'zero knowledge', aliases: [] } },
+        'concept:zkp': { labels: ['Concept'], props: { key: 'concept:zkp', name: 'ZKP', aliases: ['zk proofs'] } },
+        'personal:paper:x': { labels: ['Personal'], props: { key: 'personal:paper:x', status: 'reading' } },
+      },
+      rels: [
+        { type: 'ABOUT', from: 'doi:1', to: 'concept:zk', props: { source: 'hub' } },
+        { type: 'ABOUT', from: 'paper:x', to: 'concept:zk', props: { source: 'other' } },
+        { type: 'ABOUT', from: 'paper:x', to: 'concept:zkp', props: {} },
+        { type: 'CITES', from: 'paper:x', to: 'doi:1', props: {} },
+        { type: 'ANNOTATES', from: 'note:n', to: 'paper:x', props: { location: 'p. 2' } },
+        { type: 'FOR', from: 'personal:paper:x', to: 'paper:x', props: {} },
+      ],
+      ends: { 'doi:1': 'Artifact', 'paper:x': 'Artifact', 'concept:zk': 'Concept', 'concept:zkp': 'Concept', 'personal:paper:x': 'Personal', 'note:n': 'Artifact' },
+    });
+    const rels = (st) => st.rels.map((r) => `${r.from} ${r.type} ${r.to}`).sort();
+
+    // merge two papers
+    const st0 = fixture();
+    const before = JSON.stringify(st0);
+    let { after, changes, trash } = cops.applyOps(st0, [{ op: 'merge', keep: 'doi:1', drop: 'paper:x' }], { now });
+    assert.equal(JSON.stringify(st0), before, 'the input snapshot is never changed');
+    const K = after.nodes['doi:1'].props;
+    assert.ok(!after.nodes['paper:x'], 'drop is gone');
+    assert.equal(K.abstract, 'A'); assert.equal(K.key_findings_json, '[{"text":"f"}]'); assert.equal(K.summary, 'mine'); assert.deepEqual(K.year, { $int: '2024' });
+    assert.deepEqual(JSON.parse(K.provenance_json), { summary: { by: 'owner', status: 'reviewed' }, key_findings: { by: 'claude', status: 'auto' } }, 'copied fields bring their provenance');
+    assert.equal(K.record_status, 'auto', 'unreviewed Claude values came along: needs review again');
+    assert.deepEqual(K.merged_from, ['paper:x', 'paper:old']);
+    assert.equal(K.file_url, 'https://drive.google.com/file/d/AAAAAAAAAAAA/view'); assert.equal(K.drive_file_id, 'AAAAAAAAAAAA');
+    assert.deepEqual(trash, [], 'a moved file is never trashed');
+    assert.deepEqual(K.updated_at, now);
+    assert.deepEqual(rels(after), ['doi:1 ABOUT concept:zk', 'doi:1 ABOUT concept:zkp', 'note:n ANNOTATES doi:1', 'personal:doi:1 FOR doi:1'].sort());
+    assert.deepEqual(after.rels.find((r) => r.type === 'ABOUT' && r.to === 'concept:zk').props, { source: 'hub' }, "keep's own link keeps its properties");
+    assert.deepEqual(after.nodes['personal:doi:1'].props, { key: 'personal:doi:1', status: 'reading' }, 'the status moves');
+    const [mc] = changes;
+    assert.deepEqual(mc.moved_links, { ABOUT: 1, ANNOTATES: 1 }); assert.equal(mc.dropped_links, 2, 'the duplicate ABOUT and the self-citation');
+    assert.deepEqual(mc.conflicts.map((c) => c.field).sort(), ['summary', 'title', 'year']);
+    assert.deepEqual(mc.copied.sort(), ['abstract', 'key_findings']);
+    // take: drop's value wins for that field; keep has its own file: drop's Drive copy goes to the trash
+    const st1 = fixture(); st1.nodes['doi:1'].props.file_url = 'https://arxiv.org/pdf/1';
+    st1.nodes['personal:doi:1'] = { labels: ['Personal'], props: { key: 'personal:doi:1', status: 'read' } };
+    st1.rels.push({ type: 'FOR', from: 'personal:doi:1', to: 'doi:1', props: {} });
+    ({ after, changes, trash } = cops.applyOps(st1, [{ op: 'merge', keep: 'doi:1', drop: 'paper:x', take: ['summary'] }], { now }));
+    assert.equal(after.nodes['doi:1'].props.summary, 'theirs'); assert.deepEqual(changes[0].taken, ['summary']);
+    assert.deepEqual(JSON.parse(after.nodes['doi:1'].props.provenance_json).summary, { by: 'claude', status: 'auto' });
+    assert.equal(after.nodes['doi:1'].props.file_url, 'https://arxiv.org/pdf/1'); assert.deepEqual(trash, ['AAAAAAAAAAAA']);
+    assert.equal(after.nodes['personal:doi:1'].props.status, 'read', "keep's own status stays"); assert.ok(!after.nodes['personal:paper:x']);
+    // refusals
+    const refused = (ops, status, re) => assert.throws(() => cops.applyOps(fixture(), ops, { now }), (e) => e.status === status && re.test(e.message), JSON.stringify(ops));
+    refused([{ op: 'merge', keep: 'doi:1', drop: 'concept:zk' }], 400, /different kinds/);
+    refused([{ op: 'merge', keep: 'doi:1', drop: 'doi:1' }], 400, /the same item/);
+    refused([{ op: 'merge', keep: 'doi:1', drop: 'paper:nope' }], 404, /No such item: paper:nope/);
+    refused([{ op: 'merge', keep: 'doi:1', drop: 'paper:x', take: ['venue'] }], 400, /venue is not set/);
+    refused([{ op: 'merge', keep: 'doi:1', drop: 'paper:x' }, { op: 'delete', key: 'paper:x' }], 400, /^step 2 \(delete\): paper:x is removed by an earlier step/);
+    refused([{ op: 'explode' }], 400, /op must be one of/);
+    refused([], 400, /non-empty/);
+    refused(Array(51).fill({ op: 'delete', key: 'doi:1' }), 400, /At most 50/);
+
+    // vocabulary: drop's name and aliases become keep's aliases, with the matcher's fields
+    ({ after, changes } = cops.applyOps(fixture(), [{ op: 'merge', keep: 'concept:zk', drop: 'concept:zkp' }], { now }));
+    const Z = after.nodes['concept:zk'].props;
+    assert.deepEqual(Z.aliases, ['ZKP', 'zk proofs']); assert.deepEqual(changes[0].aliases_added, ['ZKP', 'zk proofs']);
+    assert.ok(Z.aliases_norm.length === 2 && Z.aliases_text.includes('zkp'), JSON.stringify(Z));
+    assert.deepEqual(rels(after).filter((r) => r.includes('concept')), ['doi:1 ABOUT concept:zk', 'paper:x ABOUT concept:zk'], 'the duplicate ABOUT from paper:x collapses');
+
+    // unlink, delete (with the concept only it used, its status and its Drive file), rename
+    ({ after, changes } = cops.applyOps(fixture(), [{ op: 'unlink', from: 'paper:x', rel: 'about', to: 'concept:zkp' }]));
+    assert.ok(!rels(after).includes('paper:x ABOUT concept:zkp')); assert.equal(changes[0].removed, 1);
+    refused([{ op: 'unlink', from: 'paper:x', rel: 'LIKES', to: 'concept:zk' }], 400, /Unknown relation/);
+    refused([{ op: 'unlink', from: 'doi:1', rel: 'CITES', to: 'paper:x' }], 404, /No CITES link/);
+    ({ after, changes, trash } = cops.applyOps(fixture(), [{ op: 'delete', key: 'paper:x' }]));
+    assert.ok(!after.nodes['paper:x'] && !after.nodes['personal:paper:x'] && !after.nodes['concept:zkp'] && after.nodes['concept:zk']);
+    assert.deepEqual(changes[0].orphans, ['concept:zkp']); assert.deepEqual(trash, ['AAAAAAAAAAAA']);
+    assert.deepEqual(rels(after), ['doi:1 ABOUT concept:zk']);
+    refused([{ op: 'delete', key: 'personal:paper:x' }], 400, /Only library items and vocabulary/);
+    ({ after, changes } = cops.applyOps(fixture(), [{ op: 'rename', key: 'concept:zk', name: 'Zero-knowledge proofs' }]));
+    assert.equal(after.nodes['concept:zk'].props.name, 'Zero-knowledge proofs'); assert.deepEqual(after.nodes['concept:zk'].props.aliases, ['zero knowledge']);
+    assert.equal(after.nodes['concept:zk'].props.norm, cops.normOf('Concept', 'Zero-knowledge proofs'));
+    refused([{ op: 'rename', key: 'doi:1', name: 'x' }], 400, /Only vocabulary/);
+    refused([{ op: 'rename', key: 'concept:zk', name: 'zero knowledge' }], 400, /already called/);
+
+    // fingerprints: any change shows, property order does not
+    const f0 = cops.fingerprint(fixture());
+    const reordered = fixture(); reordered.nodes['doi:1'].props = Object.fromEntries(Object.entries(reordered.nodes['doi:1'].props).reverse()); reordered.rels.reverse();
+    assert.equal(cops.fingerprint(reordered), f0);
+    const touched = fixture(); touched.rels[0].props.source = 'x';
+    assert.notEqual(cops.fingerprint(touched), f0);
+    // Neo4j types survive the JSON round trip
+    const dt = new neo4jDriver.types.DateTime(2026, 11, 1, 21, 8, 13, 123000000, 0);
+    const back = curation.dec(JSON.parse(JSON.stringify(curation.enc({ n: neo4jDriver.int(2024), d: dt, f: 1.5, l: [neo4jDriver.int(1)] }))));
+    assert.ok(neo4jDriver.isInt(back.n) && back.n.toNumber() === 2024 && neo4jDriver.isInt(back.l[0]) && back.f === 1.5);
+    assert.ok(neo4jDriver.isDateTime(back.d) && back.d.toString() === dt.toString(), back.d.toString());
+
+    // routes: owner only
+    const appC = require('express')();
+    require('../features/curation').mount(appC);
+    appC.use((err, _req, res, _next) => res.status(err.status || 500).json({ error: err.message }));
+    const srvC = await new Promise((ok) => { const x = appC.listen(0, '127.0.0.1', () => ok(x)); });
+    const cBase = `http://127.0.0.1:${srvC.address().port}`;
+    try {
+      for (const [m, u] of [['GET', '/api/curation/plans'], ['POST', '/api/curation/plans'], ['GET', '/api/curation/plans/plan:x'], ['POST', '/api/curation/plans/plan:x/apply'],
+        ['POST', '/api/curation/plans/plan:x/reject'], ['POST', '/api/curation/plans/plan:x/revert']]) {
+        assert.equal((await fetch(cBase + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{}' : undefined })).status, 401, `${m} ${u} is owner only`);
+      }
+      const r = await fetch(cBase + '/api/curation/plans', { method: 'POST', headers: { Authorization: 'Bearer abc', 'Content-Type': 'application/json' }, body: '{"ops":[]}' });
+      assert.equal(r.status, 400);
+      assert.equal((await fetch(cBase + '/api/curation/plans?status=maybe', { headers: { Authorization: 'Bearer abc' } })).status, 400);
+    } finally { await new Promise((ok) => srvC.close(ok)); }
   }
 
   /* ------------------------------------------------------------ Task 8: frameworks, questions, hypotheses, ontologies */

@@ -294,6 +294,18 @@ curl -H "$H" -H "Content-Type: application/json" -X POST http://127.0.0.1:3000/a
 - **The audit** (`GET /api/audit`): counts and lists of low-confidence fields and links, empty Core and Standard fields, ungrounded findings, items below their type's `schema_version`, vocabulary Claude created, and unreviewed items. `POST /api/audit/accept` (`{key, fields?, links?}` or `{vocab}`) marks values reviewed, which protects them from re-runs like your own edits.
 - **Single-object fields** (`evidence`, `period`, `threats_to_validity` ...) also keep each part as a plain property for Cypher: `MATCH (p:Paper) WHERE p.evidence__n > 100`.
 
+## Curation: fixing the graph with Claude
+
+Analysis fills fields and adds links; curation fixes what is already there. In the claude.ai chat, ask Claude to check the graph (it reads it with `describe_graph`, `get_schema` and read-only `run_cypher`), then to propose fixes:
+
+> Assess the quality of my research hub: duplicate concepts, authors and venues; items missing core fields; links that don't fit the schema; nodes with no links; unreviewed or low-confidence Claude fields. Then propose fixes for the duplicates and wrong links.
+
+Claude never edits directly. It calls `propose_changes` with a **plan**, a list of operations, and shows it to you:
+- `merge {keep, drop, take?}`: two items or two vocabulary nodes of the same kind. Links, empty fields (with their provenance), the file link and your status move to `keep`; conflicting fields keep `keep`'s value unless listed in `take`; vocabulary keeps `drop`'s name as an alias, so the matcher does not create the duplicate again; `drop` is deleted.
+- `unlink {from, rel, to}`, `delete {key}` (with the concepts and people only it used), `rename {key, name}` (vocabulary; the old name stays an alias).
+
+Nothing changes until the plan is applied: by Claude (`apply_plan`) after you say yes, or by you in the Library's **Curation** section, which lists plans with every change, field conflict and Drive file affected (Apply, Reject, Undo). A plan applies in one transaction and is refused if the data changed since it was proposed. **Undo** (`revert_plan`) puts everything back exactly, including the Drive files it trashed, and is refused if something changed it again since. The plans are the curation log; they are not part of backups. REST: `/api/curation/plans` (owner).
+
 ## Command line (`bin/hub`)
 
 Node 18+, nothing to install. `hub config --url <base url> --token <token>` saves the connection, or set `HUB_URL` and `HUB_API_TOKEN`. `hub help` prints this list.

@@ -1,12 +1,13 @@
 // Library: the collections (Papers, Methods, Use cases, Case studies, and All), the graph view and the audit.
 // Papers keep their list, PDF reader, file link and status, plus an Analysis tab. The other collections get a generic
 // list and detail built from the schema (collections.js), and every collection gets create / edit forms (forms.js).
-// Addresses: /library/<collection>?key=..[&edit=1], /library/graph, /library/audit, /library/all.
+// Addresses: /library/<collection>?key=..[&edit=1], /library/graph, /library/audit, /library/curation, /library/all.
 // Anonymous visitors see the public preview (a static export, whitelisted fields only); the owner sees the database.
 import { h, icon, api, state as S, BASE, cssVar, loadScript, toast } from '../../shell/ui.js';
 import { parseRoute, routePath, collectionOf, barEntries, entryOf } from './model.js';
 import { CollectionView, itemDetail } from './collections.js';
 import { AuditView } from './audit.js';
+import { CurationView } from './curation.js';
 import { itemForm, linkForm } from './forms.js';
 import { renderFields, renderLinks } from './view.js';
 
@@ -73,7 +74,7 @@ class Library {
   }
   readRoute() {
     const r = parseRoute(this.ctx.route.rest || [], this.ctx.route.query, this.collections);
-    if (r.section === 'audit' && !(S.owner && this.mode === 'private')) r.section = 'paper';
+    if (['audit', 'curation'].includes(r.section) && !(S.owner && this.mode === 'private')) r.section = 'paper';
     this.section = r.section; this.sel = r.key; this.edit = r.edit;
     this.view = r.section === 'graph' ? 'graph' : 'list';
   }
@@ -87,7 +88,7 @@ class Library {
   onTheme() { if (this.view === 'graph') this.buildGraph(); }
   // older call sites: go({view, key}); list views stay in the current collection
   go({ view = this.view, key = this.sel } = {}, replace = false) {
-    const listSection = ['graph', 'audit'].includes(this.section) ? 'paper' : this.section;
+    const listSection = ['graph', 'audit', 'curation'].includes(this.section) ? 'paper' : this.section;
     this.goSection(view === 'graph' ? 'graph' : listSection, { key }, replace);
   }
   goSection(section, { key = null, edit = false } = {}, replace = false) {
@@ -157,7 +158,7 @@ class Library {
     const seg = (items, cur, on, cls = '') => h('div', { class: 'seg ' + cls }, items.map(([id, label, ic]) => h('button', { class: cur === id ? 'on' : '', 'data-section': id, onclick: () => on(id) }, ic && icon(ic, 14), label)));
     const entries = barEntries(this.collections);
     const current = entryOf(entries, this.section);
-    const sections = [['all', 'All'], ...entries.main.map((e) => [e.id, e.label]), ['graph', 'Graph', 'graph'], S.owner && this.mode === 'private' && ['audit', 'Audit']].filter(Boolean);
+    const sections = [['all', 'All'], ...entries.main.map((e) => [e.id, e.label]), ['graph', 'Graph', 'graph'], ...(S.owner && this.mode === 'private' ? [['audit', 'Audit'], ['curation', 'Curation']] : [])].filter(Boolean);
     const inMore = current && entries.more.includes(current);
     // "More": a native disclosure, so it opens with the keyboard too; choosing an entry navigates and redraws it closed
     const more = entries.more.length ? h('details', { class: 'moremenu' + (inMore ? ' on' : '') },
@@ -177,6 +178,7 @@ class Library {
     this.cview = null;
     if (this.view === 'graph') return this.renderGraphView();
     if (this.section === 'audit') return new AuditView(this).mount(this.bodyEl);
+    if (this.section === 'curation') return new CurationView(this).mount(this.bodyEl);
     const c = this.coll(this.section);
     if (c && c.name !== 'paper' && this.mode === 'private') { this.cview = new CollectionView(this, c); return this.cview.mount(this.bodyEl); }
     return this.renderListView();
@@ -260,7 +262,7 @@ class Library {
   onKey(e) {
     if (this.view !== 'list' || !['ArrowDown', 'ArrowUp'].includes(e.key)) return;
     if (['INPUT', 'SELECT', 'TEXTAREA', 'IFRAME'].includes(document.activeElement.tagName)) return;
-    if (this.cview || this.section === 'audit') return;
+    if (this.cview || ['audit', 'curation'].includes(this.section)) return;
     const rows = this.filtered(); if (!rows.length) return;
     const i = rows.findIndex((p) => p.key === this.sel);
     const next = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))];

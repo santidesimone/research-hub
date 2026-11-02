@@ -109,6 +109,13 @@ async function trash(id) {
   await ok(res, 'moving the file to the trash');
 }
 
+// Take a file the hub trashed back out of the trash (reverting a curation plan). Gone for good (404): nothing to do.
+async function untrash(id) {
+  const res = await call(`${API}/files/${encodeURIComponent(id)}`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify({ trashed: false }) });
+  if (res.status === 404) return;
+  await ok(res, 'taking the file out of the trash');
+}
+
 // Upload a file (resumable upload) and share it by link. ext picks the type from FILE_TYPES; anything else is refused,
 // and so is a file over MAX_UPLOAD_MB (it stays a link). Returns { id, url, mime }.
 async function upload(title, buf, { ext = 'pdf' } = {}) {
@@ -140,4 +147,4 @@ async function check() {
 
 const _reset = () => { token = { value: null, exp: 0, pending: null }; folderCache = null; };
 
-module.exports = { configured, requireConfigured, upload, trash, check, fileName, setHttp, _reset, SCOPE, FOLDER_NAME, FILE_TYPES };
+module.exports = { configured, requireConfigured, upload, trash, untrash, check, fileName, setHttp, _reset, SCOPE, FOLDER_NAME, FILE_TYPES };

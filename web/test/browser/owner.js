@@ -25,7 +25,7 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
   await step('collections bar from the schema', async () => {
     await page.waitForSelector('.collbar');
     const labels = await page.$$eval('.collbar button', (b) => b.map((x) => x.textContent.trim()));
-    expect(JSON.stringify(labels) === JSON.stringify(['All', 'Papers', 'Methods', 'Use cases', 'Case studies', 'Graph', 'Audit']), labels.join('|'));
+    expect(JSON.stringify(labels) === JSON.stringify(['All', 'Papers', 'Methods', 'Use cases', 'Case studies', 'Graph', 'Audit', 'Curation']), labels.join('|'));
     expect(new URL(page.url()).pathname === '/library', page.url());
   });
   await step('papers list and Analysis tab with provenance, tiers and flags', async () => {
