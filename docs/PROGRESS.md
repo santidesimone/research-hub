@@ -595,6 +595,24 @@ The owner ran a quality analysis from the claude.ai chat (2026-11-01). Claude ap
 - Live (2026-11-02, revision `research-hub-00009`): from a new claude.ai chat, Claude verified with `run_cypher` that `concept:privacy-enhancing-technologies` and `concept:cbdc` were linked only from `paper:a1a7425c09`, which also links to the matching Topics; proposed `plan:48ef09f4e802` (two deletes, no orphans, no files); the owner said yes; Claude applied it and confirmed the result. Reported by the owner from the chat; not re-checked from Claude Code (its old connector points at the closed run.app address).
 - Learned: claude.ai keeps a connector's tool list from when it was connected; after a deploy that adds tools, reconnect the connector and start a new chat.
 - Not tried live: merge, unlink, rename and Undo (all covered by the integration and browser tests).
-- The cause of those duplicates is still there: `add_paper` turns `topic:` tags into Concept nodes by slug (bypassing the matcher), while `save_analysis` puts `topics` on Topic nodes. Proposed next: tags through the matcher to Topic, and `merge` across vocabulary labels when the schema allows every moved relationship.
+- The cause of those duplicates: `add_paper` turned `topic:` tags into Concept nodes by slug (bypassing the matcher), while `save_analysis` puts `topics` on Topic nodes. Fixed, see "Duplicate topics" below.
 - Not done: the hub's `year` is stored as a float by the paper writer (seen while testing types); harmless, but worth a migration later.
 - Seen in the owner's chat run, not investigated: Claude's `topics` write on `paper:a1a7425c09` was skipped as an owner value although the field reads empty (an `ABOUT` link without provenance makes the field count as the owner's).
+
+## Duplicate topics: tags to Topic, and merges across vocabulary kinds (2026-11-02)
+
+The owner's chat analysis found the same idea as a Topic and a Concept (PET, CBDC). Cause: `topic:` tags on papers became Concept nodes by slug, bypassing the matcher, while the schema's `topics` field and `save_analysis` use Topic (`docs/SCHEMA_DESIGN.md`: paper topics are Topics; Concepts are ontology terms and the `concepts:` of notes and methods).
+
+**Changed**
+- `web/features/papers/type.js`, `item.js`: `topic:` tags are matched by name to Topic nodes (`vocab.resolve('Topic')`, like authors); a matched Topic keeps its own name. `private` is a tag too (it already was for visibility).
+- Readers accept both (no data is rewritten): the paper list's topics, `search_papers`' topic filter and an example query read `Topic|Concept`; `get_artifact` also shows links to Topics and Domains (it showed only Concepts).
+- Curation `merge` across vocabulary kinds (`web/core/curation-ops.js`): a Concept into a Topic or back, only when the schema allows every link that moves for the surviving kind (a Concept defined in an ontology cannot become a Topic); the dropped kind's own fields are listed as not carried over; `take` is refused across kinds. Snapshots now carry every key's labels for that check. Shown in the Curation view and the MCP description.
+
+**Tested**
+- Offline: tags give ABOUT to Topic (with and without the matcher), merge Concept into Topic and back, the schema refusal, kind fields not copied, `take` refused. Mutation-checked: 5 breakages, all caught.
+- Integration on a throwaway Neo4j 5: a tag gives a Topic; two spellings of one tag give one Topic; topic search finds it; an older tag Concept merges into the Topic (its name then finds the Topic) and the revert is exact. The backup round trip now links its Concept explicitly (it relied on tags making Concepts).
+- Browser: all six suites green on a throwaway hub.
+
+**Not tested / open**
+- Not deployed. Existing tag Concepts in production stay until merged: ask Claude in the chat to propose merging each Concept into its Topic.
+- The `topics` field still counts links without provenance as the owner's (Claude's write skipped as "owner value" on `paper:a1a7425c09`); not changed here.

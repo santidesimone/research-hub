@@ -71,7 +71,7 @@ async function overview() {
     examples: [
       'MATCH (p:Paper)-[:AUTHORED_BY]->(x:Person) RETURN x.name, count(p) AS papers ORDER BY papers DESC',
       "MATCH (s:Personal {status:'to-read'})-[:FOR]->(p:Paper) RETURN p.title, p.year ORDER BY p.year DESC",
-      'MATCH (p1:Paper)-[:ABOUT]->(c:Concept)<-[:ABOUT]-(p2:Paper) WHERE p1.key < p2.key RETURN p1.title, p2.title, collect(c.name) AS shared',
+      'MATCH (p1:Paper)-[:ABOUT]->(c:Topic|Concept)<-[:ABOUT]-(p2:Paper) WHERE p1.key < p2.key RETURN p1.title, p2.title, collect(c.name) AS shared',
       'MATCH (u:UseCase) WHERE NOT (:Method)-[:ADDRESSES]->(u) AND NOT (:CaseStudy)-[:INSTANCE_OF]->(u) RETURN u.key, u.title',
     ],
   };
@@ -86,7 +86,7 @@ function luceneQuery(text) {
 }
 const SEARCH_COLUMNS = ['key', 'title', 'year', 'authors', 'topics', 'has_file', 'status'];
 const SEARCH_RETURN = `RETURN p.key AS key, p.title AS title, p.year AS year, p.authors AS authors,
-            [(p)-[:ABOUT]->(c:Concept) | c.name] AS topics,
+            [(p)-[:ABOUT]->(c:Topic|Concept) | c.name] AS topics,
             p.file_url IS NOT NULL AS has_file,
             head([(s:Personal)-[:FOR]->(p) | s.status]) AS status`;
 
@@ -102,7 +102,7 @@ async function searchPapers(text, limit = 20) {
            CALL db.index.fulltext.queryNodes('artifact_text', $lucene) YIELD node, score
            WITH node, score WHERE node:Paper RETURN node AS p, score
            UNION
-           MATCH (p:Paper)-[:ABOUT]->(c:Concept) WHERE toLower(c.name) CONTAINS $topic RETURN p, 1.0 AS score
+           MATCH (p:Paper)-[:ABOUT]->(c:Topic|Concept) WHERE toLower(c.name) CONTAINS $topic RETURN p, 1.0 AS score
          }
          WITH p, max(score) AS score
          ${SEARCH_RETURN}
@@ -115,7 +115,7 @@ async function searchPapers(text, limit = 20) {
     `MATCH (p:Paper)
      WHERE toLower(p.title) CONTAINS $q OR any(a IN p.authors WHERE toLower(a) CONTAINS $q)
         OR toLower(coalesce(p.venue, '')) CONTAINS $q
-        OR EXISTS { MATCH (p)-[:ABOUT]->(c:Concept) WHERE toLower(c.name) CONTAINS $topic }
+        OR EXISTS { MATCH (p)-[:ABOUT]->(c:Topic|Concept) WHERE toLower(c.name) CONTAINS $topic }
      ${SEARCH_RETURN}
      ORDER BY p.year DESC LIMIT $limit`,
     { q, topic, limit: n });

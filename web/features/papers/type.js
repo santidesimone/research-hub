@@ -21,7 +21,8 @@ module.exports = {
   locked: ['doi', 'authors', 'venue'],
 
   // DOI alone: look the rest up. Authors are matched to existing Person nodes by name (vocab.resolve), so "José García"
-  // and "Garcia, Jose" are one person whichever way they arrive.
+  // and "Garcia, Jose" are one person whichever way they arrive. "topic:" tags are matched to Topic nodes the same way,
+  // the vocabulary the schema's topics field uses (they used to become Concept nodes by slug, which made duplicates).
   async prepare(body) {
     let input = body;
     if (!body.title && body.DOI) {
@@ -32,7 +33,9 @@ module.exports = {
     const people = nodeFields(normalizeItem(input)).people;
     const personKeys = {};
     for (const p of people) personKeys[p.name] = (await vocab.resolve('Person', p.name, { by: 'source' })).key;
-    return { ...input, _person_keys: personKeys };
+    const topicKeys = {};
+    for (const t of nodeFields(normalizeItem(input)).topics) topicKeys[t.name] = (await vocab.resolve('Topic', t.name, { by: 'source' })).key;
+    return { ...input, _person_keys: personKeys, _topic_keys: topicKeys };
   },
 
   parse(input) {
@@ -48,7 +51,8 @@ module.exports = {
       },
       links: [
         ...f.people.map((p) => ({ rel: 'AUTHORED_BY', merge: { label: 'Person', key: (input._person_keys || {})[p.name] || p.key, props: { name: p.name } } })),
-        ...f.topics.map((t) => ({ rel: 'ABOUT', merge: { label: 'Concept', key: t.key, props: { name: t.name } } })),
+        // a matched Topic keeps its own name; without prepare (no match ran) the tag's spelling names a new one
+        ...f.topics.map((t) => { const k = (input._topic_keys || {})[t.name]; return { rel: 'ABOUT', merge: { label: 'Topic', key: k || t.key, props: k ? {} : { name: t.name } } }; }),
       ],
     };
   },

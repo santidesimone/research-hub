@@ -105,7 +105,7 @@ function buildServer({ uploadUrl = null } = {}) {
     const file = links.describe(node.props.file_url);
     const rel = (pattern) => run(`MATCH ${pattern} RETURN type(r) AS type, m.key AS key, coalesce(m.title, m.name) AS title`, { key });
     const [out, inc, st] = await Promise.all([
-      rel('(n {key:$key})-[r]->(m:Artifact|Person|Concept)'), rel('(m:Artifact|Person|Concept)-[r]->(n {key:$key})'),
+      rel('(n {key:$key})-[r]->(m:Artifact|Person|Concept|Topic|Domain)'), rel('(m:Artifact|Person|Concept|Topic|Domain)-[r]->(n {key:$key})'),
       run("MATCH (s:Personal {key:'personal:' + $key}) RETURN properties(s) AS p", { key }),
     ]);
     return { key, labels: node.labels, props: node.props, file, links_out: out, links_in: inc, personal: st[0] ? st[0].p : null };
@@ -228,7 +228,7 @@ function buildServer({ uploadUrl = null } = {}) {
     });
     s.registerTool('propose_changes', {
       description: 'Propose a change plan to fix the graph; NOTHING changes yet. Operations: merge {keep, drop, take?} (duplicates of the same kind: relationships, empty fields, '
-        + 'the file link and the owner\'s status move to keep; vocabulary keeps drop\'s name as an alias), unlink {from, rel, to}, delete {key} (with the vocabulary only it used), '
+        + 'the file link and the owner\'s status move to keep; vocabulary keeps drop\'s name as an alias; two vocabulary kinds, e.g. a Concept into a Topic, merge when the schema allows every moved link), unlink {from, rel, to}, delete {key} (with the vocabulary only it used), '
         + 'rename {key, name} (vocabulary only; the old name stays as an alias). Several ops may go in one plan; they apply together or not at all. '
         + 'The reply lists every change, field conflicts and Drive files that would go to the trash. Show it to the owner in plain words and ask; call apply_plan only after a clear yes.',
       inputSchema: { ops: z.array(OP).min(1).max(50), reason: z.string().max(2000).describe('Why, in one or two sentences (it goes in the curation log)'), model: z.string().optional() },

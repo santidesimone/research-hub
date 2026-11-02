@@ -1669,6 +1669,27 @@ const seed = require('../../data/seed_papers.json');
     assert.ok(Z.aliases_norm.length === 2 && Z.aliases_text.includes('zkp'), JSON.stringify(Z));
     assert.deepEqual(rels(after).filter((r) => r.includes('concept')), ['doi:1 ABOUT concept:zk', 'paper:x ABOUT concept:zk'], 'the duplicate ABOUT from paper:x collapses');
 
+    // across vocabulary kinds: a Concept into a Topic when the schema allows every link that moves; its own fields stay behind
+    const vx = () => {
+      const st = fixture();
+      st.nodes['topic:zk'] = { labels: ['Topic'], props: { key: 'topic:zk', name: 'zero-knowledge proof', aliases: [] } };
+      st.nodes['concept:zkp'].props.external_iri = 'https://example.org/zkp';
+      st.rels.push({ type: 'ABOUT', from: 'doi:1', to: 'topic:zk', props: {} });
+      st.labels = { 'doi:1': ['Artifact', 'Paper'], 'paper:x': ['Artifact', 'Paper'], 'concept:zkp': ['Concept'], 'topic:zk': ['Topic'], 'ontology:o': ['Artifact', 'Ontology'] };
+      return st;
+    };
+    ({ after, changes } = cops.applyOps(vx(), [{ op: 'merge', keep: 'topic:zk', drop: 'concept:zkp' }], { now }));
+    assert.ok(!after.nodes['concept:zkp']);
+    assert.ok(rels(after).includes('paper:x ABOUT topic:zk'), 'the link moves to the Topic');
+    assert.deepEqual(after.nodes['topic:zk'].props.aliases, ['ZKP', 'zk proofs']);
+    assert.ok(!('external_iri' in after.nodes['topic:zk'].props), 'a Concept-only field is not carried to a Topic');
+    assert.deepEqual({ from: changes[0].from_kind, to: changes[0].to_kind, not: changes[0].not_copied }, { from: 'Concept', to: 'Topic', not: ['external_iri'] });
+    const bound = vx(); bound.rels.push({ type: 'DEFINED_IN', from: 'concept:zkp', to: 'ontology:o', props: {} });
+    assert.throws(() => cops.applyOps(bound, [{ op: 'merge', keep: 'topic:zk', drop: 'concept:zkp' }]), (e) => e.status === 400 && /cannot become a Topic: the schema does not allow Topic -DEFINED_IN-> ontology:o/.test(e.message));
+    assert.throws(() => cops.applyOps(vx(), [{ op: 'merge', keep: 'topic:zk', drop: 'concept:zkp', take: ['external_iri'] }]), (e) => e.status === 400 && /cannot be carried/.test(e.message));
+    ({ after } = cops.applyOps(vx(), [{ op: 'merge', keep: 'concept:zkp', drop: 'topic:zk' }], { now }));
+    assert.ok(rels(after).includes('doi:1 ABOUT concept:zkp'), 'and the other way round');
+
     // unlink, delete (with the concept only it used, its status and its Drive file), rename
     ({ after, changes } = cops.applyOps(fixture(), [{ op: 'unlink', from: 'paper:x', rel: 'about', to: 'concept:zkp' }]));
     assert.ok(!rels(after).includes('paper:x ABOUT concept:zkp')); assert.equal(changes[0].removed, 1);
@@ -1684,6 +1705,12 @@ const seed = require('../../data/seed_papers.json');
     assert.equal(after.nodes['concept:zk'].props.norm, cops.normOf('Concept', 'Zero-knowledge proofs'));
     refused([{ op: 'rename', key: 'doi:1', name: 'x' }], 400, /Only vocabulary/);
     refused([{ op: 'rename', key: 'concept:zk', name: 'zero knowledge' }], 400, /already called/);
+
+    // papers: "topic:" tags become ABOUT links to Topic nodes (the key the matcher found, which keeps its own name)
+    const paperType = types.get('paper');
+    const tagged = (extra) => paperType.parse({ itemType: 'journalArticle', title: 'Tags', creators: [], date: '2024', tags: ['topic:zk-proofs'], ...extra }).links.filter((l) => l.rel === 'ABOUT');
+    assert.deepEqual(tagged({ _topic_keys: { 'zk proofs': 'topic:zero-knowledge-proof' } }), [{ rel: 'ABOUT', merge: { label: 'Topic', key: 'topic:zero-knowledge-proof', props: {} } }]);
+    assert.deepEqual(tagged({}), [{ rel: 'ABOUT', merge: { label: 'Topic', key: 'topic:zk-proofs', props: { name: 'zk proofs' } } }], 'without the matcher: a new Topic');
 
     // fingerprints: any change shows, property order does not
     const f0 = cops.fingerprint(fixture());

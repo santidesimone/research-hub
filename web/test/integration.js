@@ -53,6 +53,8 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
   assert.ok(hit.rows.some((r) => r.key === paperKey), 'full-text search finds the paper');
   const topic = await query.searchPapers('integration-testing');
   assert.ok(topic.rows.some((r) => r.key === paperKey), 'topic search finds the paper');
+  const [tagTopic] = await db.run('MATCH (:Paper {key:$k})-[:ABOUT]->(t) RETURN labels(t) AS labels, t.key AS key', { k: paperKey });
+  assert.deepEqual(tagTopic, { labels: ['Topic'], key: 'topic:integration-testing' }, 'a topic: tag becomes a Topic (the topics field), not a Concept');
 
   // read-only guard on the real server
   const ok = await query.readOnly('MATCH (n) RETURN count(n) AS c');
@@ -206,7 +208,8 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
       links: [{ rel: 'INTRODUCES', target: rm.key }, { rel: 'ABOUT', target: T('RT topic'), kind: 'Topic' }, { rel: 'USES', target: T('RT dataset'), kind: 'Dataset' }] });
     await items.link(rm.key, { rel: 'ADDRESSES', target: ru.key, evidence: 'why', location: 's. 1', confidence: 'high' });
     await items.link(rc.key, { rel: 'INSTANCE_OF', target: ru.key });
-    const concept = await artifacts.add('paper', { title: T('RT tagged paper'), tags: [`topic:rt-concept-${tag}`] });
+    const concept = await artifacts.add('paper', { title: T('RT tagged paper'), tags: [`topic:rt-concept-${tag}`] }); // a tag: a Topic
+    await items.link(concept.key, { rel: 'ABOUT', target: { kind: 'Concept', name: T('RT concept') } }); // and a Concept, linked explicitly
     await require('../features/personal').setState(rp.key, { status: 'reading' });
     const mine = [rm.key, ru.key, rc.key, rp.key, concept.key];
 
@@ -498,14 +501,32 @@ const DRIVE_ID = 'ItTest' + stamp.toString(36).padEnd(12, 'x');
     assert.ok((await curation.list({ status: 'reverted' })).plans.length >= 4);
     assert.ok(!(await backup.exportAll()).nodes.some((n) => n.labels.includes('CurationPlan')), 'plans are not part of a backup');
 
-    for (const k of [p1, p2]) await artifacts.remove(k);
-    await db.exec('MATCH (c:Concept) WHERE c.key IN $k DETACH DELETE c', { k: [cA.key, cB.key] });
+    // topic: tags in two spellings land on one Topic (the matcher), so no duplicates are made; the readers see it
+    const t1 = (await artifacts.add('paper', { title: `${T} tags one`, creators: [], date: '2024', tags: [`topic:${T} zero-knowledge proofs`] })).key;
+    const t2 = (await artifacts.add('paper', { title: `${T} tags two`, creators: [], date: '2024', tags: [`topic:${T} Zero knowledge proof`] })).key;
+    const tl = await db.run('MATCH (p:Paper)-[:ABOUT]->(t) WHERE p.key IN $k RETURN DISTINCT labels(t) AS labels, t.key AS key', { k: [t1, t2] });
+    assert.equal(tl.length, 1, 'one Topic for both spellings: ' + JSON.stringify(tl)); assert.deepEqual(tl[0].labels, ['Topic']);
+    assert.ok((await query.searchPapers(`${T} zero-knowledge`.toLowerCase())).rows.some((r) => r.key === t1), 'topic search reads Topics');
+    // an older Concept from a tag merges into that Topic: the link moves, its name becomes an alias; revert is exact
+    const oldC = await vocab.resolve('concept', `${T} zk proofs`);
+    await db.exec('MATCH (p:Paper {key:$p}), (c:Concept {key:$c}) MERGE (p)-[:ABOUT]->(c)', { p: t2, c: oldC.key });
+    const beforeX = await graph();
+    const xm = await curation.propose([{ op: 'merge', keep: tl[0].key, drop: oldC.key }]);
+    assert.deepEqual({ from: xm.changes[0].from_kind, to: xm.changes[0].to_kind }, { from: 'Concept', to: 'Topic' });
+    await curation.apply(xm.id);
+    assert.equal((await vocab.resolve('topic', `${T} zk proofs`, { create: false })).key, tl[0].key, 'the Concept\'s name now finds the Topic');
+    assert.equal((await db.run('MATCH (c {key:$k}) RETURN count(c) AS c', { k: oldC.key }))[0].c, 0);
+    await curation.revert(xm.id);
+    sameGraph(await graph(), beforeX, 'cross-kind merge reverts exactly');
+
+    for (const k of [p1, p2, t1, t2]) await artifacts.remove(k);
+    await db.exec('MATCH (c) WHERE (c:Concept OR c:Topic) AND c.key IN $k DETACH DELETE c', { k: [cA.key, cB.key, oldC.key, tl[0].key] });
     await db.exec('MATCH (p:CurationPlan) DELETE p');
   }
 
   // clean up
   await artifacts.remove(paperKey);
   await db.exec("MATCH (n:Artifact) WHERE n.key STARTS WITH 'method:it-' OR n.key STARTS WITH 'note:it-' OR n.key STARTS WITH 'project:it-' OR n.key STARTS WITH 'usecase:offline-payments-' DETACH DELETE n");
-  await db.exec("MATCH (c:Concept {key:'concept:integration-testing'}) WHERE NOT (c)--() DELETE c");
+  await db.exec("MATCH (c) WHERE (c:Concept OR c:Topic) AND c.key IN ['concept:integration-testing', 'topic:integration-testing'] AND NOT (c)--() DELETE c");
   console.log('integration tests passed');
 })().then(() => db.driver.close()).catch(async (e) => { console.error(e); await db.driver.close(); process.exit(1); });

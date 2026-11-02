@@ -30,13 +30,14 @@ export class CurationView {
   change(c) {
     if (c.op === 'merge') {
       return h('div', { class: 'change' },
-        h('p', null, h('strong', null, 'Merge '), this.key(c.drop), ' into ', this.key(c.keep), ` (${c.drop} is then deleted)`),
+        h('p', null, h('strong', null, 'Merge '), this.key(c.drop), ' into ', this.key(c.keep), c.from_kind ? ` (a ${c.from_kind} into a ${c.to_kind}; ${c.drop} is then deleted)` : ` (${c.drop} is then deleted)`),
         h('ul', { class: 'facts' }, [
           Object.keys(c.moved_links).length && h('li', null, `Links moved: ${linkCounts(c.moved_links)}`),
           c.dropped_links && h('li', null, `${plural(c.dropped_links, 'link')} not moved (already on ${c.keep}, or pointing at itself)`),
           c.copied.length && h('li', null, `Fields copied (empty on ${c.keep}): ${c.copied.join(', ')}`),
           c.taken.length && h('li', null, `Fields replaced with ${c.drop}'s value: ${c.taken.join(', ')}`),
           c.aliases_added.length && h('li', null, `New aliases on ${c.keep}: ${c.aliases_added.join(', ')}`),
+          c.not_copied && c.not_copied.length && h('li', null, `Not carried over (${c.from_kind} fields): ${c.not_copied.join(', ')}`),
           c.personal && h('li', null, `Status: ${c.personal}`),
           c.file && h('li', null, `File: ${c.file}`),
         ].filter(Boolean)),

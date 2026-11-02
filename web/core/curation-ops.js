@@ -1,13 +1,14 @@
 // Curation, the pure part (Task 10): each operation turns one snapshot of part of the graph into the next.
-// A snapshot is { nodes: {key: {labels, props}}, rels: [{type, from, to, props}], ends: {key: label} }: a set of nodes,
-// every relationship touching them, and a label for every key it mentions (so the writer can match by label). Values
+// A snapshot is { nodes: {key: {labels, props}}, rels: [{type, from, to, props}], ends: {key: label}, labels: {key: [labels]} }:
+// a set of nodes, every relationship touching them, a label for every key it mentions (so the writer can match by label)
+// and every key's labels (so a merge across vocabulary kinds can check the schema). Values
 // are encoded so they survive JSON with their Neo4j types ({$int}, {$datetime}, {$date}; see core/curation.js).
 // core/curation.js loads snapshots, stores plans and writes the difference between two snapshots: apply writes
 // before -> after, revert writes after -> before. No I/O here, so every rule is testable offline.
 const crypto = require('crypto');
 const { HttpError } = require('./errors');
 const vocab = require('./vocab');
-const { entityLabels, orphanLabels, relationTypes } = require('./schema');
+const { entityLabels, orphanLabels, relationTypes, relAllows } = require('./schema');
 
 const MAX_OPS = 50;
 const OPS = ['merge', 'unlink', 'delete', 'rename'];
@@ -76,11 +77,24 @@ function merge(st, op, ctx) {
   const K = st.nodes[keep], D = st.nodes[drop];
   if (!K) fail(404, `No such item: ${keep}`);
   if (!D) fail(404, `No such item: ${drop}`);
-  if (!same([...K.labels].sort(), [...D.labels].sort())) fail(400, `${drop} (${D.labels.join(', ')}) and ${keep} (${K.labels.join(', ')}) are different kinds; only the same kind can be merged`);
   const label = entityOf(K);
   if (!isArtifact(K) && !label) fail(400, 'Only library items and vocabulary (authors, concepts, topics...) can be merged');
+  // Different kinds: only two vocabulary nodes (a Concept into a Topic), and only when the schema allows every link that
+  // moves for keep's kind. Fields of drop's kind are not carried over.
+  const across = !same([...K.labels].sort(), [...D.labels].sort());
+  if (across) {
+    const dl = entityOf(D);
+    if (!label || !dl || K.labels.length !== 1 || D.labels.length !== 1) fail(400, `${drop} (${D.labels.join(', ')}) and ${keep} (${K.labels.join(', ')}) are different kinds; only the same kind, or two vocabulary nodes, can be merged`);
+    const labelsOf = (k) => (st.labels && st.labels[k]) || (st.nodes[k] && st.nodes[k].labels) || [];
+    const refused = st.rels.filter((r) => (r.from === drop || r.to === drop) && !(r.from === r.to) && ![r.from, r.to].includes(keep)).filter((r) => (r.from === drop
+      ? !relAllows(r.type, label, labelsOf(r.to))
+      : !labelsOf(r.from).some((l) => relAllows(r.type, l, [label]))));
+    if (refused.length) fail(400, `${drop} cannot become a ${label}: the schema does not allow ${[...new Set(refused.map((r) => (r.from === drop ? `${label} -${r.type}-> ${r.to}` : `${r.from} -${r.type}-> ${label}`)))].join(', ')}`);
+  }
   const take = Array.isArray(op.take) ? op.take.map(String) : [];
-  const change = { op: 'merge', keep, drop, moved_links: {}, dropped_links: 0, copied: [], taken: [], conflicts: [], aliases_added: [], personal: null, file: null };
+  if (across && take.length) fail(400, `take: fields cannot be carried from a ${entityOf(D)} to a ${label}`);
+  const change = { op: 'merge', keep, drop, ...(across ? { from_kind: entityOf(D), to_kind: label, not_copied: [] } : {}),
+    moved_links: {}, dropped_links: 0, copied: [], taken: [], conflicts: [], aliases_added: [], personal: null, file: null };
 
   // relationships: drop's become keep's; one that would join keep to itself, or that keep already has, is dropped
   const have = new Set(st.rels.filter((r) => r.from !== drop && r.to !== drop).map(relId));
@@ -108,6 +122,7 @@ function merge(st, op, ctx) {
   const provK = parseJson(K.props.provenance_json), provD = parseJson(D.props.provenance_json);
   let provChanged = false;
   for (const [f, dp] of Object.entries(fd)) {
+    if (across) { change.not_copied.push(f); continue; }
     const kp = fk[f];
     if (kp && same(kp, dp)) continue;
     if (kp && !take.includes(f)) { change.conflicts.push({ field: f, keep: show(kp), drop: show(dp) }); continue; }

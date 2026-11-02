@@ -69,7 +69,7 @@ function nodeFields(item) {
     authors: named.map((p) => p.name),
     author_lasts: named.map((p) => p.last),
     people: named.map((p) => ({ key: 'person:' + slugify(p.name), name: p.name })),
-    topics: topics.map((t) => ({ key: 'concept:' + slugify(t), name: t.replace(/-/g, ' ') })),
+    topics: topics.map((t) => ({ key: 'topic:' + slugify(t), name: t.replace(/-/g, ' ') })),
     visibility,
   };
 }

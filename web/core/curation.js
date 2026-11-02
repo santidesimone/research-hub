@@ -59,7 +59,7 @@ const LOAD = `UNWIND $keys AS k
   RETURN n.key AS key, labels(n) AS labels, properties(n) AS props, out, inc`;
 
 async function loadState(tx, keys) {
-  const st = { nodes: {}, rels: [], ends: {} };
+  const st = { nodes: {}, rels: [], ends: {}, labels: {} };
   const seen = new Set();
   const addRel = (r) => {
     if (r.from == null || r.to == null) throw new HttpError(409, `${r.from || r.to} has a ${r.type} relationship with a node that has no key; it cannot be curated`);
@@ -71,8 +71,9 @@ async function loadState(tx, keys) {
     const labels = [...rec.get('labels')].sort();
     st.nodes[key] = { labels, props: enc(rec.get('props')) };
     st.ends[key] = hint(labels);
-    for (const o of rec.get('out')) { st.ends[o.key] = st.ends[o.key] || hint(o.labels); addRel({ type: o.type, from: key, to: o.key, props: enc(o.props) }); }
-    for (const i of rec.get('inc')) { st.ends[i.key] = st.ends[i.key] || hint(i.labels); addRel({ type: i.type, from: i.key, to: key, props: enc(i.props) }); }
+    st.labels[key] = labels;
+    for (const o of rec.get('out')) { st.ends[o.key] = st.ends[o.key] || hint(o.labels); st.labels[o.key] = st.labels[o.key] || [...o.labels].sort(); addRel({ type: o.type, from: key, to: o.key, props: enc(o.props) }); }
+    for (const i of rec.get('inc')) { st.ends[i.key] = st.ends[i.key] || hint(i.labels); st.labels[i.key] = st.labels[i.key] || [...i.labels].sort(); addRel({ type: i.type, from: i.key, to: key, props: enc(i.props) }); }
   }
   return st;
 }

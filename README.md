@@ -125,7 +125,7 @@ curl -X POST http://localhost:3000/api/papers \
 ```
 
 - **DOI only works too**: `{"DOI": "10.1007/978-1-4757-0602-4_18"}` makes the server look up title, authors, venue and date on Crossref (needs outbound internet; untested here).
-- Creators and tags may be plain strings. Tag conventions: `topic:<name>`, `public`, and `status:<value>` (which is handed to the personal layer, see below; it is not stored on the paper).
+- Creators and tags may be plain strings. Tag conventions: `topic:<name>` (matched by name to a Topic, the vocabulary of the `topics` field, so "zk-proofs" and "ZK proof" land on the same one), `public` or `private`, and `status:<value>` (which is handed to the personal layer, see below; it is not stored on the paper). Papers imported before 2026-11-02 may have their tags as Concept nodes; the hub reads both, and curation can merge a Concept into its Topic.
 - Paper identity (`paper_key`) is `doi:<lowercase doi>`, or `paper:<hash of title+year>` without a DOI. `409` if it already exists; add `?overwrite=true` to replace its metadata.
 - **Import / export**: `POST /api/import` takes a CSL JSON array; `GET /api/export` returns the library as CSL JSON.
 - Machine-readable spec: **`/openapi.json`**. The MCP server (`/mcp`) is the better way to give Claude these abilities; for other tool-using models expose `add_paper` and forward its input as the body of `POST /api/papers`.
@@ -301,7 +301,7 @@ Analysis fills fields and adds links; curation fixes what is already there. In t
 > Assess the quality of my research hub: duplicate concepts, authors and venues; items missing core fields; links that don't fit the schema; nodes with no links; unreviewed or low-confidence Claude fields. Then propose fixes for the duplicates and wrong links.
 
 Claude never edits directly. It calls `propose_changes` with a **plan**, a list of operations, and shows it to you:
-- `merge {keep, drop, take?}`: two items or two vocabulary nodes of the same kind. Links, empty fields (with their provenance), the file link and your status move to `keep`; conflicting fields keep `keep`'s value unless listed in `take`; vocabulary keeps `drop`'s name as an alias, so the matcher does not create the duplicate again; `drop` is deleted.
+- `merge {keep, drop, take?}`: two items or two vocabulary nodes of the same kind, or two vocabulary nodes of different kinds (a Concept into a Topic) when the schema allows every link that moves; the dropped kind's own fields are listed, not carried over. Links, empty fields (with their provenance), the file link and your status move to `keep`; conflicting fields keep `keep`'s value unless listed in `take`; vocabulary keeps `drop`'s name as an alias, so the matcher does not create the duplicate again; `drop` is deleted.
 - `unlink {from, rel, to}`, `delete {key}` (with the concepts and people only it used), `rename {key, name}` (vocabulary; the old name stays an alias).
 
 Nothing changes until the plan is applied: by Claude (`apply_plan`) after you say yes, or by you in the Library's **Curation** section, which lists plans with every change, field conflict and Drive file affected (Apply, Reject, Undo). A plan applies in one transaction and is refused if the data changed since it was proposed. **Undo** (`revert_plan`) puts everything back exactly, including the Drive files it trashed, and is refused if something changed it again since. The plans are the curation log; they are not part of backups. REST: `/api/curation/plans` (owner).

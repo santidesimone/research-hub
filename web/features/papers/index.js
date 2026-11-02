@@ -10,7 +10,7 @@ const files = require('./files');
 
 const ROWS = `MATCH (p:Paper)
   RETURN p.key AS key, properties(p) AS props, p.file_url IS NOT NULL AS has_file,
-         [(p)-[:ABOUT]->(c:Concept) | c.name] AS topics
+         [(p)-[:ABOUT]->(c:Topic|Concept) | c.name] AS topics // Topic; Concept from older imports
   ORDER BY coalesce(p.year, 0) DESC, p.title`;
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
