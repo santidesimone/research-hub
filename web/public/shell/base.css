@@ -185,6 +185,52 @@ details.meta summary { cursor: pointer; font-weight: 500; }
 .checkrow { display: flex; align-items: center; gap: 10px; min-height: 34px; font-size: 14px; cursor: pointer; }
 .checkrow input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
 .checkrow .dot { width: 10px; height: 10px; }
+.popanchor { position: relative; display: inline-flex; }
+.optlist { display: grid; gap: 2px; }
+.opt { display: block; width: 100%; text-align: left; padding: 10px 12px; border: 0; border-radius: var(--radius-s); background: transparent; cursor: pointer; }
+.opt:hover, .opt:focus-visible { background: var(--surface-2); outline: none; }
+.opt.danger .optlabel { color: var(--danger); }
+.optlabel { display: block; font-size: 14px; font-weight: 500; }
+.opthelp { display: block; margin-top: 2px; font-size: 12.5px; color: var(--text-muted); line-height: 1.45; }
+.linkbtn.back { font-size: 13px; padding: 2px 0; }
+
+/* Connections: the item on the left, a line to each group, one card per link */
+.connhead { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; margin-top: 22px; }
+.connhead p { flex: 1 1 280px; margin: 0; }
+.conndiagram { display: flex; flex-wrap: wrap; margin-top: 22px; }
+.connself { flex: 0 0 170px; padding-top: 6px; }
+.connselfcard { width: 156px; padding: 12px 14px; border-radius: var(--radius-m); background: var(--text); color: var(--bg); }
+.connselfcard small { display: block; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .7; }
+.connselfcard strong { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; margin-top: 4px; font-size: 13.5px; line-height: 1.35; }
+.conntree { flex: 1 1 380px; min-width: 0; border-left: 2px solid var(--border-strong); padding: 2px 0; }
+.conngroup { margin: 14px 0 6px; }
+.connlabel { display: flex; align-items: center; gap: 8px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); font-weight: 600; }
+.conngroup > .connlabel { margin-bottom: 8px; }
+.conngroup > .connlabel::before { content: ''; width: 22px; border-top: 2px solid var(--border-strong); margin-right: 2px; }
+.connrow { display: flex; align-items: center; margin-bottom: 8px; }
+.connline { flex: 0 0 34px; border-top: 2px solid; opacity: .55; }
+.conncard { display: flex; align-items: center; gap: 14px; flex: 1; min-width: 0; padding: 10px 8px 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-m); background: var(--surface); }
+.conncard .role { flex: 0 0 120px; font-size: 13px; font-weight: 600; }
+.role.tone-agree { color: var(--ok); } .role.tone-disagree { color: var(--danger); } .role.tone-mixed { color: var(--warn); } .role.tone-neutral { color: var(--info); }
+.connname { flex: 1; min-width: 0; border: 0; background: transparent; padding: 0; text-align: left; cursor: pointer; font-size: 14.5px; line-height: 1.4; }
+.connname:hover span { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+.connname small, .suggestrow small { display: block; margin-top: 3px; font-size: 13px; color: var(--text-muted); }
+.connempty { margin: 14px 0 0 22px; }
+.dots { width: 34px; height: 34px; border: 0; border-radius: var(--radius-s); background: transparent; font-size: 18px; line-height: 1; color: var(--text-muted); cursor: pointer; }
+.dots:hover { background: var(--surface-2); }
+.popover.rowmenu { left: auto; right: 0; top: calc(100% + 4px); width: 280px; padding: 8px; }
+.popover.linkpicker { left: auto; right: 0; width: min(520px, calc(100vw - 32px)); max-height: min(70vh, 640px); }
+.linkresults { margin-top: 6px; }
+.linkgroup { margin-top: 14px; }
+.linkgroup .connlabel { padding: 0 12px; margin-bottom: 2px; }
+.linkwhat { margin: 0 0 12px; font-size: 16px; font-weight: 600; line-height: 1.4; }
+.linkpicker .row-flex .input { flex: 1 1 160px; width: auto; }
+.linkpicker .optlist { margin-top: 10px; }
+.noteform { display: grid; gap: 8px; margin-top: 8px; }
+.connsuggest { margin-top: 34px; }
+.connsuggest > .label { margin-bottom: 10px; }
+.suggestrow { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 12px 14px; border: 1px dashed var(--border-strong); border-radius: var(--radius-m); margin-bottom: 8px; font-size: 14px; }
+.suggestrow a { cursor: pointer; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
 .canvas { position: relative; flex: 1; min-height: 0; background: var(--graph-bg); }
 .canvas > div { position: absolute; inset: 0; }
 .graphaside { border-left: 1px solid var(--border); overflow-y: auto; padding: 24px; background: var(--bg); }
@@ -265,10 +311,6 @@ pre.json { background: var(--bg-sunken); border: 1px solid var(--border); border
 .curation .conflicts th { text-align: left; }
 
 /* results of tests */
-.badge.res-supported { background: var(--ok-soft); color: var(--ok); }
-.badge.res-refuted { background: var(--danger-soft); color: var(--danger); }
-.badge.res-mixed { background: var(--warn-soft); color: var(--warn); }
-.badge.res-inconclusive { background: var(--surface-2); color: var(--text-muted); }
 .kv.results td { vertical-align: middle; }
 
 @media (max-width: 800px) {
@@ -284,6 +326,10 @@ pre.json { background: var(--bg-sunken); border: 1px solid var(--border); border
   .objedit { grid-template-columns: 1fr; }
   .split, .graphwrap { grid-template-columns: 1fr; grid-template-rows: 42% 1fr; }
   .graphaside { display: none; }
+  .connself { flex-basis: 100%; margin-bottom: 8px; }
+  .connselfcard { width: auto; }
+  .conncard .role { flex-basis: 96px; }
+  .popover.linkpicker, .popover.rowmenu { position: fixed; top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 75vh; border-radius: var(--radius-l) var(--radius-l) 0 0; }
   .popover.graphfilter { position: fixed; top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 70vh; border-radius: var(--radius-l) var(--radius-l) 0 0; }
   .detail { padding: 24px 16px 60px; }
   .page { padding: 32px 16px; }

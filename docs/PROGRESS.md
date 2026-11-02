@@ -18,7 +18,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | Served at santidesimone.com/research-hub | done (2026-11-01), tested live | See "Served at santidesimone.com" below. |
 | Publishing settings (default visibility, full public detail) | done (2026-11-01), not deployed yet | See "Publishing settings" below. |
 | 10 Curation: reviewable change plans | done (2026-11-01), tested live from the claude.ai chat | See "Task 10" below. |
-| 11 Library redesign (`docs/UI_REDESIGN.md`) | in progress: steps 1 to 3 of 6 done (2026-11-02), not deployed | See "Task 11" below. |
+| 11 Library redesign (`docs/UI_REDESIGN.md`) | in progress: steps 1 to 4 of 6 done (2026-11-02), not deployed | See "Task 11" below. |
 
 ## Task 0. Baseline against real services
 
@@ -667,3 +667,19 @@ Approved by the owner on 2026-11-02 after three rounds on a clickable mockup (sp
 
 **Not tested / open**
 - Not deployed.
+
+### Step 4. Connections and Link… (2026-11-02)
+
+**Changed**
+- `web/apps/library/connections.js` (new): the **Connections** tab of every item (papers: Info, Analysis, Connections, Reader; knowledge items: Info, Connections). A diagram: the item on the left, a line to each group of linked things by type (sidebar order, then vocabulary), one card per link with its role read from here and coloured by tone, its note and location. **⋯** opens a menu (change how it relates, edit the note, unlink; a field link opens the form). **Link…** searches every kind the schema lets this item link to (items and vocabulary together), then offers the allowed roles, one per test result for TESTS, with an optional note and location. Claude's unreviewed low-confidence links are **Suggested by Claude** (Link accepts through `/api/audit/accept`, Dismiss removes). Popovers close on a tap outside or Esc and are bottom sheets on a phone.
+- `web/apps/library/model.js`: `connectionGroups`, `linkOptions`, `linkableLabels`, `relRole`, `relTone`, `isSuggestion`, and the relation headings moved here from `view.js` (pure, tested).
+- Removed: the old link lists (`renderLinks`), the "Add a link" form (`linkForm`) and the result badges; Connections replaces them.
+- Schema: entities may have `label_plural` (People, Concepts, Topics …).
+- No API change: links are read from `GET /api/items/<key>` and written with the existing `PUT`/`DELETE /api/items/<key>/links` (a link written again updates its note and becomes the owner's).
+
+**Tested**
+- Offline: grouping, order and the bibliographic links left out; roles and tones; sources and targets for unlinking; suggestions (only unreviewed, low-confidence Claude links); options in both directions with one per result; nothing the schema forbids; the kinds the picker searches. Mutation-checked: 4 breakages, all caught (one only after a test was added for it).
+- Browser: Link… from a method (search narrows, role, note), the row and its role, the tab count; ⋯ closes on a tap outside, edits the note (stored as the owner's), unlinks; a framework's, a hypothesis's and an ontology's connections; a paper links a hypothesis it tests (refuted) and the status follows; a Claude suggestion is accepted; all six suites green, no console or CSP errors.
+
+**Not tested / open**
+- Not deployed. "Change how it relates" writes the new link before removing the old one (two requests, not one transaction); a failure between them leaves both, which the owner sees and can unlink.

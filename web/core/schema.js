@@ -96,6 +96,7 @@ function check(s) {
   for (const [label, e] of Object.entries(s.entities || {})) {
     if (!/^[a-z]+:$/.test(e.key_prefix || '')) out.push(`entities.${label}: key_prefix looks like "word:"`);
     if (!MATCH_MODES.includes(e.match)) out.push(`entities.${label}: match must be one of ${MATCH_MODES.join(', ')}`);
+    if (e.label_plural != null && (typeof e.label_plural !== 'string' || !e.label_plural.trim())) out.push(`entities.${label}: label_plural must be text`);
   }
   for (const p of s.entity_public_props || []) if (!global.has(p)) out.push(`entity_public_props: ${p} is not in the global public_props whitelist`);
   for (const [field, rel] of Object.entries(s.relations || {})) if (!relTypes[rel]) out.push(`relations.${field}: ${rel} is not in relation_types`);
@@ -242,7 +243,7 @@ const slugOf = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replac
 function publicView() {
   const labels = [
     ...Object.entries(schema.types).map(([name, t]) => ({ name, label: t.label, plural: t.label_plural || t.label, color: t.color, big: Boolean(t.big) })),
-    ...Object.entries(schema.entities).map(([label, e]) => ({ name: label.toLowerCase(), label, color: e.color, big: false })),
+    ...Object.entries(schema.entities).map(([label, e]) => ({ name: label.toLowerCase(), label, plural: e.label_plural || label, color: e.color, big: false })),
   ];
   const collections = Object.entries(schema.types).filter(([, t]) => t.collection).map(([name, t]) => ({
     name, label: t.label, plural: t.label_plural || t.label, slug: slugOf(t.label_plural || t.label), schema_version: t.schema_version, managed: t.managed,

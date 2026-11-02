@@ -2,6 +2,11 @@
 
 Every change to `schema/schema.json`, with the reason. The spec is `docs/SCHEMA_DESIGN.md`. A per-type `schema_version` is raised when that type's fields change. Items below the current version form the audit worklist, so a change is never silently applied to old items.
 
+## v3, plural names for vocabulary (2026-11-02)
+
+Why: Task 11 step 4. Connections and the graph filter group links by type and need a plural heading ("People", not "Persons").
+- Entities may set `label_plural` (checked at start-up); all seven do. `GET /api/schema` gives it as `plural` on the entity labels. No data change.
+
 ## v3, Library sidebar groups (2026-11-02)
 
 Why: Task 11 step 1 (`docs/UI_REDESIGN.md`). The Library's single row of collections becomes a sidebar grouped by purpose.

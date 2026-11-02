@@ -362,13 +362,13 @@
     }
   },
   "entities": {
-    "Person": { "match": "person", "color": "#94a3b8", "key_prefix": "person:", "public": true, "prune_orphans": true, "help": "Author; ORCID where available." },
-    "Concept": { "match": "term", "color": "#06b6d4", "key_prefix": "concept:", "public": true, "prune_orphans": true },
-    "Topic": { "match": "term", "color": "#0ea5e9", "key_prefix": "topic:", "public": true, "help": "Hierarchical through BROADER." },
-    "Domain": { "match": "term", "color": "#14b8a6", "key_prefix": "domain:", "public": true, "help": "Short list maintained by the owner." },
-    "Venue": { "match": "name", "color": "#a3a3a3", "key_prefix": "venue:", "public": true },
-    "Organisation": { "match": "name", "color": "#78716c", "key_prefix": "org:", "public": false, "help": "Kept out of the public preview: case-study organisations can be sensitive." },
-    "Dataset": { "match": "name", "color": "#84cc16", "key_prefix": "dataset:", "public": true }
+    "Person": { "label_plural": "People", "match": "person", "color": "#94a3b8", "key_prefix": "person:", "public": true, "prune_orphans": true, "help": "Author; ORCID where available." },
+    "Concept": { "label_plural": "Concepts", "match": "term", "color": "#06b6d4", "key_prefix": "concept:", "public": true, "prune_orphans": true },
+    "Topic": { "label_plural": "Topics", "match": "term", "color": "#0ea5e9", "key_prefix": "topic:", "public": true, "help": "Hierarchical through BROADER." },
+    "Domain": { "label_plural": "Domains", "match": "term", "color": "#14b8a6", "key_prefix": "domain:", "public": true, "help": "Short list maintained by the owner." },
+    "Venue": { "label_plural": "Venues", "match": "name", "color": "#a3a3a3", "key_prefix": "venue:", "public": true },
+    "Organisation": { "label_plural": "Organisations", "match": "name", "color": "#78716c", "key_prefix": "org:", "public": false, "help": "Kept out of the public preview: case-study organisations can be sensitive." },
+    "Dataset": { "label_plural": "Datasets", "match": "name", "color": "#84cc16", "key_prefix": "dataset:", "public": true }
   },
   "entity_matching": "How web/core/vocab.js matches names. term: plurals are singularised (topics, concepts, domains). name: proper names, no singularising. person: also reads 'Last, First'.",
   "entity_public_props": ["key", "name"],

@@ -52,6 +52,77 @@ export function graphFilterGroups(labels, collections, sections = [], entityLabe
 // Large vocabularies stay off until asked for, so the first view is not a hairball.
 export const GRAPH_OFF_BY_DEFAULT = ['Concept', 'Person', 'Organisation', 'Venue'];
 
+// Headings for links, by direction: a framework lists the papers framing on it, a hypothesis the papers testing it,
+// an ontology its modules and users. Other relations read as their name.
+const REL_HEADINGS = {
+  out: { FRAMED_BY: 'Framed by', TESTS: 'Tests', USED_BY: 'Used by', PART_OF: 'Part of', DERIVED_FROM: 'Derived from', ANSWERS: 'Answers',
+    ASKED_IN: 'Asked in', ADDRESSED_BY: 'Addressed by', SUB_QUESTION_OF: 'Sub-question of', COMPETES_WITH: 'Competes with', ALIGNS_WITH: 'Aligns with' },
+  in: { FRAMED_BY: 'Framed by this', TESTS: 'Tested by', USED_BY: 'Uses this', PART_OF: 'Parts', DERIVED_FROM: 'Hypotheses derived from this',
+    ANSWERS: 'Hypotheses answering this', ASKED_IN: 'Questions asked here', ADDRESSED_BY: 'Questions it addresses', SUB_QUESTION_OF: 'Sub-questions',
+    COMPETES_WITH: 'Competing with this', BUILDS_ON: 'Built on by', DEFINED_IN: 'Concepts defined here' },
+};
+const relWords = (rel) => rel.toLowerCase().replace(/_/g, ' ');
+export const relHeading = (dir, rel) => (REL_HEADINGS[dir][rel] || (dir === 'out' ? relWords(rel)[0].toUpperCase() + relWords(rel).slice(1) : `${relWords(rel)} (from)`));
+// Links that belong to the bibliographic header (authors, venue, publisher), not to Connections.
+export const BIBLIO_RELS = ['AUTHORED_BY', 'PUBLISHED_IN', 'PUBLISHED_BY'];
+// A link's role as read from the item being viewed, with a test's result: "Framed by", "Tested by: refuted".
+export const relRole = (dir, rel, result) => relHeading(dir, rel) + (result ? `: ${result}` : '');
+// Agrees, disagrees, mixed or neutral, for the colour of a role.
+export function relTone(rel, result) {
+  if (result) return result === 'supported' ? 'agree' : result === 'refuted' ? 'disagree' : 'mixed';
+  return ['SUPPORTS'].includes(rel) ? 'agree' : ['CONTRADICTS', 'CRITIQUES', 'COMPETES_WITH'].includes(rel) ? 'disagree' : 'neutral';
+}
+// Claude's links that nobody has looked at and Claude was unsure of: offered as suggestions to link or dismiss.
+export const isSuggestion = (l) => l.by === 'claude' && l.status !== 'reviewed' && l.confidence === 'low';
+
+// The type a linked node is shown under: its collection, else its vocabulary label, else its first label.
+function typeOfLink(linkLabels, labels) { return labels.find((l) => (linkLabels || []).includes(l.label)) || null; }
+
+// Everything an item is linked to, both directions, grouped by the other node's type in sidebar order, then
+// vocabulary, then the rest. Each row knows its source and target (for unlinking) and how to read it from here.
+export function connectionGroups(item, { collections, sections = [], labels = [], entityLabels = [] }) {
+  const order = [...sidebarGroups(collections, sections).flatMap((g) => g.items.map((i) => collections.find((c) => c.name === i.id).label)),
+    ...entityLabels, ...labels.map((l) => l.label)];
+  const groups = new Map();
+  const add = (l, dir) => {
+    if (BIBLIO_RELS.includes(l.rel)) return;
+    const t = typeOfLink(l.labels, labels);
+    const id = t ? t.label : (l.labels || [])[0] || 'Other';
+    if (!groups.has(id)) groups.set(id, { id, label: t ? t.plural || t.label : id, name: t ? t.name : null, rows: [] });
+    groups.get(id).rows.push({ dir, rel: l.rel, key: l.key, name: l.name || l.key, role: relRole(dir, l.rel, l.result), tone: relTone(l.rel, l.result),
+      note: l.evidence || null, location: l.location || null, result: l.result || null, field: l.field || null, by: l.by || null,
+      suggested: isSuggestion(l), source: dir === 'out' ? item.key : l.key, target: dir === 'out' ? l.key : item.key });
+  };
+  for (const l of item.links.out) add(l, 'out');
+  for (const l of item.links.in) add(l, 'in');
+  const rank = (id) => { const i = order.indexOf(id); return i < 0 ? order.length : i; };
+  return [...groups.values()].sort((a, b) => rank(a.id) - rank(b.id));
+}
+
+// How this item may relate to a target, from the schema: links it can make (out) and links the target's collection
+// can make to it (in). A relation with a required enum property (TESTS: result) becomes one option per value.
+export function linkOptions(coll, targetLabels, collections) {
+  const out = [];
+  const expand = (dir, r) => {
+    const req = Object.entries(r.props || {}).find(([, p]) => p.required && p.type === 'enum');
+    if (!req) { out.push({ dir, rel: r.rel, props: {}, label: relRole(dir, r.rel) }); return; }
+    for (const v of req[1].enum) out.push({ dir, rel: r.rel, props: { [req[0]]: v }, label: relRole(dir, r.rel, v) });
+  };
+  for (const r of coll.relations) if (!BIBLIO_RELS.includes(r.rel) && r.to.some((l) => targetLabels.includes(l))) expand('out', r);
+  for (const tc of collections.filter((c) => targetLabels.includes(c.label))) {
+    for (const r of tc.relations) if (!BIBLIO_RELS.includes(r.rel) && r.to.includes(coll.label)) expand('in', r);
+  }
+  return out;
+}
+// The kinds of node this item can be linked to at all (for the Link picker): targets of its relations and the
+// collections whose relations reach it.
+export function linkableLabels(coll, collections) {
+  const set = new Set();
+  for (const r of coll.relations) if (!BIBLIO_RELS.includes(r.rel)) r.to.forEach((l) => set.add(l));
+  for (const c of collections) if (c.relations.some((r) => !BIBLIO_RELS.includes(r.rel) && r.to.includes(coll.label))) set.add(c.label);
+  return [...set];
+}
+
 // How many items of each collection the loaded graph holds: { collection name: count }. Papers count from their own list.
 export function collectionCounts(nodes, collections, papers = null) {
   const out = {};

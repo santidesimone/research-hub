@@ -210,7 +210,11 @@ Open `/library`. The **sidebar** groups the collections by purpose, as the schem
   - It also shows low-confidence values, ungrounded findings, empty fields and links with their evidence.
 - **Methods, use cases, case studies:**
   - The list shows the schema's columns and filters (vocabulary filters by name), with sort, search and "load more".
-  - The detail shows grouped fields and links in both directions, and lets you add or remove typed links (evidence, location, confidence).
+  - The detail has two tabs: **Info** (grouped fields) and **Connections**.
+- **Connections** (every item, papers included): everything the item is linked to, in both directions, as a simple diagram grouped by type (Papers, Research questions, Topics…), each link with its role read from here ("Framed by", "Tested by: refuted", in green, red, amber or blue), its note and location.
+  - **⋯** on a link: change how it relates (only the relations the schema allows for that pair), edit the note, or unlink. A link that is a field (topics, authors) opens the form instead.
+  - **Link…** finds anything the item can be linked to (any type, searched together), then asks how it relates, with an optional note and location. It is generic: a new type or relation in the schema shows up here by itself.
+  - **Suggested by Claude:** links Claude saved with low confidence that nobody reviewed, with **Link** (accept) and **Dismiss** (remove).
 - **Forms:**
   - **+ New** and **Edit** use forms generated from the schema: text, numbers, enums, list editors, structured editors (outcomes, actors, key findings ...), vocabulary pickers with type-ahead (a new name is matched or created server-side), and item pickers for links.
   - An edit sends only the fields you changed, and those become yours (`by: owner`, reviewed).

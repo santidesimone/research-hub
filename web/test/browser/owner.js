@@ -115,17 +115,43 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
     expect(after.provenance.purpose.at !== before.provenance.purpose.at, 'purpose re-stamped');
     expect(after.provenance.kind.at === before.provenance.kind.at && after.provenance.procedure.at === before.provenance.procedure.at, 'untouched fields keep their provenance');
   });
-  await step('add a typed link with the relation picker, then remove it', async () => {
-    await page.click('summary:has-text("Add a link")');
-    await page.selectOption('.linkform select', 'ADDRESSES');
-    await page.click('.linkform .picker input'); await page.fill('.linkform .picker input', 'offline');
-    await page.waitForSelector('.linkform .suggest li button');
-    await page.click('.linkform .suggest li button');
-    await page.fill('.linkform input[placeholder^=Evidence]', 'A review of offline payment pilots');
-    await page.click('.linkform button[type=submit]');
-    await page.waitForSelector('.rel li:has-text("Offline retail payments")');
-    await page.click('.rel li:has-text("Offline retail payments") button[aria-label="Remove link"]');
-    await until(async () => !(await page.$$eval('.rel li', (ls) => ls.some((l) => l.textContent.includes('Offline retail payments')))));
+  const UC = '.connrow[data-key="usecase:offline-retail-payments"]';
+  await step('Connections: Link… finds anything, then asks how it relates', async () => {
+    await page.click('article.doc .tab[data-tab=connections]');
+    await page.click('.connections [data-action=link]');
+    await page.waitForSelector('.linkpicker input[type=search]');
+    await page.waitForSelector('.linkpicker .linkgroup[data-kind=Paper]'); // before typing: a few of each kind
+    await page.fill('.linkpicker input[type=search]', 'offline');
+    await page.waitForSelector('.linkpicker .linkgroup[data-kind=Paper]', { state: 'detached' }); // no paper matches
+    await page.waitForSelector('.linkpicker .linkgroup[data-kind=UseCase] .opt[data-option="usecase:offline-retail-payments"]');
+    await page.screenshot({ path: OUT + '/5a-link-picker.png' });
+    await page.click('.linkpicker .opt[data-option="usecase:offline-retail-payments"]');
+    await page.waitForSelector('.linkpicker .linkwhat:has-text("Offline retail payments")');
+    await page.fill('.linkpicker input[aria-label=Note]', 'A review of offline payment pilots');
+    await page.click('.linkpicker .opt[data-option="out:ADDRESSES:"]');
+    await page.waitForSelector(`${UC}[data-rel=ADDRESSES] small:has-text("A review of offline payment pilots")`);
+    expect((await page.textContent(`${UC} .role`)) === 'Addresses', 'the role, read from here');
+    expect((await page.textContent('.tab[data-tab=connections]')).includes('Connections · '), 'the tab shows a count');
+    await page.screenshot({ path: OUT + '/5b-connections.png' });
+  });
+  await step('Connections: ⋯ edits the note, closes on a tap outside, and unlinks', async () => {
+    await page.click(`${UC} .dots`);
+    await page.waitForSelector('.rowmenu .opt[data-option=unlink]');
+    await page.mouse.click(5, 5); // outside
+    await until(async () => !(await page.$('.rowmenu')));
+    await page.click(`${UC} .dots`);
+    await page.click('.rowmenu .opt[data-option=note]');
+    await page.fill('.rowmenu textarea', 'Pilots in three countries');
+    await page.fill('.rowmenu input[aria-label=Location]', 'section 2');
+    await page.click('.rowmenu button[type=submit]');
+    await page.waitForSelector(`${UC} small:has-text("Pilots in three countries · section 2")`);
+    const it = await api('/api/items/method%3Asystematic-review');
+    const l = it.links.out.find((x) => x.rel === 'ADDRESSES');
+    expect(l.evidence === 'Pilots in three countries' && l.location === 'section 2' && l.by === 'owner', JSON.stringify(l));
+    await page.click(`${UC} .dots`);
+    await page.click('.rowmenu .opt[data-option=unlink]');
+    await until(async () => !(await page.$(UC)));
+    await page.click('article.doc .tab[data-tab=info]');
   });
   await step('delete with confirmation', async () => {
     await page.click('article.doc .actions button:has-text("Delete")');
@@ -220,23 +246,25 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
   });
   await step('a framework page lists the papers and questions framed by it', async () => {
     await page.click('.item:has-text("Two-sided market theory")');
-    await page.waitForSelector('section[data-rel="in:FRAMED_BY"]');
-    const framed = await page.textContent('section[data-rel="in:FRAMED_BY"]');
-    expect(framed.includes('Owner-Custodianship') && framed.includes('Why do stablecoins struggle'), framed);
-    expect((await page.textContent('section[data-rel="in:DERIVED_FROM"]')).includes('Adoption requires'), 'hypotheses derived from it');
+    await page.click('article.doc .tab[data-tab=connections]');
+    await page.waitForSelector('.conngroup[data-group=Paper]');
+    expect((await page.textContent('.conngroup[data-group=Paper]')).includes('Owner-Custodianship'), 'papers framed by it');
+    expect((await page.textContent('.conngroup[data-group=ResearchQuestion]')).includes('Why do stablecoins struggle'), 'questions framed by it');
+    expect((await page.textContent('.conngroup[data-group=Hypothesis] .connrow[data-rel=DERIVED_FROM]')).includes('Adoption requires'), 'hypotheses derived from it');
   });
   await step('hypotheses have their own entry; a hypothesis shows its tests and a derived, mixed status', async () => {
     await page.goto(U + '/library/research-questions');
     await page.click('.sidebar .nav[data-section=hypothesis]');
     await page.waitForURL(/\/library\/hypotheses/);
     await page.click('.item:has-text("Adoption requires")');
-    await page.waitForSelector('section[data-rel="in:TESTS"] table');
-    const head = await page.textContent('section[data-rel="in:TESTS"] .label');
-    expect(/1 supported/.test(head) && /1 refuted/.test(head), head);
-    expect((await page.$$('section[data-rel="in:TESTS"] .badge.res-supported')).length === 1 && (await page.$$('section[data-rel="in:TESTS"] .badge.res-refuted')).length === 1, 'result badges');
+    await page.click('article.doc .tab[data-tab=connections]');
+    await page.waitForSelector('.conngroup[data-group=Paper] .connrow[data-rel=TESTS]');
+    const roles = await page.$$eval('.conngroup[data-group=Paper] .connrow[data-rel=TESTS] .role', (e) => e.map((x) => `${x.textContent}|${x.className}`).sort());
+    expect(JSON.stringify(roles) === JSON.stringify(['Tested by: refuted|role tone-disagree', 'Tested by: supported|role tone-agree']), roles.join(' / '));
+    await page.screenshot({ path: OUT + '/6-hypothesis.png' });
+    await page.click('article.doc .tab[data-tab=info]');
     expect((await page.textContent('[data-field=status] .field-value')).trim() === 'mixed', 'status');
     expect((await page.textContent('[data-field=status] .prov')).includes('derived'), 'marked as derived');
-    await page.screenshot({ path: OUT + '/6-hypothesis.png' });
   });
   await step('create a hypothesis from the form: the title comes from the statement', async () => {
     await page.click('button:has-text("+ New")');
@@ -250,26 +278,40 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
   });
   await step('a paper adds a TESTS link with its result, and the hypothesis status follows', async () => {
     await page.goto(U + '/library/papers?key=' + encodeURIComponent('doi:10.1007/978-1-4757-0602-4_18'));
-    await page.click('.tab[data-tab=analysis]');
-    await page.waitForSelector('.analysis section[data-rel="out:TESTS"]');
-    await page.click('.analysis summary:has-text("Add a link")');
-    await page.selectOption('.analysis .linkform select >> nth=0', 'TESTS');
-    await page.selectOption('.analysis .linkform select[aria-label=result]', 'refuted');
-    await page.click('.analysis .linkform .picker input'); await page.fill('.analysis .linkform .picker input', 'Redemption');
-    await page.waitForSelector('.analysis .linkform .suggest li button');
-    await page.click('.analysis .linkform .suggest li button');
-    await page.fill('.analysis .linkform input[placeholder^=Evidence]', 'trust held despite the risk');
-    await page.click('.analysis .linkform button[type=submit]');
-    await page.waitForSelector('.analysis section[data-rel="out:TESTS"] tr[data-key="hypothesis:redemption-risk-reduces-trust-in-stablecoins"]');
+    await page.click('.tab[data-tab=connections]');
+    await page.waitForSelector('.connpane .connrow[data-rel=TESTS]');
+    await page.click('.connpane [data-action=link]');
+    await page.fill('.linkpicker input[type=search]', 'Redemption');
+    await page.waitForSelector('.linkpicker .linkgroup[data-kind=Paper]', { state: 'detached' });
+    await page.click('.linkpicker .linkgroup[data-kind=Hypothesis] .opt[data-option="hypothesis:redemption-risk-reduces-trust-in-stablecoins"]');
+    await page.fill('.linkpicker input[aria-label=Note]', 'trust held despite the risk');
+    await page.click('.linkpicker .opt[data-option="out:TESTS:refuted"]');
+    await page.waitForSelector('.connpane .connrow[data-key="hypothesis:redemption-risk-reduces-trust-in-stablecoins"] .role.tone-disagree:has-text("Tests: refuted")');
     const it = await api('/api/items/hypothesis%3Aredemption-risk-reduces-trust-in-stablecoins');
     expect(it.fields.status === 'refuted', it.fields.status);
+  });
+  await step('Connections: an unsure Claude link is a suggestion; Link accepts it', async () => {
+    const pk = 'doi:10.1007/978-1-4757-0602-4_18';
+    await api('/api/analysis', { method: 'POST', body: JSON.stringify({ collection: 'paper', key: pk, model: 'claude-test', links: [{ rel: 'FRAMED_BY', target: 'framework:two-sided-market-theory', confidence: 'low', evidence: 'a two-sided reading', location: 'p. 2' }] }) });
+    await page.reload();
+    await page.click('.tab[data-tab=connections]');
+    const sug = '.connsuggest .suggestrow[data-key="framework:two-sided-market-theory"]';
+    await page.waitForSelector(sug);
+    expect(!(await page.$('.conntree .connrow[data-rel=FRAMED_BY]')), 'not in the diagram until accepted');
+    await page.click(`${sug} button:has-text("Link")`);
+    await page.waitForSelector('.conntree .connrow[data-rel=FRAMED_BY][data-key="framework:two-sided-market-theory"]');
+    expect(!(await page.$(sug)), 'no longer a suggestion');
+    const it = await api('/api/items/' + encodeURIComponent(pk));
+    expect(it.links.out.find((l) => l.rel === 'FRAMED_BY').status === 'reviewed', 'accepted');
   });
   await step('an ontology page shows its modules and users', async () => {
     await page.goto(U + '/library/ontologies-and-standards');
     await page.click('.item:has-text("Financial Industry Business Ontology")');
-    await page.waitForSelector('section[data-rel="in:PART_OF"]');
-    expect((await page.textContent('section[data-rel="in:PART_OF"]')).includes('FIBO Foundations'), 'modules');
-    expect((await page.textContent('section[data-rel="out:USED_BY"]')).includes('Offline retail payments'), 'users');
+    await page.click('article.doc .tab[data-tab=connections]');
+    await page.waitForSelector('.connrow[data-rel=PART_OF][data-dir=in]');
+    expect((await page.textContent('.connrow[data-rel=PART_OF][data-dir=in]')).includes('FIBO Foundations'), 'modules');
+    expect((await page.textContent('.connrow[data-rel=USED_BY]')).includes('Offline retail payments'), 'users');
+    await page.click('article.doc .tab[data-tab=info]');
     expect((await page.textContent('[data-field=urls]')).includes('https://spec.edmcouncil.org/fibo/'), 'links');
   });
   await step('an ontology snapshot: the license must be confirmed, and an old snapshot says so', async () => {

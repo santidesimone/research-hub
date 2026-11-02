@@ -2,8 +2,9 @@
 // filters, sorting, grouped fields with provenance, typed links, and create / edit / delete. Owner, private library.
 import { h, icon, api, toast } from '../../shell/ui.js';
 import { isEmpty, noun, plainValue } from './model.js';
-import { renderFields, renderLinks } from './view.js';
-import { itemForm, linkForm, picker, vocabSearch } from './forms.js';
+import { renderFields } from './view.js';
+import { Connections } from './connections.js';
+import { itemForm, picker, vocabSearch } from './forms.js';
 
 export class CollectionView {
   // lib: the Library (navigation, schema); coll: the schema collection
@@ -136,7 +137,7 @@ function snapshotPanel(item, onChanged) {
     h('div', { class: 'actions' }, go, remove));
 }
 
-// The full item page: header, actions, grouped fields with provenance, links and the add-link editor.
+// The full item page: header, actions, and two tabs: Info (grouped fields with provenance) and Connections.
 export function itemDetail(lib, coll, item, { onChanged, skip = [], compact = false } = {}) {
   const wrap = h('article', { class: 'doc' });
   const open = (k) => lib.openKey(k);
@@ -155,13 +156,19 @@ export function itemDetail(lib, coll, item, { onChanged, skip = [], compact = fa
   wrap.append(h('div', { class: 'actions' },
     h('button', { class: 'btn btn-sm', onclick: () => lib.goSection(coll.name, { key: item.key, edit: true }) }, 'Edit'), delBtn,
     h('span', { class: 'faint small' }, item.key)));
-  wrap.append(renderFields(item, coll, { onRef: open, skip: compact ? ['title', ...skip] : ['title', 'tldr', ...skip] }));
-  wrap.append(renderLinks(item, { onOpen: open, onRemove: async (l) => {
-    try { await api(`/api/items/${encodeURIComponent(item.key)}/links?rel=${encodeURIComponent(l.rel)}&target=${encodeURIComponent(l.key)}`, { method: 'DELETE' }); toast('Link removed'); onChanged && onChanged(); } catch (e) { toast(e.message, 'error'); }
-  } }));
-  if (coll.name === 'ontology') wrap.append(snapshotPanel(item, onChanged));
-  if (coll.relations.length) {
-    wrap.append(h('details', { class: 'meta' }, h('summary', null, 'Add a link'), linkForm(coll, item, lib.formCtx(), { onDone: () => { toast('Linked'); onChanged && onChanged(); } })));
-  }
+  const info = h('div', { class: 'tabpane' }, renderFields(item, coll, { onRef: open, skip: compact ? ['title', ...skip] : ['title', 'tldr', ...skip] }),
+    coll.name === 'ontology' && snapshotPanel(item, onChanged));
+  const conn = new Connections(lib, coll, item, { onChanged });
+  const connEl = h('div', { class: 'tabpane' }, conn.render());
+  const tabs = h('div', { class: 'tabs', role: 'tablist' });
+  const setTab = (id) => {
+    lib.itemTab = id;
+    tabs.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === id));
+    info.classList.toggle('hidden', id !== 'info'); connEl.classList.toggle('hidden', id !== 'connections');
+  };
+  tabs.append(h('button', { type: 'button', class: 'tab', role: 'tab', 'data-tab': 'info', onclick: () => setTab('info') }, 'Info'),
+    h('button', { type: 'button', class: 'tab', role: 'tab', 'data-tab': 'connections', onclick: () => setTab('connections') }, `Connections · ${conn.count}`));
+  wrap.append(tabs, info, connEl);
+  setTab(lib.itemTab === 'connections' ? 'connections' : 'info');
   return wrap;
 }

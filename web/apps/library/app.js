@@ -7,8 +7,9 @@ import { h, icon, api, state as S, BASE, cssVar, loadScript, toast } from '../..
 import { parseRoute, routePath, collectionOf, sidebarGroups, collectionCounts, graphFilterGroups, GRAPH_OFF_BY_DEFAULT } from './model.js';
 import { CollectionView, itemDetail } from './collections.js';
 import { ReviewView, reviewCounts } from './review.js';
-import { itemForm, linkForm } from './forms.js';
-import { renderFields, renderLinks } from './view.js';
+import { itemForm } from './forms.js';
+import { renderFields } from './view.js';
+import { Connections } from './connections.js';
 
 const statusText = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/-/g, ' ') : '');
 const STATUS_CHOICES = ['to-read', 'reading', 'read', 'canonical', 'critique-target'];
@@ -428,19 +429,21 @@ class Library {
     if (isPaper && where === 'library' && this.mode === 'private') {
       const reader = h('div', { class: 'reader hidden' });
       const analysis = h('div', { class: 'analysis hidden' });
+      const conns = h('div', { class: 'connpane hidden' });
       const tabs = h('div', { class: 'tabs', role: 'tablist' });
       const btn = (id, label) => h('button', { class: 'tab', role: 'tab', 'data-tab': id, onclick: () => setTab(id) }, label);
-      tabs.append(...[btn('info', 'Info'), btn('analysis', 'Analysis'), d.file && btn('reader', 'Reader')].filter(Boolean));
+      tabs.append(...[btn('info', 'Info'), btn('analysis', 'Analysis'), btn('connections', 'Connections'), d.file && btn('reader', 'Reader')].filter(Boolean));
       setTab = (id) => {
         if (id === 'reader' && !d.file) id = 'info';
         this.tab = id;
         tabs.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === id));
-        info.classList.toggle('hidden', id !== 'info'); reader.classList.toggle('hidden', id !== 'reader'); analysis.classList.toggle('hidden', id !== 'analysis');
+        info.classList.toggle('hidden', id !== 'info'); reader.classList.toggle('hidden', id !== 'reader'); analysis.classList.toggle('hidden', id !== 'analysis'); conns.classList.toggle('hidden', id !== 'connections');
         wrap.style.maxWidth = id === 'reader' ? '1100px' : '';
         if (id === 'reader' && !reader.firstChild) reader.append(...this.readerContent(d.file, p.title)); // created on first view so arrowing through the list does not load every file
         if (id === 'analysis' && !analysis.firstChild) this.fillAnalysis(analysis, d.key);
+        if (id === 'connections' && !conns.firstChild) this.fillConnections(conns, d.key, tabs.querySelector('[data-tab=connections]'));
       };
-      wrap.insertBefore(tabs, info); wrap.append(analysis, reader);
+      wrap.insertBefore(tabs, info); wrap.append(analysis, conns, reader);
       setTab(this.tab);
     }
     container.replaceChildren(wrap);
@@ -461,16 +464,21 @@ class Library {
       const item = await api('/api/items/' + keyQuery(key));
       if (key !== this.sel) return;
       const coll = this.coll('paper');
-      const reload = () => { el.replaceChildren(); this.fillAnalysis(el, key); };
       el.replaceChildren(
         h('div', { class: 'row-flex legendline' }, h('span', { class: 'faint small' }, 'Written by:'), h('span', { class: 'prov prov-claude' }, 'Claude'), h('span', { class: 'prov prov-source' }, 'source'), h('span', { class: 'prov prov-owner' }, 'you'),
           item.record_status && h('span', { class: 'faint small' }, '· ' + (item.record_status === 'reviewed' ? 'reviewed' : 'not reviewed'))),
-        renderFields(item, coll, { onRef: (k) => this.openKey(k), showEmpty: true, skip: ['title'] }),
-        renderLinks(item, { onOpen: (k) => this.openKey(k), onRemove: async (l) => {
-          try { await api(`/api/items/${keyQuery(key)}/links?rel=${encodeURIComponent(l.rel)}&target=${keyQuery(l.key)}`, { method: 'DELETE' }); toast('Link removed'); reload(); } catch (e) { toast(e.message, 'error'); }
-        } }),
-        // a paper's own links: the frameworks framing it, the hypotheses it tests (with the result), what it builds on
-        h('details', { class: 'meta' }, h('summary', null, 'Add a link'), linkForm(coll, item, this.formCtx(), { onDone: () => { toast('Linked'); reload(); } })));
+        renderFields(item, coll, { onRef: (k) => this.openKey(k), showEmpty: true, skip: ['title'] }));
+    } catch (e) { el.replaceChildren(h('div', { class: 'alert' }, e.message)); }
+  }
+  // A paper's Connections tab: every link, managed in one place (connections.js). The tab label shows the count.
+  async fillConnections(el, key, tabBtn) {
+    el.replaceChildren(h('div', { class: 'center' }, h('span', { class: 'spinner' })));
+    try {
+      const item = await api('/api/items/' + keyQuery(key));
+      if (key !== this.sel) return;
+      const conn = new Connections(this, this.coll('paper'), item, { onChanged: async () => { await this.loadData(); this.renderNav(); return this.fillConnections(el, key, tabBtn); } });
+      el.replaceChildren(conn.render());
+      if (tabBtn) tabBtn.textContent = `Connections · ${conn.count}`;
     } catch (e) { el.replaceChildren(h('div', { class: 'alert' }, e.message)); }
   }
   // Google Drive previews embed. Other sites often forbid embedding, so they get an "open" card and an optional try.

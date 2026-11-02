@@ -1925,6 +1925,30 @@ const seed = require('../../data/seed_papers.json');
       ['vocabulary', ['Person', 'Concept', 'Topic', 'Domain', 'Venue', 'Organisation', 'Dataset']], ['other', ['Note', 'Project']]]);
     assert.deepEqual(M8.GRAPH_OFF_BY_DEFAULT, ['Concept', 'Person', 'Organisation', 'Venue']);
     assert.ok(M8.GRAPH_OFF_BY_DEFAULT.every((l) => pubLabels.some((x) => x.label === l)), 'every default-off type exists');
+    // Connections: an item's links grouped by the other node's type (sidebar order, then vocabulary), read from here
+    const ctxC = { collections: pv8, sections: S8.publicView().sections, labels: pubLabels, entityLabels: S8.publicView().entities.map((e) => e.label) };
+    const hItem = { key: 'hypothesis:h', links: {
+      out: [{ rel: 'ANSWERS', key: 'question:q', name: 'Q', labels: ['ResearchQuestion'] }, { rel: 'ABOUT', key: 'topic:t', name: 'CBDC', labels: ['Topic'], field: 'topics' }],
+      in: [{ rel: 'TESTS', key: 'doi:1', name: 'P1', labels: ['Paper'], result: 'refuted', evidence: 'e', location: 'p. 3' },
+        { rel: 'TESTS', key: 'doi:2', name: 'P2', labels: ['Paper'], result: 'supported', by: 'claude', confidence: 'low', status: 'auto' },
+        { rel: 'AUTHORED_BY', key: 'person:x', name: 'X', labels: ['Person'] }] } };
+    const cg = M8.connectionGroups(hItem, ctxC);
+    assert.deepEqual(cg.map((g) => [g.id, g.label, g.rows.map((r) => [r.role, r.tone, r.suggested])]), [
+      ['Paper', 'Papers', [['Tested by: refuted', 'disagree', false], ['Tested by: supported', 'agree', true]]],
+      ['ResearchQuestion', 'Research questions', [['Answers', 'neutral', false]]],
+      ['Topic', 'Topics', [['About', 'neutral', false]]]], 'grouped, ordered, bibliographic links left out, an unsure Claude link is a suggestion');
+    assert.deepEqual([cg[0].rows[0].source, cg[0].rows[0].target, cg[0].rows[0].note, cg[2].rows[0].field], ['doi:1', 'hypothesis:h', 'e', 'topics'], 'source and target for unlinking');
+    assert.deepEqual([{ by: 'claude', status: 'auto', confidence: 'high' }, { by: 'claude', status: 'reviewed', confidence: 'low' }, { by: 'owner', confidence: 'low' }].map(M8.isSuggestion), [false, false, false],
+      'only unreviewed, unsure Claude links are suggestions');
+    const hyp = pv8.find((c) => c.name === 'hypothesis'), paperC = pv8.find((c) => c.name === 'paper');
+    const fromHyp = M8.linkOptions(hyp, ['Artifact', 'Paper'], pv8);
+    assert.deepEqual(fromHyp.filter((o) => o.rel === 'TESTS').map((o) => [o.dir, o.label, o.props.result]), [['in', 'Tested by: supported', 'supported'], ['in', 'Tested by: refuted', 'refuted'], ['in', 'Tested by: mixed', 'mixed'], ['in', 'Tested by: inconclusive', 'inconclusive']],
+      'a paper tests a hypothesis: offered from the hypothesis, one option per result');
+    assert.ok(M8.linkOptions(paperC, ['Artifact', 'Hypothesis'], pv8).some((o) => o.dir === 'out' && o.rel === 'TESTS'), 'and from the paper');
+    assert.ok(!M8.linkOptions(paperC, ['Person'], pv8).some((o) => o.rel === 'AUTHORED_BY'), 'authors stay in the bibliographic fields');
+    assert.deepEqual(M8.linkOptions(hyp, ['Venue'], pv8), [], 'nothing the schema does not allow');
+    const kinds = M8.linkableLabels(hyp, pv8);
+    assert.ok(kinds.includes('Paper') && kinds.includes('ResearchQuestion') && kinds.includes('Framework') && !kinds.includes('Venue'), kinds.join(','));
     // list entries are plain text: linked names joined, enum words, a count for tables
     assert.deepEqual([M8.plainValue({ type: 'ref', list: true }, [{ key: 'topic:a', name: 'CBDC' }, { name: 'Privacy' }]), M8.plainValue({ type: 'enum' }, 'partly_answered'),
       M8.plainValue({ type: 'object', list: true, label: 'Outcomes' }, [{}, {}]), M8.plainValue({ type: 'text' }, null), M8.plainValue({ type: 'integer' }, 0)],
