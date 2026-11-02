@@ -11,6 +11,7 @@ const { CONTENT_DIR } = require('../../core/env');
 const { requireOwner, isOwner } = require('../../core/auth');
 const registry = require('../../core/registry');
 const publicExport = require('../../core/public-export');
+const publishing = require('../../core/publishing');
 const hooks = require('../../core/hooks');
 const links = require('../../core/links');
 const config = require('../../core/config');
@@ -32,7 +33,13 @@ module.exports = {
     app.get('/api/schema', wrap(async (req, res) => {
       const out = { ...publicView(), features: registry.features };
       for (const c of out.collections) c.locked = types.get(c.name).locked || []; // fields owner edits may not change (papers: identity and sources)
-      if (isOwner(req)) { try { out.migrations = await migrate.applied(); } catch { /* database not reachable yet */ } }
+      if (isOwner(req)) {
+        try { out.migrations = await migrate.applied(); } catch { /* database not reachable yet */ }
+        try { // new-item forms start on the owner's default visibility (Settings), not the schema's
+          out.publishing = await publishing.get();
+          for (const c of out.collections) if (c.fields.visibility) c.fields.visibility = { ...c.fields.visibility, default: out.publishing.default_visibility };
+        } catch { /* database not reachable yet: the schema's default stands */ }
+      }
       res.json(out);
     }));
 

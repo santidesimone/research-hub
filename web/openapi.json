@@ -1184,7 +1184,8 @@
           "200": {
             "description": "nodes and edges marked public"
           }
-        }
+        },
+        "description": "{exported_at, detail, nodes, edges}. detail is the owner's public_detail setting: basic (each node has the public_props whitelist) or full (every property except Drive file ids, local paths and Drive links; notes also carry html)."
       }
     },
     "/mcp": {
@@ -2578,6 +2579,206 @@
           },
           "401": {
             "description": "{error: invalid_client}"
+          }
+        }
+      }
+    },
+    "/api/settings/publishing": {
+      "get": {
+        "operationId": "getPublishing",
+        "summary": "Publishing settings: default visibility of new items, and basic or full detail for visitors",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "default_visibility": {
+                      "type": "string",
+                      "enum": [
+                        "public",
+                        "private"
+                      ]
+                    },
+                    "public_detail": {
+                      "type": "string",
+                      "enum": [
+                        "basic",
+                        "full"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "setPublishing",
+        "summary": "Change default_visibility and/or public_detail. Applies right away (the public preview is rebuilt)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "default_visibility": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "private"
+                    ]
+                  },
+                  "public_detail": {
+                    "type": "string",
+                    "enum": [
+                      "basic",
+                      "full"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The settings after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "default_visibility": {
+                      "type": "string",
+                      "enum": [
+                        "public",
+                        "private"
+                      ]
+                    },
+                    "public_detail": {
+                      "type": "string",
+                      "enum": [
+                        "basic",
+                        "full"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown setting or value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/publishing/apply": {
+      "post": {
+        "operationId": "applyVisibility",
+        "summary": "Give every item the same visibility at once",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "visibility"
+                ],
+                "properties": {
+                  "visibility": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "private"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{visibility, changed}"
+          },
+          "400": {
+            "description": "Bad visibility",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/items/{key}": {
+      "get": {
+        "operationId": "getPublicItem",
+        "summary": "A public item with every field, while public_detail is full (no sign-in). Links to private items, Drive links and the hub bookkeeping are left out",
+        "security": [],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Item key, URL-encoded (encodeURIComponent): DOI keys contain \"/\"."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Item (links are empty: relations are in /api/public)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not public, or the owner shows basic details only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }

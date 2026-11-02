@@ -26,8 +26,8 @@ module.exports = function makeGenericType(name, def) {
       if (!title) throw new HttpError(400, 'title is required');
       const slug = slugify(input.slug || title);
       if (!slug) throw new HttpError(400, 'could not derive a slug from the title');
-      const visibility = input.visibility || 'private';
-      if (!['public', 'private'].includes(visibility)) throw new HttpError(400, 'visibility must be public or private');
+      const visibility = input.visibility || null; // not said: the owner's default applies to a new item
+      if (visibility && !['public', 'private'].includes(visibility)) throw new HttpError(400, 'visibility must be public or private');
       const { errors, warnings, unknown } = validate(name, { ...input, title });
       if (errors.length) throw new HttpError(400, errors.join('; '), { errors, warnings });
       const props = { title, summary: input.summary ?? null, visibility, body: input.body ?? null };

@@ -141,7 +141,7 @@ class Library {
     if (!n) throw new Error('Not found');
     const find = (k) => this.graph.nodes.find((y) => y.key === k) || { labels: [], props: {} };
     const nm = (k) => find(k).props.title || find(k).props.name || k;
-    return { ...n, has_file: false, file: null, html: null,
+    return { ...n, has_file: false, file: null, html: n.html || null, // html: note text, in the full public view only
       out: this.graph.edges.filter((e) => e.from === key).map((e) => ({ type: e.type, key: e.to, title: nm(e.to), labels: find(e.to).labels })),
       in: this.graph.edges.filter((e) => e.to === key).map((e) => ({ type: e.type, key: e.from, title: nm(e.from), labels: find(e.from).labels })) };
   }
@@ -236,7 +236,9 @@ class Library {
     this.countEl.textContent = `${rows.length} of ${all} ${this.sectionNoun()}`;
     if (!rows.length) {
       ul.replaceChildren(h('li', { class: 'empty', style: { height: 'auto', padding: '40px 16px' } },
-        all ? `No ${this.sectionNoun()} match.` : this.section === 'paper' ? 'No papers yet. Add one with + New, the CLI (hub add <doi>) or Claude.' : `Nothing here yet.`));
+        all ? `No ${this.sectionNoun()} match.`
+          : this.mode === 'public' ? (S.owner ? 'Nothing is public yet. Set an item\'s Visibility to Public to show it here.' : 'Nothing is public yet. Sign in to see the library.')
+          : this.section === 'paper' ? 'No papers yet. Add one with + New, the CLI (hub add <doi>) or Claude.' : `Nothing here yet.`));
       return;
     }
     ul.replaceChildren(...rows.map((p) => {
@@ -340,6 +342,8 @@ class Library {
           ? h('button', { class: 'btn btn-primary btn-sm', onclick: () => setTab('reader') }, icon('pdf', 15), 'Read ' + noun)
           : h('a', { class: 'btn btn-primary btn-sm', href: f.url, target: '_blank', rel: 'noopener' }, icon('pdf', 15), 'Open ' + noun));
         else actions.append(h('span', { class: 'btn btn-sm disabled' }, icon('pdf', 15), 'No file linked'));
+      } else if (p.file_url) { // the full public view keeps open links (arXiv and the like), never Drive copies
+        actions.append(h('a', { class: 'btn btn-primary btn-sm', href: p.file_url, target: '_blank', rel: 'noopener' }, icon('pdf', 15), 'Open file'));
       }
       const href = p.url || (p.doi ? 'https://doi.org/' + p.doi : null);
       if (href) actions.append(h('a', { class: 'btn btn-sm', href, target: '_blank', rel: 'noopener' }, icon('link', 15), p.doi ? 'DOI' : 'Source'));
@@ -372,7 +376,11 @@ class Library {
       [this.relSection('Links to', out.filter((r) => r.type !== 'AUTHORED_BY')), this.relSection('Linked from', inc)].forEach((x) => x && info.append(x));
     }
     if (isPaper && where === 'library' && this.mode === 'private' && S.owner) info.append(this.fileEditor(d));
-    const rows = Object.entries(p).filter(([k]) => !['title', 'name', 'summary', 'abstract', 'authors', 'body'].includes(k));
+    // the full public view: every field of a collection item, laid out as on the owner's pages
+    const full = this.mode === 'public' && this.graph.detail === 'full';
+    const fc = full && this.collOfKey(key);
+    if (fc) { const box = h('div', { class: 'analysis' }); info.append(box); this.fillPublicFields(box, key, fc); }
+    const rows = Object.entries(p).filter(([k]) => !['title', 'name', 'summary', 'abstract', 'authors', 'body'].includes(k) && !(fc && k.endsWith('_json')));
     if (rows.length) info.append(h('details', { class: 'meta' }, h('summary', null, 'Metadata'),
       h('table', { class: 'kv' }, h('tbody', null, rows.map(([k, v]) => h('tr', null, h('td', null, k), h('td', null, String(v))))))));
     wrap.append(info);
@@ -398,6 +406,14 @@ class Library {
     }
     container.replaceChildren(wrap);
     container.scrollTop = 0;
+  }
+  // A public item's fields for visitors (GET /api/public/items, only while the owner shows everything).
+  async fillPublicFields(el, key, coll) {
+    try {
+      const item = await api('/api/public/items/' + keyQuery(key));
+      if (key !== this.sel) return;
+      el.append(renderFields(item, coll, { onRef: (k) => this.openKey(k), skip: ['title', 'summary', 'abstract'] }));
+    } catch (e) { el.append(h('div', { class: 'alert' }, e.message)); }
   }
   // The paper's schema fields, grouped, with who wrote each (Claude / source / you), confidence and ungrounded flags.
   async fillAnalysis(el, key) {

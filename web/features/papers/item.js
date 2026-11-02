@@ -37,20 +37,21 @@ function paperKey(item) {
   return 'paper:' + sha(String(item.title).toLowerCase().replace(/\s+/g, ' ').trim() + '|' + (yearOf(item.date) || ''), 10);
 }
 
+// A "public" or "private" tag sets the visibility; with neither, it is left to the owner's default for new papers.
 function parseTags(tags) {
-  let isPublic = false;
+  let visibility = null;
   const topics = [];
   for (const { tag } of tags) {
     const t = String(tag).trim(), low = t.toLowerCase();
     if (low.startsWith('topic:')) topics.push(t.slice(6).trim());
-    else if (low === 'public') isPublic = true;
+    else if (low === 'public' || low === 'private') visibility = low;
   }
-  return { topics, isPublic };
+  return { topics, visibility };
 }
 
 // Flatten a normalized item into the fields stored on the graph.
 function nodeFields(item) {
-  const { topics, isPublic } = parseTags(item.tags);
+  const { topics, visibility } = parseTags(item.tags);
   const people = item.creators.filter((c) => ['author', 'presenter'].includes(c.creatorType));
   const named = (people.length ? people : item.creators).map((c) => ({
     name: c.name || `${c.firstName || ''} ${c.lastName || ''}`.trim(),
@@ -69,7 +70,7 @@ function nodeFields(item) {
     author_lasts: named.map((p) => p.last),
     people: named.map((p) => ({ key: 'person:' + slugify(p.name), name: p.name })),
     topics: topics.map((t) => ({ key: 'concept:' + slugify(t), name: t.replace(/-/g, ' ') })),
-    visibility: isPublic ? 'public' : 'private',
+    visibility,
   };
 }
 

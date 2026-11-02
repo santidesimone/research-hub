@@ -26,7 +26,7 @@ Legend. *By*: **S** source (Crossref/OpenAlex/the file), **C** Claude, **Y** the
 | body | markdown (owner's long notes) | Y | Standard |
 | topics | links to Topic | C/Y | Standard |
 | tags | text list | Y | Standard |
-| visibility | enum private, public | Y | Core |
+| visibility | enum private, public (a new item gets the owner's default from Settings when its input does not say) | Y | Core |
 | record_status | enum auto, reviewed | Sys/Y | Core |
 | schema_version | integer, per type | Sys | Core |
 | provenance | map field -> {by, at, model, confidence, status auto/reviewed} | Sys | Core |

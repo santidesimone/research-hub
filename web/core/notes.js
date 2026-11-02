@@ -9,6 +9,7 @@ const { schema, safeLabel, safeRel, orphanLabels, keyPrefix } = require('./schem
 const { HttpError } = require('./errors');
 const { writeTx, run } = require('./db');
 const hooks = require('./hooks');
+const publishing = require('./publishing');
 const { nameProps } = require('./vocab');
 
 const KINDS = Object.fromEntries(Object.entries(schema.types).filter(([, d]) => d.managed === 'markdown' && d.folder));
@@ -31,7 +32,7 @@ function scalar(v) {
 }
 
 // entry: { path: 'notes/foo.md', meta: {front matter}, body: 'markdown text' } -> { item, warnings } | { skip }
-function toItem({ path: p, meta, body }) {
+function toItem({ path: p, meta, body }, defaultVisibility = 'private') {
   meta = meta && typeof meta === 'object' ? meta : {};
   const parts = String(p || '').split('/').filter(Boolean);
   const file = parts[parts.length - 1] || '';
@@ -44,8 +45,8 @@ function toItem({ path: p, meta, body }) {
   if (!KINDS[kind]) return { skip: `${p}: put it in a ${Object.values(KINDS).map((d) => d.folder + '/').join(', ')} folder or set kind: ${Object.keys(KINDS).join(' | ')}` };
   const def = KINDS[kind];
   const warnings = [];
-  let visibility = meta.visibility == null ? 'private' : String(meta.visibility);
-  if (!['public', 'private'].includes(visibility)) { warnings.push(`${p}: visibility "${visibility}" is not public or private; using private`); visibility = 'private'; }
+  let visibility = meta.visibility == null ? defaultVisibility : String(meta.visibility); // no visibility line: the owner's default
+  if (!['public', 'private'].includes(visibility)) { warnings.push(`${p}: visibility "${visibility}" is not public or private; using ${defaultVisibility}`); visibility = defaultVisibility; }
   const props = {
     title: meta.title ? String(meta.title) : stem,
     visibility,
@@ -80,8 +81,9 @@ async function sync(entries, { prune = true, allowEmpty = false, dryRun = false 
   const skipped = [];
   const warnings = [];
   const seen = new Set();
+  const { default_visibility: defaultVisibility } = await publishing.get();
   for (const e of entries) {
-    const r = toItem(e || {});
+    const r = toItem(e || {}, defaultVisibility);
     if (r.skip) { skipped.push(r.skip); continue; }
     if (seen.has(r.item.key)) { skipped.push(`${e.path}: duplicate of ${r.item.key}`); continue; }
     seen.add(r.item.key);

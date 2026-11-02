@@ -6,6 +6,7 @@ const { HttpError } = require('./errors');
 const types = require('./types');
 const vocab = require('./vocab');
 const hooks = require('./hooks');
+const publishing = require('./publishing');
 
 // The hub's own bookkeeping, from the type's schema entry: how it is managed, its schema version, its collection.
 function systemProps(label) {
@@ -21,9 +22,14 @@ function systemProps(label) {
 const vocabFields = (m) => (entityLabels.includes(m.label) && m.props && m.props.name ? vocab.nameProps(m.label, m.props.name) : {});
 
 // art = { key, label, props: {..}, links: [ {rel, merge:{label,key,props}} | {rel, match:key} ], warnings?: [] }
+// props.visibility left out (or null) means "not said": a new item gets the owner's default (core/publishing.js) and an
+// existing one keeps what it has.
 async function upsertArtifact(tx, art, { overwrite = false } = {}) {
   const label = safeLabel(art.label);
   const sys = systemProps(art.label);
+  const { visibility, ...props } = art.props || {};
+  const onCreate = { ...sys.onCreate, visibility: visibility || (await publishing.get()).default_visibility };
+  if (visibility) props.visibility = visibility;
   const found = await tx.run('MATCH (n:Artifact {key:$key}) RETURN labels(n) AS labels', { key: art.key });
   if (found.records.length) {
     const labels = found.records[0].get('labels');
@@ -34,7 +40,7 @@ async function upsertArtifact(tx, art, { overwrite = false } = {}) {
     `MERGE (n:Artifact {key:$key})
      ON CREATE SET n.created_at = datetime(), n += $onCreate
      SET n:${label}, n += $props, n += $sys, n.source = 'hub', n.updated_at = datetime()`,
-    { key: art.key, props: art.props, sys: sys.props, onCreate: sys.onCreate }
+    { key: art.key, props, sys: sys.props, onCreate }
   );
   await tx.run("MATCH (n:Artifact {key:$key})-[r]->() WHERE r.source = 'hub' DELETE r", { key: art.key });
   const warnings = [...(art.warnings || [])];

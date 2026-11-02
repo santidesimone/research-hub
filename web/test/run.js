@@ -374,7 +374,8 @@ const seed = require('../../data/seed_papers.json');
   assert.equal(personal.statusFromInput({ status: 'reading' }, 'method'), 'reading');
   const [ucWrite] = calls.filter(([q]) => q.includes('n += $sys'));
   assert.deepEqual(ucWrite[1].sys, { managed: 'db', schema_version: 1, collection: 'use_case' });
-  assert.deepEqual(ucWrite[1].onCreate, { record_status: 'auto' }); assert.ok(ucWrite[0].includes('ON CREATE SET n.created_at = datetime(), n += $onCreate'), 'record_status is only set on create');
+  assert.deepEqual(ucWrite[1].onCreate, { record_status: 'auto', visibility: 'private' }, 'no visibility given: the default applies on create only');
+  assert.ok(!('visibility' in ucWrite[1].props), 'an existing item keeps its visibility when the input does not say'); assert.ok(ucWrite[0].includes('ON CREATE SET n.created_at = datetime(), n += $onCreate'), 'record_status is only set on create');
   assert.deepEqual(artifacts.systemProps('Note'), { props: { managed: 'markdown', schema_version: 1 }, onCreate: {} });
   calls.length = 0;
   runImpl = async () => [{ key: 'usecase:x' }];
@@ -1448,14 +1449,123 @@ const seed = require('../../data/seed_papers.json');
     await assert.rejects(() => items.update('method:cap', { domain: Array.from({ length: 101 }, (_, i) => 'd' + i) }), (e) => e.status === 400 && /at most 100 values/.test(e.message));
     await assert.rejects(() => items.list({ collection: 'method', q: 'x'.repeat(501) }), (e) => e.status === 400 && /q is limited to 500/.test(e.message));
     runImpl = async () => [];
-    // the public preview skips internal and confidential case studies, and their edges
+    // the public preview skips case studies marked confidential, and their edges (internal ones follow their visibility)
     let pubQ = [];
     runImpl = async (q) => { pubQ.push(q); return []; };
     pubExport.invalidate(); await pubExport.read(); pubExport.invalidate();
+    pubQ = pubQ.filter((q) => q.includes(':Artifact'));
     assert.equal(pubQ.length, 3);
-    for (const q of pubQ) assert.ok(q.includes("coalesce(a.sensitivity, 'public') = 'public'"), q);
-    assert.ok(pubQ[2].includes("coalesce(b.sensitivity, 'public') = 'public'"), 'and items linked from public ones');
+    for (const q of pubQ) assert.ok(q.includes("coalesce(a.sensitivity, 'public') <> 'confidential'"), q);
+    assert.ok(pubQ[2].includes("coalesce(b.sensitivity, 'public') <> 'confidential'"), 'and items linked from public ones');
     runImpl = async () => [];
+  }
+
+  /* ------------------------------------------------------------ publishing: default visibility, basic or full public detail */
+  {
+    const publishing = require('../core/publishing');
+    const pubExport = require('../core/public-export');
+    const fakeDb = require.cache[dbPath].exports;
+    const realExec = fakeDb.exec;
+    let setting = null; // what (:HubSetting {id:'publishing'}) holds
+    const fresh = () => { publishing.forget(); pubExport.invalidate(); };
+    try {
+      // the setting: defaults until the owner chooses, bad stored values ignored
+      runImpl = async (q) => (q.includes('HubSetting') ? (setting ? [setting] : []) : []);
+      fresh(); assert.deepEqual(await publishing.get(), { default_visibility: 'private', public_detail: 'basic' });
+      setting = { default_visibility: 'public', public_detail: 'full' }; fresh();
+      assert.deepEqual(await publishing.get(), setting);
+      setting = { default_visibility: 'everyone', public_detail: 'full' }; fresh();
+      assert.equal((await publishing.get()).default_visibility, 'private', 'an unknown stored value falls back to the default');
+      const writes = [];
+      fakeDb.exec = async (q, p) => { writes.push([q, p]); return q.includes('count(a)') ? [{ changed: 7 }] : []; };
+      setting = null; fresh();
+      await publishing.set({ public_detail: 'full' });
+      assert.ok(writes[0][0].includes("MERGE (s:HubSetting {id:'publishing'}) SET s += $changes") && writes[0][1].changes.public_detail === 'full');
+      for (const bad of [{ shown: 'all' }, { public_detail: 'everything' }, { default_visibility: 'hidden' }, {}, null]) await assert.rejects(() => publishing.set(bad), (e) => e.status === 400, JSON.stringify(bad));
+      assert.deepEqual(await publishing.applyToAll('public'), { visibility: 'public', changed: 7 });
+      assert.ok(writes.at(-1)[0].includes('SET a.visibility = $v') && writes.at(-1)[1].v === 'public');
+      await assert.rejects(() => publishing.applyToAll('hidden'), (e) => e.status === 400);
+
+      // never shown: Drive ids, local paths, links into Drive; everything else is
+      assert.deepEqual(publishing.fullProps({ title: 'T', abstract: 'A', url: 'https://arxiv.org/abs/1', file_url: 'https://drive.google.com/file/d/ABCDEFGHIJKL/view',
+        drive_file_id: 'ABCDEFGHIJKL', source_path: '/Users/me/x.md', path: 'notes/x.md', snapshot__file_url: 'https://docs.google.com/document/d/1/edit', provenance_json: '{}' }),
+      { title: 'T', abstract: 'A', url: 'https://arxiv.org/abs/1', provenance_json: '{}' });
+      assert.ok(publishing.isDriveLink('https://drive.google.com/drive/folders/X') && !publishing.isDriveLink('https://arxiv.org/pdf/1') && !publishing.isDriveLink('drive.google.com'));
+
+      // the public export follows the setting
+      const node = { key: 'note:n', labels: ['Artifact', 'Note'], props: { key: 'note:n', title: 'N', summary: 'S', abstract: 'A', body: '# Hello', visibility: 'public',
+        drive_file_id: 'ABCDEFGHIJKL', file_url: 'https://drive.google.com/file/d/ABCDEFGHIJKL/view', url: 'https://arxiv.org/abs/1' } };
+      runImpl = async (q) => (q.includes('HubSetting') ? (setting ? [setting] : []) : q.includes('RETURN a.key AS key') ? [node] : []);
+      setting = null; fresh();
+      let out = await pubExport.build();
+      assert.equal(out.detail, 'basic');
+      assert.deepEqual(out.nodes[0].props, { key: 'note:n', title: 'N', summary: 'S', url: 'https://arxiv.org/abs/1' }, 'basic: the whitelist only');
+      assert.ok(!('html' in out.nodes[0]));
+      setting = { public_detail: 'full' }; fresh();
+      out = await pubExport.build();
+      assert.equal(out.detail, 'full');
+      assert.equal(out.nodes[0].props.abstract, 'A'); assert.equal(out.nodes[0].props.body, '# Hello');
+      assert.ok(!('drive_file_id' in out.nodes[0].props) && !('file_url' in out.nodes[0].props), 'full: still no Drive copies');
+      assert.match(out.nodes[0].html, /<h1[^>]*>Hello<\/h1>/, 'full: the note text as HTML');
+
+      // new items get the default; an explicit visibility wins; existing items are not touched
+      runImpl = async (q) => (q.includes('HubSetting') ? (setting ? [setting] : []) : []);
+      setting = { default_visibility: 'public' }; fresh(); calls.length = 0;
+      await artifacts.add('use_case', { title: 'Default public' });
+      let [w] = calls.filter(([q]) => q.includes('n += $onCreate'));
+      assert.equal(w[1].onCreate.visibility, 'public'); assert.ok(!('visibility' in w[1].props));
+      calls.length = 0;
+      await artifacts.add('use_case', { title: 'Said private', visibility: 'private' });
+      [w] = calls.filter(([q]) => q.includes('n += $onCreate'));
+      assert.equal(w[1].onCreate.visibility, 'private'); assert.equal(w[1].props.visibility, 'private');
+      await assert.rejects(() => artifacts.add('use_case', { title: 'Bad', visibility: 'secret' }), (e) => e.status === 400);
+      // papers: a public or private tag decides, no tag leaves it to the default; Markdown notes without a visibility line follow it
+      const pItem = require('../features/papers/item');
+      const base = { itemType: 'journalArticle', title: 'T', creators: [], date: '2020' };
+      assert.equal(pItem.nodeFields(pItem.normalizeItem({ ...base, tags: ['private'] })).visibility, 'private');
+      assert.equal(pItem.nodeFields(pItem.normalizeItem({ ...base, tags: ['public'] })).visibility, 'public');
+      assert.equal(pItem.nodeFields(pItem.normalizeItem({ ...base, tags: [] })).visibility, null);
+      assert.equal(notes.toItem({ path: 'notes/a.md', meta: {}, body: '' }, 'public').item.props.visibility, 'public');
+      assert.equal(notes.toItem({ path: 'notes/a.md', meta: { visibility: 'private' }, body: '' }, 'public').item.props.visibility, 'private');
+
+      // an item for visitors: refs to private items, Drive links and bookkeeping are left out
+      const { publicItem } = require('../features/publishing');
+      const vis = publicItem({ key: 'method:pub', collection: 'method', record_status: 'auto', created_at: null, updated_at: null, provenance: { summary: { by: 'claude' } },
+        fields: { summary: 'S', used_in: [{ key: 'usecase:secret', name: 'Secret' }, { key: 'usecase:open', name: 'Open' }, { key: null, name: 'free text' }],
+          urls: [{ url: 'https://drive.google.com/file/d/ABCDEFGHIJKL/view', role: 'copy' }, { url: 'https://arxiv.org/abs/1', role: 'paper' }] },
+        meta: { file_url: 'https://drive.google.com/file/d/ABCDEFGHIJKL/view', drive_file_id: 'ABCDEFGHIJKL', source_path: '/Users/me' },
+        extra: { custom: 'ok', source_path: '/Users/me' }, links: { out: [{ key: 'usecase:secret' }], in: [] } }, new Set(['method:pub', 'usecase:open']));
+      assert.deepEqual(vis.fields.used_in, [{ key: 'usecase:open', name: 'Open' }, { key: null, name: 'free text' }]);
+      assert.deepEqual(vis.fields.urls, [{ role: 'copy' }, { url: 'https://arxiv.org/abs/1', role: 'paper' }]);
+      assert.deepEqual(vis.meta, {}); assert.deepEqual(vis.extra, { custom: 'ok' }); assert.deepEqual(vis.links, { out: [], in: [] });
+      assert.deepEqual(vis.provenance, { summary: { by: 'claude' } });
+
+      // the routes: settings are owner only; the public item exists only in full mode, and only for public items
+      const appP = require('express')();
+      require('../features/publishing').mount(appP);
+      appP.use((err, _req, res, _next) => res.status(err.status || 500).json({ error: err.message }));
+      const srvP = await new Promise((ok) => { const x = appP.listen(0, '127.0.0.1', () => ok(x)); });
+      const pBase = `http://127.0.0.1:${srvP.address().port}`;
+      const OWN = { Authorization: 'Bearer abc', 'Content-Type': 'application/json' };
+      try {
+        for (const [m, u] of [['GET', '/api/settings/publishing'], ['PUT', '/api/settings/publishing'], ['POST', '/api/settings/publishing/apply']]) {
+          assert.equal((await fetch(pBase + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'GET' ? undefined : '{}' })).status, 401, `${m} ${u} is owner only`);
+        }
+        setting = null; fresh();
+        assert.deepEqual(await (await fetch(pBase + '/api/settings/publishing', { headers: OWN })).json(), { default_visibility: 'private', public_detail: 'basic' });
+        assert.equal((await fetch(pBase + '/api/settings/publishing', { method: 'PUT', headers: OWN, body: '{"public_detail":"loud"}' })).status, 400);
+        const methodRow = { labels: ['Artifact', 'Method'], props: { key: 'method:pub', title: 'Pub', collection: 'method', visibility: 'public', summary: 'S', source_path: '/Users/me' }, out: [], inc: [] };
+        runImpl = async (q) => (q.includes('HubSetting') ? (setting ? [setting] : []) : q.includes('RETURN a.key AS key') ? [{ key: 'method:pub', labels: ['Artifact', 'Method'], props: methodRow.props }] : q.includes('AS inc') ? [methodRow] : []);
+        fresh();
+        assert.equal((await fetch(pBase + '/api/public/items/method%3Apub')).status, 404, 'basic mode: no full items');
+        setting = { public_detail: 'full' }; fresh();
+        const got = await fetch(pBase + '/api/public/items/method%3Apub');
+        assert.equal(got.status, 200);
+        const gotItem = await got.json();
+        assert.equal(gotItem.fields.summary, 'S'); assert.ok(!JSON.stringify(gotItem).includes('/Users/me'), 'no local paths');
+        assert.equal((await fetch(pBase + '/api/public/items/method%3Aprivate')).status, 404, 'only items in the public export');
+      } finally { await new Promise((ok) => srvP.close(ok)); }
+    } finally { fakeDb.exec = realExec; setting = null; fresh(); runImpl = async () => []; }
   }
 
   /* ------------------------------------------------------------ Task 8: frameworks, questions, hypotheses, ontologies */

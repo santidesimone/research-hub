@@ -50,7 +50,7 @@ Status key: **Built** (in the current code), **Planned** (in `docs/BUILD_BRIEF.m
 | ID | Requirement | Why | Status |
 | :---- | :---- | :---- | :---- |
 | S1 | One owner credential (`HUB_API_TOKEN`): Bearer token for API, CLI and MCP; signed session cookie for the UI. | Single-user system | Built |
-| S2 | Anonymous visitors see only a **public preview**: items marked public, with a whitelist of fields (no statuses, abstracts, file links or note text). | Show some work publicly without leaking private data | Built (per-type whitelists in T1; internal and confidential case studies excluded in T7) |
+| S2 | Anonymous visitors see only a **public preview**: items marked public. The owner chooses in Settings whether new items default to public, and whether visitors see the whitelist of fields or every field (Drive copies, Drive ids, local paths and the personal layer never). | Show work publicly, as much as the owner wants, without leaking what must stay private | Built (per-type whitelists in T1; confidential case studies excluded in T7; Settings 2026-11-01, where internal case studies became visible when public) |
 | S3 | All write endpoints require the owner. |  | Built |
 | S4 | The Cypher endpoint is read-only, enforced in three layers (text guard, EXPLAIN check, read transaction), row-capped. | A token leak must not allow writes through the query path | Built |
 | S5 | Security headers, CSP with nonce, rate limits, request logging without query strings, no secrets in the repo. | Internet-facing | Built (rate limits hardened in T7) |

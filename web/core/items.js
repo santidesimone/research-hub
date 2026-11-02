@@ -243,7 +243,7 @@ async function write(key, rawInput, opts = {}) {
     let created = false;
     if (opts.create) {
       const label = typeDef(c).label;
-      await artifacts.upsertArtifact(tx, { key, label, props: { title: input.title, visibility: input.visibility || 'private' }, links: [] });
+      await artifacts.upsertArtifact(tx, { key, label, props: { title: input.title, visibility: input.visibility }, links: [] });
       created = true;
     }
     const state = rowOf((await tx.run(READ, { key })).records[0]);
@@ -338,7 +338,7 @@ async function createPaper(fields, body) {
   const input = {
     title: f.title, DOI: f.doi, creators: (Array.isArray(f.authors) ? f.authors : f.authors ? [f.authors] : []).map(nameOf),
     date: f.date || (f.year != null ? String(f.year) : undefined), publicationTitle: nameOf(f.venue), url: f.url, abstractNote: f.abstract,
-    itemType: f.item_type ? cd.write(f.item_type) : undefined, tags: f.visibility === 'public' ? ['public'] : [],
+    itemType: f.item_type ? cd.write(f.item_type) : undefined, tags: ['public', 'private'].includes(f.visibility) ? [f.visibility] : [],
     file_url: body.file_url, copy_to_drive: body.copy_to_drive,
   };
   const added = await artifacts.add('paper', Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined)));

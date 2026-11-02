@@ -81,6 +81,7 @@ jobs:
           node test/browser/seed.js
           node test/browser/owner.js
           node test/browser/public-mobile.js
+          node test/browser/publishing.js
       - name: CLI end to end
         working-directory: web
         run: node test/cli-e2e.js

@@ -1,0 +1,1 @@
+{ "id": "settings", "title": "Settings", "description": "What visitors see: default visibility and how much of each public item they get", "icon": "lock", "auth": "owner", "order": 30 }

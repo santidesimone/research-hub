@@ -16,6 +16,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | 8b File upload beyond PDFs (ontology snapshots) | done (2026-10-31), live Drive not tested | See "Task 8b" below. |
 | 9 Claude chat connector: OAuth for MCP, upload link | done (2026-10-31), tested live from the claude.ai chat | See "Task 9" below. |
 | Served at santidesimone.com/research-hub | done (2026-11-01), tested live | See "Served at santidesimone.com" below. |
+| Publishing settings (default visibility, full public detail) | done (2026-11-01), not deployed yet | See "Publishing settings" below. |
 
 ## Task 0. Baseline against real services
 
@@ -528,3 +529,24 @@ Firebase Hosting can rewrite only to Cloud Run in its own project (`santidesimon
 
 **Data**
 - Production is the real library. The local database is for development (example data from `scripts/seed.py`); it is not copied to production.
+
+## Publishing settings (2026-11-01)
+
+The owner wanted everything public and transparent, and the choice easy to change. CLAUDE.md rule 6 (a fixed public whitelist) is now a setting the owner controls; what can never be public is listed in the rule.
+
+**Changed**
+- `web/core/publishing.js` (new): `default_visibility` (public | private) and `public_detail` (basic | full) on `(:HubSetting {id:'publishing'})`, read through a 10 s cache. Defaults keep the old behaviour (private, basic). `HIDDEN` (Drive file ids, local paths) and Drive links are never public.
+- `web/features/publishing` (new): `GET`/`PUT /api/settings/publishing` and `POST /api/settings/publishing/apply` (owner), and `GET /api/public/items/<key>` (anyone, full mode and public items only; refs to private items and Drive links are removed).
+- `web/apps/settings` (new, owner only): the two switches and "Make all public / private" (with a confirm click).
+- Default visibility: `artifacts.upsertArtifact` sets it on create only when the input does not say; an existing item keeps its own on re-import or overwrite (it used to fall back to private). Papers read a `public` or `private` tag; Markdown notes without a `visibility:` line follow the default; `/api/schema` gives forms the owner's default.
+- Public export: full mode keeps every property but the hidden ones and adds note HTML; `detail` is in the payload. Case studies are hidden only when `sensitivity` is `confidential` (internal ones used to be hidden too).
+- Library, public view in full mode: open file links ("Open file"), note text, and every field of collection items laid out as on the owner's pages. Your reading status stays owner-only.
+
+**Tested**
+- Offline (`npm test`): the setting (defaults, bad stored values, validation, the write), apply-to-all, `fullProps`, the export in both modes, default visibility on create versus explicit and existing, paper tags, notes, the public item scrub, the routes (owner only; 404 in basic mode and for non-public keys). Mutation-checked: 7 breakages, all caught.
+- Browser, on a throwaway Neo4j and hub: `owner.js` and `public-mobile.js` unchanged and green with the defaults; the new `web/test/browser/publishing.js` (Settings switches, a visitor sees the abstract and every method field in full mode, "Make all public" shows a private paper and a case study, the settings API is owner only, no console or CSP errors) green. A new item created with the default public is public, and `/api/schema` gives forms the public default.
+
+**Not tested / open**
+- Not deployed: production still runs the previous version (private, basic) until `deploy/deploy.sh`; then switch Settings to public and everything, and press "Make all public".
+- (`npm run test:integration` passed on a throwaway Neo4j 5 after this change.)
+- A visitor's browser may keep the public preview for `PUBLIC_CACHE_SECONDS` (60) after a change.
