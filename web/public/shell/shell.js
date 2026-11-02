@@ -97,7 +97,7 @@ function renderTopbar() {
     current && !current.default && h('span', { class: 'crumb' }, current.title),
     h('div', { class: 'spacer' }),
     state.owner
-      ? [h('span', { class: 'badge ok' }, 'Owner'), h('button', { class: 'btn btn-ghost btn-sm', onclick: signOut }, 'Sign out')]
+      ? h('button', { class: 'btn btn-ghost btn-sm', onclick: signOut }, 'Sign out')
       : !login && h('button', { class: 'btn btn-sm', onclick: signInDialog }, icon('lock', 15), 'Sign in'),
     h('button', { class: 'iconbtn', 'aria-label': 'Toggle theme', onclick: () => setTheme(theme() === 'dark' ? 'light' : 'dark') }, icon(theme() === 'dark' ? 'sun' : 'moon', 18)));
   if (menuOpen && !login) {

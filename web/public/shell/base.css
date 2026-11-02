@@ -87,9 +87,31 @@ h1, h2, h3 { font-family: var(--font-heading); font-weight: 500; margin: 0; line
 .appcard p { margin: 4px 0 0; color: var(--text-muted); font-size: 14px; }
 
 /* library: master / detail */
-.toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-.libwrap { height: 100%; display: flex; flex-direction: column; }
+.libwrap { height: 100%; display: grid; grid-template-columns: 240px minmax(0, 1fr); }
+.libmain { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .libbody { flex: 1; min-height: 0; }
+
+/* library: the sidebar (groups from the schema's ui_sections), collapsible to a rail, a drawer on phones */
+.sidebar { display: flex; flex-direction: column; gap: 8px; min-height: 0; padding: 12px 10px; background: var(--bg-sunken); border-right: 1px solid var(--border); }
+.sidehead { display: flex; gap: 6px; align-items: center; }
+.sidehead .input { padding: 7px 10px 7px 32px; font-size: 13.5px; }
+.sidescroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.navgroup { margin-top: 12px; display: grid; gap: 2px; }
+.navgroup:first-child { margin-top: 4px; }
+.navlabel { padding: 4px 10px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); font-weight: 600; }
+.nav { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 5px 10px; border: 0; border-radius: var(--radius-s); background: transparent; color: var(--text); font-size: 14px; text-align: left; cursor: pointer; }
+.nav:hover { background: var(--surface-2); }
+.nav.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.nav .count { font-size: 12px; color: var(--text-muted); font-weight: 400; }
+.navsep { height: 1px; background: var(--border); margin: 12px 4px 6px; }
+.navmode { margin-top: 14px; align-self: flex-start; }
+.sidebar .expand, .mobilebar, .libwrap > .scrim { display: none; }
+@media (min-width: 801px) {
+  .libwrap.collapsed { grid-template-columns: 48px minmax(0, 1fr); }
+  .libwrap.collapsed .sidebar { padding: 12px 6px; align-items: center; }
+  .libwrap.collapsed .sidebar > :not(.expand) { display: none; }
+  .libwrap.collapsed .sidebar .expand { display: inline-flex; }
+}
 .split { height: 100%; display: grid; grid-template-columns: 390px 1fr; }
 .pane { display: flex; flex-direction: column; min-height: 0; background: var(--bg-sunken); border-right: 1px solid var(--border); }
 .pane-head { padding: 12px; display: grid; gap: 8px; border-bottom: 1px solid var(--border); }
@@ -156,8 +178,6 @@ pre.json { background: var(--bg-sunken); border: 1px solid var(--border); border
 .grow { flex: 1; min-width: 0; }
 .small { font-size: 12.5px; }
 .scroll { height: 100%; overflow: auto; }
-.collbar { max-width: 100%; overflow-x: auto; flex-wrap: nowrap; }
-.collbar button { white-space: nowrap; }
 .prov { display: inline-flex; align-items: center; padding: 0 7px; border-radius: 99px; font-size: 11.5px; font-weight: 500; border: 1px solid transparent; }
 .prov-claude { background: var(--accent-soft); color: var(--accent); }
 .prov-source { background: var(--info-soft); color: var(--info); }
@@ -217,15 +237,7 @@ pre.json { background: var(--bg-sunken); border: 1px solid var(--border); border
 .curation .conflicts { margin-top: 8px; font-size: 13px; }
 .curation .conflicts th { text-align: left; }
 
-/* collections under "More", grouped collections, results of tests */
-.moremenu { position: relative; }
-.moremenu summary { list-style: none; cursor: pointer; padding: 8px 12px; border-radius: var(--radius-s); background: var(--surface-2); font-size: 13px; font-weight: 500; color: var(--text-muted); white-space: nowrap; }
-.moremenu summary::-webkit-details-marker { display: none; }
-.moremenu.on summary { background: var(--surface); color: var(--text); box-shadow: var(--shadow-s); }
-.moremenu .menu-list { position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; min-width: 220px; display: grid; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-s); box-shadow: var(--shadow-m); }
-.moremenu .menu-list button { text-align: left; border: 0; background: transparent; padding: 8px 10px; border-radius: var(--radius-s); cursor: pointer; font-size: 13.5px; }
-.moremenu .menu-list button:hover, .moremenu .menu-list button.on { background: var(--surface-2); }
-.groupswitch { width: max-content; max-width: 100%; }
+/* results of tests */
 .badge.res-supported { background: var(--ok-soft); color: var(--ok); }
 .badge.res-refuted { background: var(--danger-soft); color: var(--danger); }
 .badge.res-mixed { background: var(--warn-soft); color: var(--warn); }
@@ -233,9 +245,14 @@ pre.json { background: var(--bg-sunken); border: 1px solid var(--border); border
 .kv.results td { vertical-align: middle; }
 
 @media (max-width: 800px) {
-  .toolbar { gap: 8px; }
-  .toolbar .collbar { flex: 1 1 100%; }   /* the collections bar gets its own row and scrolls sideways */
-  .toolbar .spacer { display: none; }
+  .libwrap { grid-template-columns: minmax(0, 1fr); }
+  /* closed: off screen and hidden, so neither the keyboard nor a screen reader lands in it */
+  .sidebar { position: fixed; top: 56px; left: 0; bottom: 0; width: min(300px, 86vw); z-index: 50; transform: translateX(-105%); visibility: hidden; transition: transform .2s, visibility .2s; box-shadow: var(--shadow-m); }
+  .sidebar .collapse { display: none; }
+  .libwrap.drawer-open .sidebar { transform: none; visibility: visible; }
+  .libwrap.drawer-open > .scrim { display: block; position: fixed; inset: 56px 0 0 0; z-index: 45; border: 0; padding: 0; background: rgba(0,0,0,.25); }
+  .mobilebar { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  .mobiletitle { font-weight: 600; }
   .brand { white-space: nowrap; }
   .objedit { grid-template-columns: 1fr; }
   .split, .graphwrap { grid-template-columns: 1fr; grid-template-rows: 42% 1fr; }

@@ -18,20 +18,21 @@ export function routePath({ section, key = null, edit = false }, collections) {
   const s = qs.toString();
   return `/library/${coll ? coll.slug : section}${s ? '?' + s : ''}`;
 }
-// The Collections bar: the main collections in a row, the rest (ui_more) under "More". Collections sharing a ui_group
-// (research questions and hypotheses) are one entry that opens the first and switches between them.
-export function barEntries(collections) {
-  const main = collections.filter((c) => !c.ui_more).map((c) => ({ id: c.name, label: c.plural, members: [c.name] }));
-  const more = [];
-  for (const c of collections.filter((x) => x.ui_more)) {
-    const g = c.ui_group;
-    const same = g && more.find((e) => e.group === g.id);
-    if (same) same.members.push(c.name);
-    else more.push({ id: c.name, label: g ? g.label : c.plural, members: [c.name], group: g ? g.id : null });
-  }
-  return { main, more };
+// The Library sidebar: the schema's ui_sections in order, each with the collections that name it (ui_section), in
+// schema order. A collection naming no known section lands in a trailing "Other" group, so a new type is never lost.
+export function sidebarGroups(collections, sections = []) {
+  const groups = sections.map((s) => ({ id: s.id, label: s.label, items: [] }));
+  const other = { id: 'other', label: 'Other', items: [] };
+  for (const c of collections) (groups.find((g) => g.id === c.ui_section) || other).items.push({ id: c.name, label: c.plural });
+  return [...groups, other].filter((g) => g.items.length);
 }
-export const entryOf = (entries, section) => [...entries.main, ...entries.more].find((e) => e.members.includes(section)) || null;
+
+// How many items of each collection the loaded graph holds: { collection name: count }. Papers count from their own list.
+export function collectionCounts(nodes, collections, papers = null) {
+  const out = {};
+  for (const c of collections) out[c.name] = c.name === 'paper' && papers ? papers.length : nodes.filter((n) => (n.labels || []).includes(c.label)).length;
+  return out;
+}
 
 // Which collection a node belongs to, from its labels.
 export const collectionOf = (labels, collections) => (collections.find((c) => (labels || []).includes(c.label)) || null);

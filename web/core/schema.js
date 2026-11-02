@@ -59,6 +59,11 @@ function check(s) {
     }
   };
   checkFields('common_fields', s.common_fields);
+  // the Library sidebar groups; every collection names one (ui_section)
+  const sections = Array.isArray(s.ui_sections) ? s.ui_sections : [];
+  if (!sections.length || sections.some((x) => !x || !/^[a-z_]+$/.test(x.id || '') || typeof x.label !== 'string' || !x.label.trim())) out.push('ui_sections: a list of {id, label}');
+  const sectionIds = new Set(sections.map((x) => x && x.id));
+  if (sectionIds.size !== sections.length) out.push('ui_sections: ids must be unique');
   for (const [name, t] of Object.entries(s.types || {})) {
     const at = `types.${name}`;
     if (!MANAGED.includes(t.managed)) out.push(`${at}: managed must be one of ${MANAGED.join(', ')}`);
@@ -67,8 +72,7 @@ function check(s) {
     if (t.key_prefix != null && !/^[a-z]+:$/.test(t.key_prefix)) out.push(`${at}: key_prefix looks like "word:"`);
     if (t.managed === 'markdown' && !t.folder) out.push(`${at}: Markdown-managed types need a folder`);
     if (t.collection && !t.fields) out.push(`${at}: collections need fields`);
-    if (t.ui_more != null && typeof t.ui_more !== 'boolean') out.push(`${at}: ui_more must be true or false`);
-    if (t.ui_group != null && !(t.ui_group && /^[a-z_]+$/.test(t.ui_group.id || '') && typeof t.ui_group.label === 'string')) out.push(`${at}: ui_group needs an id and a label`);
+    if (t.collection && !sectionIds.has(t.ui_section)) out.push(`${at}: ui_section must be one of ${[...sectionIds].join(', ')}`);
     if (t.title_from != null && !['text', 'longtext'].includes(((t.fields || {})[t.title_from] || {}).type)) out.push(`${at}: title_from must name a text field of this type`);
     checkFields(at + '.fields', t.fields);
     const known = new Set([...Object.keys(s.common_fields || {}), ...Object.keys(t.fields || {})]);
@@ -243,13 +247,13 @@ function publicView() {
   const collections = Object.entries(schema.types).filter(([, t]) => t.collection).map(([name, t]) => ({
     name, label: t.label, plural: t.label_plural || t.label, slug: slugOf(t.label_plural || t.label), schema_version: t.schema_version, managed: t.managed,
     list_columns: t.list_columns || [], filters: t.filters || [], detail_groups: t.detail_groups || [],
-    ui_more: Boolean(t.ui_more), ui_group: t.ui_group || null, title_from: t.title_from || null,
+    ui_section: t.ui_section, title_from: t.title_from || null,
     fields: Object.fromEntries(Object.entries(fieldsOf(name)).filter(([, f]) => !(f.by.length === 1 && f.by[0] === 'Sys'))
       .map(([f, spec]) => [f, Object.fromEntries(FIELD_KEYS.filter((k) => spec[k] !== undefined).map((k) => [k, spec[k]]))])),
     relations: relationsFrom(t.label),
   }));
   const entities = Object.entries(schema.entities).map(([label, e]) => ({ label, key_prefix: e.key_prefix }));
-  return { version: schema.version, labels, collections, entities };
+  return { version: schema.version, labels, sections: schema.ui_sections.map(({ id, label }) => ({ id, label })), collections, entities };
 }
 
 module.exports = {

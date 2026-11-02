@@ -102,5 +102,16 @@ Principle: Claude never edits directly. It proposes a **plan** (an exact list of
 - Docs: README (curation, the chat loop: analyse, propose, approve, apply), openapi, CLAUDE.md if a rule changes (it should not: `run_cypher` stays read-only).
 - Acceptance: offline tests for each op's plan (moves, conflicts, `take`, self-loops, vocabulary aliases, refusals: different labels, unknown keys, rename collision), a stale plan refused, apply and revert round-trip to the exact same data, revert refused after a later change, side effects (no Drive trash on a moved file; trash and untrash on delete and revert); the routes owner only; MCP tools; integration tests on a real Neo4j (merge two concepts and two papers, revert); browser check of the Curation section (no console or CSP errors); live: from the chat, an analysis proposes a merge, the owner approves, it is applied, then undone.
 
+## Task 11. Library redesign: sidebar, reading view, Connections, questions and hypotheses, thoughts
+Source: the owner (2026-11-02). Spec, approved: `docs/UI_REDESIGN.md`; clickable mockup linked there. Books and the owner's reading list come after this ships.
+Steps, one commit each, each with offline tests (mutation-checked), browser checks on desktop and phone width (no console or CSP errors), and README and PROGRESS updated:
+1. **Sidebar.** Collections grouped by the schema's `ui_sections` (each collection names its `ui_section`; replaces `ui_more` and `ui_group`), with counts; Graph and the owner tools apart at the bottom; "Search everything" opens All; collapsible to a rail (remembered per browser); a drawer on phones, closed by a tap outside or Esc. No Owner badge in the top bar.
+2. **Reading view everywhere.** Every collection uses the Papers layout; roomy list entries with plain-text status (no pills); item tabs Info, Analysis, Connections, Reader (sources only); "Your thoughts on this" at the end of Info.
+3. **Review and the graph filter.** Audit and Curation become one Review entry with two tabs; the graph legend chips become a Filter popover (grouped checkboxes, All/None, counts, remembered, large vocabulary off by default), closed by a tap outside.
+4. **Connections and Link….** One tab per item that shows every link as a simple diagram grouped by type, with ⋯ (change role, note, unlink); a generic Link… picker over every type and the roles the schema allows; Claude's suggested links with Link / Dismiss.
+5. **Questions and hypotheses.** `INFORMS` (role, note, location) from sources to questions and hypotheses; `ANSWERS` many-to-many; a paper's own question as `stated_question`; analysis matches papers to existing questions instead of creating them; a migration folds `ASKED_IN`/`ADDRESSED_BY` and extracted questions in (copy first, deletes only through a curation plan); question and hypothesis pages as in the spec.
+6. **Thoughts** replace Notes: database-managed, attached to any item, `add_thought` over MCP, the inbox with Claude's suggested type and "Something else…" popover, delete on one click after turning it into an item; import of existing Markdown notes; `sync-notes` retired. **Projects removed** (any existing nodes go through a curation plan).
+Then deploy.
+
 ## Out of scope for now
 Claim nodes (v2), embeddings and semantic search, multi-user access, full-text extraction from PDFs.

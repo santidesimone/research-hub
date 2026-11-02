@@ -22,7 +22,7 @@ const titles = (page) => page.$$eval('.list .item .t', (e) => e.map((x) => x.tex
     await owner.click('button:has-text("Sign in")');
     await owner.fill('input[type=password]', TOK);
     await owner.click('form.modal button[type=submit]');
-    await owner.waitForSelector('.badge.ok:has-text("Owner")');
+    await owner.waitForSelector('.topbar button:has-text("Sign out")');
     await owner.goto(U + '/settings');
     await owner.waitForSelector('[data-setting="public_detail"]');
     const on = await owner.$$eval('.seg button.on', (b) => b.map((x) => `${x.dataset.setting}=${x.dataset.value}`).sort());
@@ -50,7 +50,7 @@ const titles = (page) => page.$$eval('.list .item .t', (e) => e.map((x) => x.tex
     expect((await anon.innerText('.abstract')).includes('SECRET-ABSTRACT-TEXT'), 'abstract');
   });
   await step('visitor, full detail: a public method shows every field', async () => {
-    await anon.click('.collbar button:has-text("Methods")');
+    await anon.click('.sidebar .nav[data-section=method]');
     await anon.click('.list .item:has-text("Snowballing")');
     await anon.waitForSelector('.analysis .fieldgroup');
     const text = await anon.innerText('.analysis');
@@ -71,7 +71,7 @@ const titles = (page) => page.$$eval('.list .item .t', (e) => e.map((x) => x.tex
     await anon.waitForSelector('.list .item');
     const t = await titles(anon);
     expect(t.includes('PRIVATE-PAPER-TITLE'), t.join('|'));
-    await anon.click('.collbar button:has-text("Case studies")');
+    await anon.click('.sidebar .nav[data-section=case_study]');
     await anon.waitForSelector('.list .item:has-text("Lisbon CBDC pilot")');
   });
   await step('visitor: no reading status, no Settings', async () => {

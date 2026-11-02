@@ -18,6 +18,11 @@
     "created_at": { "type": "datetime", "by": ["Sys"], "tier": "core", "label": "Created" },
     "updated_at": { "type": "datetime", "by": ["Sys"], "tier": "core", "label": "Updated" }
   },
+  "ui_sections": [
+    { "id": "reading", "label": "Reading" },
+    { "id": "knowledge", "label": "Knowledge" },
+    { "id": "inquiry", "label": "Inquiry" }
+  ],
   "types": {
     "paper": {
       "label": "Paper",
@@ -26,6 +31,7 @@
       "big": true,
       "folder": null,
       "collection": true,
+      "ui_section": "reading",
       "managed": "api",
       "schema_version": 1,
       "props": [],
@@ -89,6 +95,7 @@
       "big": true,
       "folder": "methods",
       "collection": true,
+      "ui_section": "knowledge",
       "managed": "db",
       "schema_version": 1,
       "key_prefix": "method:",
@@ -128,6 +135,7 @@
       "big": true,
       "folder": null,
       "collection": true,
+      "ui_section": "knowledge",
       "managed": "db",
       "schema_version": 1,
       "key_prefix": "usecase:",
@@ -163,6 +171,7 @@
       "big": true,
       "folder": null,
       "collection": true,
+      "ui_section": "knowledge",
       "managed": "db",
       "schema_version": 1,
       "key_prefix": "case:",
@@ -206,7 +215,7 @@
       "managed": "db",
       "schema_version": 1,
       "key_prefix": "framework:",
-      "ui_more": true,
+      "ui_section": "knowledge",
       "props": [],
       "public_props": ["key", "title", "summary"],
       "fields": {
@@ -240,8 +249,7 @@
       "managed": "db",
       "schema_version": 1,
       "key_prefix": "question:",
-      "ui_more": true,
-      "ui_group": { "id": "questions", "label": "Questions and hypotheses" },
+      "ui_section": "inquiry",
       "title_from": "text",
       "props": [],
       "public_props": ["key", "title", "summary"],
@@ -270,8 +278,7 @@
       "managed": "db",
       "schema_version": 1,
       "key_prefix": "hypothesis:",
-      "ui_more": true,
-      "ui_group": { "id": "questions", "label": "Questions and hypotheses" },
+      "ui_section": "inquiry",
       "title_from": "statement",
       "props": [],
       "public_props": ["key", "title", "summary"],
@@ -301,7 +308,7 @@
       "managed": "db",
       "schema_version": 1,
       "key_prefix": "ontology:",
-      "ui_more": true,
+      "ui_section": "knowledge",
       "props": [],
       "public_props": ["key", "title", "summary"],
       "fields": {

@@ -20,13 +20,37 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
     await page.click('button:has-text("Sign in")');
     await page.fill('input[type=password]', TOK);
     await page.click('form.modal button[type=submit]');
-    await page.waitForSelector('.badge.ok:has-text("Owner")');
+    await page.waitForSelector('.topbar button:has-text("Sign out")');
   });
-  await step('collections bar from the schema', async () => {
-    await page.waitForSelector('.collbar');
-    const labels = await page.$$eval('.collbar button', (b) => b.map((x) => x.textContent.trim()));
-    expect(JSON.stringify(labels) === JSON.stringify(['All', 'Papers', 'Methods', 'Use cases', 'Case studies', 'Graph', 'Audit', 'Curation']), labels.join('|'));
+  await step('sidebar groups from the schema, with counts', async () => {
+    await page.waitForSelector('.sidebar .nav[data-section=paper] .count');
+    const groups = await page.$$eval('.sidebar .navlabel', (e) => e.map((x) => x.textContent));
+    expect(JSON.stringify(groups) === JSON.stringify(['Reading', 'Knowledge', 'Inquiry']), groups.join('|'));
+    const ids = await page.$$eval('.sidebar .nav', (b) => b.map((x) => x.dataset.section));
+    expect(JSON.stringify(ids) === JSON.stringify(['paper', 'method', 'use_case', 'case_study', 'framework', 'ontology', 'research_question', 'hypothesis', 'graph', 'audit', 'curation']), ids.join('|'));
+    expect((await page.textContent('.sidebar .nav[data-section=method] .count')) === '2', 'two methods counted');
+    expect(await page.getAttribute('.sidebar .nav[data-section=paper]', 'aria-current') === 'page', 'papers marked as current');
+    expect(!(await page.$('.topbar .badge')), 'no Owner badge in the top bar');
     expect(new URL(page.url()).pathname === '/library', page.url());
+    await page.screenshot({ path: OUT + '/0-sidebar.png' });
+  });
+  await step('the sidebar collapses to a rail and remembers it', async () => {
+    await page.click('.sidebar .collapse');
+    await page.waitForSelector('.libwrap.collapsed .sidebar .expand');
+    expect(!(await page.isVisible('.sidebar .nav[data-section=paper]')), 'the entries are hidden');
+    await page.reload();
+    await page.waitForSelector('.libwrap.collapsed');
+    await page.click('.sidebar .expand');
+    await page.waitForSelector('.sidebar .nav[data-section=paper]', { state: 'visible' });
+  });
+  await step('Search everything opens All with the query', async () => {
+    await page.fill('.sidebar input[type=search]', 'Blind');
+    await page.press('.sidebar input[type=search]', 'Enter');
+    await page.waitForURL(/\/library\/all/);
+    await page.waitForSelector('.list .item:has-text("Blind Signatures")');
+    expect((await page.$$('.list .item')).length === 1, 'only the match');
+    await page.click('.sidebar .nav[data-section=paper]');
+    await page.waitForURL(/\/library\/papers/);
   });
   await step('papers list and Analysis tab with provenance, tiers and flags', async () => {
     await page.click('.item:has-text("Blind Signatures")');
@@ -50,7 +74,7 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
     expect(await page.$('input[aria-label="File link"]'), 'file link editor');
   });
   await step('methods: list with columns and filter by kind', async () => {
-    await page.click('.collbar button[data-section=method]');
+    await page.click('.sidebar .nav[data-section=method]');
     await page.waitForURL(/\/library\/methods/);
     await page.waitForSelector('.list .item');
     expect((await page.$$('.list .item')).length === 2, 'two methods');
@@ -111,7 +135,7 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
     expect(r === 404, 'gone from the database');
   });
   await step('case study: structured editor (list of objects) round-trips', async () => {
-    await page.click('.collbar button[data-section=case_study]');
+    await page.click('.sidebar .nav[data-section=case_study]');
     await page.click('.item:has-text("Lisbon")');
     await page.waitForSelector('article.doc [data-field=outcomes] table');
     await page.click('article.doc button:has-text("Edit")');
@@ -126,7 +150,7 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
     expect(it.fields.organisations[0].name === 'Banco de Portugal', 'refs survive an edit of another field');
   });
   await step('audit: buckets and one-click accept', async () => {
-    await page.click('.collbar button[data-section=audit]');
+    await page.click('.sidebar .nav[data-section=audit]');
     await page.waitForURL(/\/library\/audit/);
     await page.waitForSelector('.auditbucket');
     const before = await api('/api/audit');
@@ -146,7 +170,7 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
     await page.click('form.itemform button:has-text("Cancel")');
   });
   await step('graph view renders with the new node types', async () => {
-    await page.click('.collbar button[data-section=graph]');
+    await page.click('.sidebar .nav[data-section=graph]');
     await page.waitForSelector('.legend button:has-text("UseCase")', { timeout: 15000 });
     await page.waitForSelector('#hub-graph canvas', { timeout: 15000 });
     await page.waitForTimeout(1500);
@@ -157,15 +181,12 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
     await page.waitForURL(/\/library\/use-cases\?key=/);
     await page.waitForSelector('article.doc h1:has-text("Offline retail payments")');
   });
-  // Task 8: More menu, questions and hypotheses, derived status, TESTS from a paper, frameworks and ontologies
-  await step('More lists frameworks, questions and hypotheses, ontologies', async () => {
+  // Task 8: questions and hypotheses, derived status, TESTS from a paper, frameworks and ontologies
+  await step('frameworks open from the sidebar', async () => {
     await page.goto(U + '/library/papers');
-    await page.click('.moremenu summary');
-    const entries = await page.$$eval('.moremenu .menu-list button', (b) => b.map((x) => x.textContent.trim()));
-    expect(JSON.stringify(entries) === JSON.stringify(['Frameworks', 'Questions and hypotheses', 'Ontologies and standards']), entries.join('|'));
-    await page.click('.moremenu .menu-list button:has-text("Frameworks")');
+    await page.click('.sidebar .nav[data-section=framework]');
     await page.waitForURL(/\/library\/frameworks/);
-    expect((await page.textContent('.moremenu summary')).includes('Frameworks'), 'the menu shows where you are');
+    expect(await page.getAttribute('.sidebar .nav[data-section=framework]', 'aria-current') === 'page', 'the sidebar shows where you are');
   });
   await step('a framework page lists the papers and questions framed by it', async () => {
     await page.click('.item:has-text("Two-sided market theory")');
@@ -174,10 +195,9 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
     expect(framed.includes('Owner-Custodianship') && framed.includes('Why do stablecoins struggle'), framed);
     expect((await page.textContent('section[data-rel="in:DERIVED_FROM"]')).includes('Adoption requires'), 'hypotheses derived from it');
   });
-  await step('questions and hypotheses switch; a hypothesis shows its tests and a derived, mixed status', async () => {
+  await step('hypotheses have their own entry; a hypothesis shows its tests and a derived, mixed status', async () => {
     await page.goto(U + '/library/research-questions');
-    await page.waitForSelector('.groupswitch');
-    await page.click('.groupswitch button[data-section=hypothesis]');
+    await page.click('.sidebar .nav[data-section=hypothesis]');
     await page.waitForURL(/\/library\/hypotheses/);
     await page.click('.item:has-text("Adoption requires")');
     await page.waitForSelector('section[data-rel="in:TESTS"] table');

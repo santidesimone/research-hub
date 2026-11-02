@@ -35,7 +35,7 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
     await page.goto(U + '/library/methods');
     await page.fill('form.login input[type=password]', TOK);
     await page.click('form.login button[type=submit]');
-    await page.waitForSelector('.badge.ok:has-text("Owner")');
+    await page.waitForSelector('.topbar button:has-text("Sign out")');
     await page.waitForSelector('.list .item');
     expect(new URL(page.url()).pathname.endsWith('/library/methods'), page.url());
     expect(!(await page.$('.seg button:has-text("Public preview")')), 'no public preview toggle');

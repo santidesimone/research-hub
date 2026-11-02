@@ -1,10 +1,10 @@
-// Library: the collections (Papers, Methods, Use cases, Case studies, and All), the graph view and the audit.
+// Library: a sidebar of collections grouped by purpose (schema ui_sections), the graph view, the audit and curation.
 // Papers keep their list, PDF reader, file link and status, plus an Analysis tab. The other collections get a generic
 // list and detail built from the schema (collections.js), and every collection gets create / edit forms (forms.js).
 // Addresses: /library/<collection>?key=..[&edit=1], /library/graph, /library/audit, /library/curation, /library/all.
 // Anonymous visitors see the public preview (a static export, whitelisted fields only); the owner sees the database.
 import { h, icon, api, state as S, BASE, cssVar, loadScript, toast } from '../../shell/ui.js';
-import { parseRoute, routePath, collectionOf, barEntries, entryOf } from './model.js';
+import { parseRoute, routePath, collectionOf, sidebarGroups, collectionCounts } from './model.js';
 import { CollectionView, itemDetail } from './collections.js';
 import { AuditView } from './audit.js';
 import { CurationView } from './curation.js';
@@ -53,15 +53,20 @@ class Library {
   async start() {
     this.labels = (S.schema && S.schema.labels) || [];
     this.enabled = new Set(this.labels.map((l) => l.label));
-    this.root = h('div', { class: 'libwrap' });
-    this.toolbarEl = h('div', { class: 'toolbar' });
+    let collapsed = false;
+    try { collapsed = localStorage.getItem('hub-sidebar') === 'collapsed'; } catch { /* private mode */ }
+    this.root = h('div', { class: 'libwrap' + (collapsed ? ' collapsed' : '') });
+    this.sideEl = h('nav', { class: 'sidebar', 'aria-label': 'Library' });
+    this.mobileBarEl = h('div', { class: 'mobilebar' });
     this.bannerEl = h('div', { class: 'banner hidden' }, 'Public preview: built from a static export with no database access. Private nodes, your personal status, abstracts and PDFs are not part of it.');
     this.bodyEl = h('div', { class: 'libbody' });
-    this.root.append(this.toolbarEl, this.bannerEl, this.bodyEl);
+    // on a phone the sidebar is a drawer; a tap outside it (on the scrim) closes it
+    this.scrimEl = h('button', { type: 'button', class: 'scrim', 'aria-label': 'Close the menu', tabindex: '-1', onclick: () => this.drawer(false) });
+    this.root.append(this.sideEl, this.scrimEl, h('div', { class: 'libmain' }, this.mobileBarEl, this.bannerEl, this.bodyEl));
     this.ctx.el.replaceChildren(this.root);
     document.addEventListener('keydown', this.onKey);
     this.readRoute();
-    this.renderToolbar();
+    this.renderNav();
     this.renderBody();
     await this.loadData();
     this.renderBody();
@@ -82,7 +87,7 @@ class Library {
     this.ctx = ctx;
     const before = this.section, sel = this.sel, edit = this.edit;
     this.readRoute();
-    if (before !== this.section) { this.renderToolbar(); this.renderBody(); return; }
+    if (before !== this.section) { this.renderBody(); return; }
     if (sel !== this.sel || edit !== this.edit) { if (this.cview) this.cview.show(); else this.showSelection(); }
   }
   onTheme() { if (this.view === 'graph') this.buildGraph(); }
@@ -148,31 +153,47 @@ class Library {
   }
   async setMode(mode) {
     this.mode = mode; this.sel = null; this.status = '';
-    this.renderToolbar(); this.bannerEl.classList.toggle('hidden', mode !== 'public');
+    this.bannerEl.classList.toggle('hidden', mode !== 'public');
     this.loading = true; this.renderBody();
     await this.loadData(); this.go({ key: null }, true); this.renderBody();
   }
 
-  /* ---------------------------------------------------------------- toolbar */
-  renderToolbar() {
-    const seg = (items, cur, on, cls = '') => h('div', { class: 'seg ' + cls }, items.map(([id, label, ic]) => h('button', { class: cur === id ? 'on' : '', 'data-section': id, onclick: () => on(id) }, ic && icon(ic, 14), label)));
-    const entries = barEntries(this.collections);
-    const current = entryOf(entries, this.section);
-    const sections = [['all', 'All'], ...entries.main.map((e) => [e.id, e.label]), ['graph', 'Graph', 'graph'], ...(S.owner && this.mode === 'private' ? [['audit', 'Audit'], ['curation', 'Curation']] : [])].filter(Boolean);
-    const inMore = current && entries.more.includes(current);
-    // "More": a native disclosure, so it opens with the keyboard too; choosing an entry navigates and redraws it closed
-    const more = entries.more.length ? h('details', { class: 'moremenu' + (inMore ? ' on' : '') },
-      h('summary', { 'data-section': 'more' }, inMore ? current.label : 'More', ' ▾'),
-      h('div', { class: 'menu-list' }, entries.more.map((e) => h('button', { type: 'button', class: e === current ? 'on' : '', 'data-section': e.id, onclick: () => this.goSection(e.id) }, e.label)))) : null;
-    this.toolbarEl.replaceChildren(...[
-      seg(sections, inMore ? 'more' : this.section, (id) => this.goSection(id), 'collbar'), more,
-      h('div', { class: 'spacer' }),
-      S.owner && S.publicAccess && seg([['private', 'Private'], ['public', 'Public preview']], this.mode, (m) => m !== this.mode && this.setMode(m))].filter(Boolean));
+  /* ---------------------------------------------------------------- sidebar */
+  renderNav() {
+    const counts = this.loading ? {} : collectionCounts(this.graph.nodes, this.collections, this.papers);
+    const item = (id, label, count) => h('button', { type: 'button', class: 'nav' + (this.section === id ? ' on' : ''), 'data-section': id,
+      'aria-current': this.section === id ? 'page' : null, onclick: () => { this.drawer(false); if (id !== this.section) this.q = ''; this.goSection(id); } },
+    h('span', { class: 'grow' }, label), count != null && h('span', { class: 'count' }, String(count)));
+    const search = h('input', { class: 'input', type: 'search', placeholder: 'Search everything', 'aria-label': 'Search everything',
+      onkeydown: (e) => { if (e.key === 'Enter') { this.q = e.target.value; this.drawer(false); if (this.section === 'all') this.renderBody(); else this.goSection('all'); } } });
+    const owner = S.owner && this.mode === 'private';
+    this.sideEl.replaceChildren(
+      h('div', { class: 'sidehead' }, h('div', { class: 'searchbox grow' }, icon('search', 15), search),
+        h('button', { type: 'button', class: 'iconbtn small collapse', 'aria-label': 'Hide the sidebar', title: 'Hide the sidebar', onclick: () => this.collapse(true) }, '«')),
+      h('button', { type: 'button', class: 'iconbtn small expand', 'aria-label': 'Show the sidebar', title: 'Show the sidebar', onclick: () => this.collapse(false) }, '»'),
+      h('div', { class: 'sidescroll' },
+        sidebarGroups(this.collections, (S.schema && S.schema.sections) || []).map((g) => h('div', { class: 'navgroup' },
+          h('div', { class: 'navlabel' }, g.label), g.items.map((it) => item(it.id, it.label, counts[it.id])))),
+        h('div', { class: 'navsep' }),
+        item('graph', 'Graph'),
+        owner && item('audit', 'Audit'), owner && item('curation', 'Curation'),
+        S.owner && S.publicAccess && h('div', { class: 'seg navmode' }, [['private', 'Private'], ['public', 'Public preview']].map(([m, l]) =>
+          h('button', { type: 'button', class: this.mode === m ? 'on' : '', onclick: () => m !== this.mode && this.setMode(m) }, l)))));
+    const here = this.coll(this.section);
+    this.mobileBarEl.replaceChildren(h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Open the library menu', onclick: () => this.drawer(true) }, icon('menu', 18)),
+      h('span', { class: 'mobiletitle' }, here ? here.plural : { graph: 'Graph', audit: 'Audit', curation: 'Curation', all: 'Search' }[this.section] || 'Library'));
     this.bannerEl.classList.toggle('hidden', this.mode !== 'public');
   }
+  collapse(on) {
+    this.root.classList.toggle('collapsed', on);
+    try { localStorage.setItem('hub-sidebar', on ? 'collapsed' : 'open'); } catch { /* private mode */ }
+    if (this.network) setTimeout(() => this.network.redraw(), 0);
+  }
+  drawer(open) { this.root.classList.toggle('drawer-open', open); }
 
   /* ---------------------------------------------------------------- body */
   renderBody() {
+    this.renderNav();
     if (this.network && this.view !== 'graph') { this.network.destroy(); this.network = null; }
     this.bodyEl.replaceChildren();
     this.cview = null;
@@ -260,6 +281,7 @@ class Library {
     this.go({ key }, replace);
   }
   onKey(e) {
+    if (e.key === 'Escape' && this.root.classList.contains('drawer-open')) { this.drawer(false); return; }
     if (this.view !== 'list' || !['ArrowDown', 'ArrowUp'].includes(e.key)) return;
     if (['INPUT', 'SELECT', 'TEXTAREA', 'IFRAME'].includes(document.activeElement.tagName)) return;
     if (this.cview || ['audit', 'curation'].includes(this.section)) return;

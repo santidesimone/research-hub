@@ -18,6 +18,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | Served at santidesimone.com/research-hub | done (2026-11-01), tested live | See "Served at santidesimone.com" below. |
 | Publishing settings (default visibility, full public detail) | done (2026-11-01), not deployed yet | See "Publishing settings" below. |
 | 10 Curation: reviewable change plans | done (2026-11-01), tested live from the claude.ai chat | See "Task 10" below. |
+| 11 Library redesign (`docs/UI_REDESIGN.md`) | in progress: step 1 of 6 done (2026-11-02), not deployed | See "Task 11" below. |
 
 ## Task 0. Baseline against real services
 
@@ -616,3 +617,24 @@ The owner's chat analysis found the same idea as a Topic and a Concept (PET, CBD
 **Not tested / open**
 - Not deployed. Existing tag Concepts in production stay until merged: ask Claude in the chat to propose merging each Concept into its Topic.
 - The `topics` field still counts links without provenance as the owner's (Claude's write skipped as "owner value" on `paper:a1a7425c09`); not changed here.
+
+## Task 11. Library redesign
+
+Approved by the owner on 2026-11-02 after three rounds on a clickable mockup (spec and link: `docs/UI_REDESIGN.md`). Built in six steps (`docs/BUILD_BRIEF.md`), deployed at the end.
+
+### Step 1. Sidebar (2026-11-02)
+
+**Changed**
+- `schema/schema.json`: top-level `ui_sections` (Reading, Knowledge, Inquiry); every collection names its `ui_section`; `ui_more` and `ui_group` removed. `web/core/schema.js` checks both at start-up and `publicView()` gives the UI `sections` and each collection's `ui_section`.
+- `web/apps/library/model.js`: `sidebarGroups` (sections in order, collections in schema order, an unknown section goes to "Other" so no type is lost) and `collectionCounts`; `barEntries`/`entryOf` removed.
+- `web/apps/library/app.js`: the top row (collections bar, More menu, mode switch) became a sidebar: search everything (Enter opens All with the query), groups with counts, Graph, and Audit and Curation for the owner; the Private / Public preview switch moves to its foot when `PUBLIC_ACCESS` is on. Collapsible to a rail (`localStorage`, wrapped in try/catch). On a phone it is a drawer: ☰ opens it, a tap outside or Esc closes it, and it is `visibility: hidden` when closed so the keyboard cannot land in it. Changing collection from the sidebar clears the list search.
+- `web/apps/library/collections.js`: the questions/hypotheses switch is gone (each has its own sidebar entry).
+- Shell: no Owner badge in the top bar (Sign out shows you are signed in); a `menu` icon.
+- `web/public/shell/base.css`: sidebar, rail and drawer styles from skin tokens; the bar and More styles removed.
+
+**Tested**
+- Offline: the schema check (unknown or missing `ui_section`, duplicate or empty `ui_sections`), `publicView` sections, the grouping (a new type lands in its group, an unknown group goes to Other, no sections still lists everything), the counts. Mutation-checked: 3 breakages, all caught.
+- Browser (real Chrome, throwaway Neo4j, all six suites green): the sidebar's groups, order, counts and current entry; collapse and the remembered rail after a reload; Search everything; frameworks and hypotheses from the sidebar; on a 390 px phone the drawer opens, a tap outside closes it, and choosing an entry navigates and closes it; visitors get no Audit or Curation; no console or CSP errors.
+
+**Not tested / open**
+- Not deployed. List entries still show status pills; step 2 restyles them.

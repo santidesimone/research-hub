@@ -24,8 +24,8 @@ const noOverflow = async (page) => page.evaluate(() => document.documentElement.
     expect(await anon.isVisible('.banner'), 'public preview banner');
     const titles = await anon.$$eval('.list .item .t', (e) => e.map((x) => x.textContent));
     expect(titles.length === 1 && titles[0] === 'A Public Preprint on Payments', titles.join('|'));
-    const bar = await anon.$$eval('.collbar button', (b) => b.map((x) => x.textContent.trim()));
-    expect(!bar.includes('Audit'), 'no audit for visitors: ' + bar.join('|'));
+    const bar = await anon.$$eval('.sidebar .nav', (b) => b.map((x) => x.dataset.section));
+    expect(!bar.includes('audit') && !bar.includes('curation'), 'no audit or curation for visitors: ' + bar.join('|'));
     expect(!(await anon.$('button:has-text("+ New")')), 'no create button');
   });
   await step('anonymous: detail shows only whitelisted fields', async () => {
@@ -36,11 +36,13 @@ const noOverflow = async (page) => page.evaluate(() => document.documentElement.
     expect(!(await anon.$('.tab[data-tab=analysis]')) && !(await anon.$('article.doc button:has-text("Edit")')), 'no analysis tab or edit');
   });
   await step('anonymous: other collections show only public items', async () => {
-    await anon.click('.collbar button[data-section=method]');
+    await anon.click('.sidebar .nav[data-section=method]');
     await anon.waitForSelector('.list .item');
     const m = await anon.$$eval('.list .item .t', (e) => e.map((x) => x.textContent));
     expect(m.length === 1 && m[0] === 'Snowballing', m.join('|'));
-    await anon.click('.collbar button[data-section=all]');
+    await anon.fill('.sidebar input[type=search]', '');
+    await anon.press('.sidebar input[type=search]', 'Enter');
+    await anon.waitForURL(/\/library\/all/);
     await anon.waitForSelector('.list .item');
     const all = await anon.textContent('.list');
     expect(!all.includes('PRIVATE-PAPER-TITLE') && !all.includes('Difference in differences') && !all.includes('Lisbon'), 'private items never listed');
@@ -72,7 +74,7 @@ const noOverflow = async (page) => page.evaluate(() => document.documentElement.
     await land.waitForSelector('form.login .alert:not(.hidden)');
     await land.fill('form.login input[type=password]', TOK);
     await land.click('form.login button[type=submit]');
-    await land.waitForSelector('.badge.ok:has-text("Owner")');
+    await land.waitForSelector('.topbar button:has-text("Sign out")');
     await land.waitForSelector('.list .item');
     expect(new URL(land.url()).pathname === new URL(U).pathname.replace(/\/$/, '') + '/library', land.url());
   });
@@ -95,11 +97,20 @@ const noOverflow = async (page) => page.evaluate(() => document.documentElement.
     expect(!(await mob.$eval('.pane-head', (e) => /(^|\s)0(\s|$)/.test(e.innerText))), 'no stray 0');
     await mob.waitForSelector('.list .item .t'); await mob.screenshot({ path: OUT + '/m1-list.png' });
   });
-  await step('mobile: collections bar scrolls to every section', async () => {
-    const box = await mob.$eval('.collbar', (e) => ({ sw: e.scrollWidth, cw: e.clientWidth }));
-    expect(box.sw >= box.cw, 'bar');
-    await mob.click('.collbar button[data-section=case_study]');
+  await step('mobile: the sidebar is a drawer; a tap outside closes it', async () => {
+    expect(!(await mob.isVisible('.sidebar .nav[data-section=paper]')), 'hidden until opened');
+    await mob.click('.mobilebar button[aria-label="Open the library menu"]');
+    await mob.waitForSelector('.libwrap.drawer-open .sidebar .nav[data-section=case_study]', { state: 'visible' });
+    await mob.waitForTimeout(300);
+    await mob.screenshot({ path: OUT + '/m0-drawer.png' });
+    await mob.mouse.click(370, 400); // on the scrim, right of the drawer
+    await mob.waitForSelector('.libwrap:not(.drawer-open)');
+    await mob.click('.mobilebar button[aria-label="Open the library menu"]');
+    await mob.waitForSelector('.libwrap.drawer-open');
+    await mob.waitForTimeout(300);
+    await mob.click('.sidebar .nav[data-section=case_study]');
     await mob.waitForURL(/case-studies/);
+    await mob.waitForSelector('.libwrap:not(.drawer-open)');
     await mob.waitForSelector('.list .item');
     expect(await noOverflow(mob), 'case studies overflow');
   });

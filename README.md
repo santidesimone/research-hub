@@ -202,7 +202,7 @@ curl -X POST http://localhost:3000/api/artifacts/case_study -H "Authorization: B
 
 ## The Library
 
-Open `/library`. The **Collections bar** has All, Papers, Methods, Use cases, Case studies, Graph and, when you are signed in, Audit. **More** holds Frameworks, Questions and hypotheses (one entry that switches between research questions and hypotheses) and Ontologies and standards. Addresses are shareable: `/library/methods?key=method:snowballing`, `/library/case-studies?key=...&edit=1`, `/library/audit`; older `/library?key=...` links still open the item.
+Open `/library`. The **sidebar** groups the collections by purpose, as the schema's `ui_sections` say: **Reading** (Papers), **Knowledge** (Methods, Use cases, Case studies, Frameworks, Ontologies and standards) and **Inquiry** (Research questions, Hypotheses), each with a count. Below them are Graph and, when you are signed in, Audit and Curation. **Search everything** at the top searches every collection. The « button hides the sidebar to a thin rail (remembered in this browser); on a phone it is a drawer behind ☰ that closes with a tap outside. A new type appears in its group once it names a `ui_section`. Addresses are shareable: `/library/methods?key=method:snowballing`, `/library/case-studies?key=...&edit=1`, `/library/audit`; older `/library?key=...` links still open the item.
 
 - **Papers:**
   - The list, PDF reader, file link, upload and your status are unchanged.

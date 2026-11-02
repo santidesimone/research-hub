@@ -1757,7 +1757,10 @@ const seed = require('../../data/seed_papers.json');
     assert.match(bad8((c) => { c.types.ontology.fields.urls.props.role.https = true; }), /urls.role: https applies to url parts only/);
     assert.match(bad8((c) => { c.types.ontology.fields.version.normalize = 'iri'; c.types.ontology.fields.version.type = 'date'; }), /version: normalize "iri" applies to text fields only/);
     assert.match(bad8((c) => { c.types.hypothesis.title_from = 'direction'; }), /hypothesis: title_from must name a text field/);
-    assert.match(bad8((c) => { c.types.hypothesis.ui_group = { label: 'x' }; }), /hypothesis: ui_group needs an id and a label/);
+    assert.match(bad8((c) => { c.types.hypothesis.ui_section = 'gadgets'; }), /hypothesis: ui_section must be one of reading, knowledge, inquiry/);
+    assert.match(bad8((c) => { delete c.types.paper.ui_section; }), /paper: ui_section must be one of/, 'every collection names its sidebar group');
+    assert.match(bad8((c) => { c.ui_sections.push({ id: 'reading', label: 'Again' }); }), /ui_sections: ids must be unique/);
+    assert.match(bad8((c) => { c.ui_sections = []; }), /ui_sections: a list of \{id, label\}/);
     assert.match(bad8((c) => { c.types.ontology.fields.parent.rel = 'USED_BY'; }), /ontology.parent: relation_types.USED_BY does not allow Ontology -> Ontology/);
     assert.deepEqual([S8.relTargets('PART_OF', 'Ontology'), S8.relTargets('PART_OF', 'ResearchQuestion'), S8.relTargets('PART_OF', 'Paper')], [['Ontology'], ['Project'], []]);
     assert.equal(S8.relAllows('PART_OF', 'ResearchQuestion', ['Artifact', 'Ontology']), false, 'pairs keep a question out of an ontology');
@@ -1766,8 +1769,9 @@ const seed = require('../../data/seed_papers.json');
     const paperRels = S8.relationsFrom('Paper');
     assert.deepEqual(paperRels.find((r) => r.rel === 'TESTS'), { rel: 'TESTS', to: ['Hypothesis'], interpretive: true, props: { result: { type: 'enum', enum: ['supported', 'refuted', 'mixed', 'inconclusive'], required: true } } });
     const pv8 = S8.publicView().collections;
-    assert.deepEqual(pv8.filter((c) => c.ui_more).map((c) => c.name), ['framework', 'research_question', 'hypothesis', 'ontology']);
-    assert.deepEqual([pv8.find((c) => c.name === 'hypothesis').ui_group, pv8.find((c) => c.name === 'hypothesis').title_from], [{ id: 'questions', label: 'Questions and hypotheses' }, 'statement']);
+    assert.deepEqual(Object.fromEntries(pv8.map((c) => [c.name, c.ui_section])), { paper: 'reading', method: 'knowledge', use_case: 'knowledge', case_study: 'knowledge', framework: 'knowledge', research_question: 'inquiry', hypothesis: 'inquiry', ontology: 'knowledge' });
+    assert.deepEqual(S8.publicView().sections, [{ id: 'reading', label: 'Reading' }, { id: 'knowledge', label: 'Knowledge' }, { id: 'inquiry', label: 'Inquiry' }]);
+    assert.equal(pv8.find((c) => c.name === 'hypothesis').title_from, 'statement');
     assert.deepEqual(S8.validate('ontology', { title: 'X', urls: [{ role: 'docs', url: 'http://x.org/d' }] }).errors, ['urls: url: must be an https link'], 'http links are refused for ontologies');
     assert.ok(S8.validate('ontology', { title: 'X', urls: [{ role: 'manual', url: 'https://x.org' }] }).warnings.includes('urls: role: expected one of docs, spec, download, repository, other'));
     assert.deepEqual(S8.validate('ontology', { title: 'X', urls: [{ role: 'spec', url: 'https://x.org' }] }).errors, []);
@@ -1901,12 +1905,16 @@ const seed = require('../../data/seed_papers.json');
     const newQ = await analysis.save({ collection: 'research_question', model: 'claude-x', fields: { text: 'Is interchange the main switching cost?', kind: 'explanatory' } });
     assert.deepEqual([newQ.key, newQ.created], ['question:is-interchange-the-main-switching-cost', true], 'a question analysed on its own takes its title from its text');
 
-    // the Library bar: four collections in a row, the rest under More, questions and hypotheses as one entry
+    // the Library sidebar: the schema's sections in order, each with its collections in schema order
     const M8 = await import('data:text/javascript,' + encodeURIComponent(fs.readFileSync(path.join(__dirname, '..', 'apps', 'library', 'model.js'), 'utf8')));
-    const bar = M8.barEntries(pv8);
-    assert.deepEqual(bar.main.map((e) => e.id), ['paper', 'method', 'use_case', 'case_study']);
-    assert.deepEqual(bar.more.map((e) => [e.id, e.label, e.members]), [['framework', 'Frameworks', ['framework']], ['research_question', 'Questions and hypotheses', ['research_question', 'hypothesis']], ['ontology', 'Ontologies and standards', ['ontology']]]);
-    assert.equal(M8.entryOf(bar, 'hypothesis').id, 'research_question'); assert.equal(M8.entryOf(bar, 'graph'), null);
+    const side = M8.sidebarGroups(pv8, S8.publicView().sections);
+    assert.deepEqual(side.map((g) => [g.label, g.items.map((i) => i.id)]), [['Reading', ['paper']], ['Knowledge', ['method', 'use_case', 'case_study', 'framework', 'ontology']], ['Inquiry', ['research_question', 'hypothesis']]]);
+    assert.deepEqual(side[2].items.map((i) => i.label), ['Research questions', 'Hypotheses']);
+    const side2 = M8.sidebarGroups([...pv8, { name: 'book', plural: 'Books', ui_section: 'reading' }, { name: 'gadget', plural: 'Gadgets', ui_section: 'nowhere' }], S8.publicView().sections);
+    assert.deepEqual([side2[0].items.map((i) => i.id), side2.at(-1).label, side2.at(-1).items.map((i) => i.id)], [['paper', 'book'], 'Other', ['gadget']], 'a new type lands in its group; an unknown group goes to Other');
+    assert.deepEqual(M8.sidebarGroups(pv8, []).map((g) => g.label), ['Other'], 'no sections: everything is still listed');
+    assert.deepEqual(M8.collectionCounts([{ labels: ['Artifact', 'Method'] }, { labels: ['Artifact', 'Method'] }, { labels: ['Artifact', 'Paper'] }, { labels: ['Concept'] }], pv8.filter((c) => ['paper', 'method', 'ontology'].includes(c.name)), [{}, {}, {}]),
+      { paper: 3, method: 2, ontology: 0 }, 'counts per collection; papers from their own list');
     const hf = pv8.find((c) => c.name === 'hypothesis').fields;
     assert.deepEqual(M8.createFields(hf, { statement: 'S', status: 'untested', origin: 'own', direction: null, title: null }), { statement: 'S' }, 'hub-managed defaults are not sent as owner values');
     assert.deepEqual(M8.createFields(hf, { statement: 'S', status: 'refuted', origin: 'extracted' }), { statement: 'S', status: 'refuted', origin: 'extracted' }, 'a changed one is the owner\'s choice');

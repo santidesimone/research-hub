@@ -27,8 +27,8 @@ const A = 'method:snowballing', B = 'method:difference-in-differences';
   await step('owner: Curation lists both plans with their changes', async () => {
     await page.goto(U + '/library');
     await page.click('button:has-text("Sign in")'); await page.fill('input[type=password]', TOK); await page.click('form.modal button[type=submit]');
-    await page.waitForSelector('.badge.ok:has-text("Owner")');
-    await page.click('.collbar button:has-text("Curation")');
+    await page.waitForSelector('.topbar button:has-text("Sign out")');
+    await page.click('.sidebar .nav[data-section=curation]');
     await page.waitForSelector(`[data-plan="${merge.id}"]`);
     expect(new URL(page.url()).pathname.endsWith('/library/curation'), page.url());
     const text = await page.innerText(`[data-plan="${merge.id}"]`);

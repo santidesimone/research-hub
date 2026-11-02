@@ -34,6 +34,7 @@ const ICONS = {
   graph: P('<circle cx="6" cy="7" r="2.3"/><circle cx="18" cy="7" r="2.3"/><circle cx="12" cy="18" r="2.3"/><path d="M8 7.5h8M7 9l4 7M17 9l-4 7"/>'),
   list: P('<path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>'),
   play: P('<path d="M7 5l12 7-12 7z"/>'),
+  menu: P('<path d="M4 7h16M4 12h16M4 17h16"/>'),
 };
 export function icon(name, size = 18, cls = '') {
   return h('span', { class: 'icon ' + cls, html: (ICONS[name] || ICONS.grid).replace(/SIZE/g, size) });

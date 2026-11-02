@@ -299,7 +299,7 @@ Worked example these must support: the stablecoin research question in the adden
 
 - `publisher` links an ontology to an Organisation through a new relation, **PUBLISHED_BY**. The addendum names the field but no relation.
 - `title` stays required for every item. For questions and hypotheses it is derived from `text` or `statement` when not given; a framework's and an ontology's `name` is their `title`.
-- The Collections bar shows the four original collections, with Frameworks, Questions and hypotheses (one entry), and Ontologies and standards under "More".
+- The Library sidebar groups collections by `ui_section` (Reading, Knowledge, Inquiry; see `docs/UI_REDESIGN.md`). It replaced the Collections bar and its "More" menu (Task 11).
 - The owner can override a hypothesis's status (addendum, open point 3). The override stands until the owner clears it; then the status is derived again.
 - Links to other items by name (an ontology's `parent`, an analysis's frameworks) match an exact title, acronym or alias, and are never guessed. An analysis creates frameworks, questions and hypotheses only from full entries in `extract`, never from a bare link name.
 

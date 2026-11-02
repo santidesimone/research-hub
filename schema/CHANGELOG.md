@@ -2,6 +2,13 @@
 
 Every change to `schema/schema.json`, with the reason. The spec is `docs/SCHEMA_DESIGN.md`. A per-type `schema_version` is raised when that type's fields change. Items below the current version form the audit worklist, so a change is never silently applied to old items.
 
+## v3, Library sidebar groups (2026-11-02)
+
+Why: Task 11 step 1 (`docs/UI_REDESIGN.md`). The Library's single row of collections becomes a sidebar grouped by purpose.
+- New top-level `ui_sections`: `reading`, `knowledge`, `inquiry` (id and label, in order).
+- Every collection names its `ui_section` (checked at start-up). `ui_more` and `ui_group` are removed; they were layout hints only, so no data changes and no migration.
+- `GET /api/schema` gives `sections`, and each collection's `ui_section`.
+
 ## v3, ontology snapshots (2026-10-31)
 
 Why: D11 and D13 (Task 8b). No schema change: the ontology `snapshot` field (`file_url`, `drive_file_id`, `retrieved_at`, `version`, `sha256`, `size_bytes`, `mime`; by Sys and the owner) was already defined in Task 8. It is now filled by `POST /api/ontologies/snapshot` and cleared by `DELETE` (the owner's write, so re-runs never touch it).
