@@ -27,7 +27,7 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
     const groups = await page.$$eval('.sidebar .navlabel', (e) => e.map((x) => x.textContent));
     expect(JSON.stringify(groups) === JSON.stringify(['Reading', 'Knowledge', 'Inquiry']), groups.join('|'));
     const ids = await page.$$eval('.sidebar .nav', (b) => b.map((x) => x.dataset.section));
-    expect(JSON.stringify(ids) === JSON.stringify(['thought', 'paper', 'report', 'method', 'use_case', 'case_study', 'framework', 'ontology', 'research_question', 'hypothesis', 'graph', 'review']), ids.join('|'));
+    expect(JSON.stringify(ids) === JSON.stringify(['thought', 'paper', 'report', 'book', 'method', 'use_case', 'case_study', 'framework', 'ontology', 'research_question', 'hypothesis', 'graph', 'review']), ids.join('|'));
     expect((await page.textContent('.sidebar .nav[data-section=method] .count')) === '2', 'two methods counted');
     expect(await page.getAttribute('.sidebar .nav[data-section=paper]', 'aria-current') === 'page', 'papers marked as current');
     expect(!(await page.$('.topbar .badge')), 'no Owner badge in the top bar');

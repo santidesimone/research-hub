@@ -1,6 +1,8 @@
 // Library: a sidebar of collections grouped by purpose (schema ui_sections), the graph view, the audit and curation.
-// Papers keep their list, PDF reader, file link and status, plus an Analysis tab. The other collections get a generic
-// list and detail built from the schema (collections.js), and every collection gets create / edit forms (forms.js).
+// Collections read from a file (schema reader: papers, reports, books) share the reading list, the file link, the
+// status and the tabs Info, Analysis, Connections and Reader (disabled while there is nothing to read). The other
+// collections get a generic list and detail built from the schema (collections.js); every collection gets create /
+// edit forms (forms.js).
 // Addresses: /library/<collection>?key=..[&edit=1], /library/graph, /library/audit, /library/curation, /library/all.
 // Anonymous visitors see the public preview (a static export, whitelisted fields only); the owner sees the database.
 import { h, icon, api, state as S, BASE, cssVar, loadScript, toast } from '../../shell/ui.js';
@@ -16,6 +18,11 @@ const statusText = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/-
 const STATUS_CHOICES = ['to-read', 'reading', 'read', 'canonical', 'critique-target'];
 const relName = (t) => t.toLowerCase().replace(/_/g, ' ');
 const keyQuery = (k) => encodeURIComponent(k);
+
+// a reading item's year and where it comes from: a paper's year and venue, a report's date and publisher
+const yearOf = (p) => p.year || (p.published_date ? Number(String(p.published_date).slice(0, 4)) : null);
+const venueOf = (p) => p.venue || p.publisher || null;
+const kindOf = (p) => p.item_type || p.report_kind || p.book_kind || null;
 
 function shortAuthors(p) {
   const a = p.author_lasts || (p.authors || []).map((n) => n.trim().split(/\s+/).at(-1));
@@ -43,7 +50,7 @@ class Library {
     const qs = new URLSearchParams(location.search);
     this.uploadKey = qs.get('upload') === '1' ? qs.get('key') : null;
     this.q = ''; this.status = ''; this.sort = 'new'; this.tab = 'info';
-    this.graph = { nodes: [], edges: [] }; this.papers = []; this.personal = {};
+    this.graph = { nodes: [], edges: [] }; this.papers = []; this.reading = {}; this.personal = {};
     this.loading = true; this.error = null;
     this.enabled = new Set();
     this.network = null;
@@ -75,8 +82,10 @@ class Library {
     await this.loadData();
     this.renderBody();
     this.loadReviewWaiting();
-    // older links (/library?key=..) open the item in its own collection
-    if (this.section === 'all' && this.sel) { const c = this.collOfKey(this.sel); if (c) this.goSection(c.name, { key: this.sel }, true); }
+    // older links (/library?key=..), and upload links (always under papers), open the item in its own collection
+    const own = this.sel && this.collOfKey(this.sel);
+    // after mount() returns: navigating sooner remounts the app, which would lose the upload link's drop zone
+    if (own && (this.section === 'all' || (own.reader && own.name !== this.section && (this.coll(this.section) || {}).reader))) setTimeout(() => this.goSection(own.name, { key: this.sel }, true), 0);
   }
   destroy() {
     document.removeEventListener('keydown', this.onKey);
@@ -128,9 +137,12 @@ class Library {
   formCtx() { return { collections: this.collections, entities: this.entities }; }
 
   /* ---------------------------------------------------------------- data */
-  derivePapers() {
+  readerColls() { return this.collections.filter((c) => c.reader); }
+  isReader(name) { return Boolean((this.coll(name) || {}).reader); }
+  // the public export's rows for one reader collection
+  deriveRows(label) {
     const byKey = new Map(this.graph.nodes.map((n) => [n.key, n]));
-    return this.graph.nodes.filter((n) => n.labels.includes('Paper')).map((n) => ({
+    return this.graph.nodes.filter((n) => n.labels.includes(label)).map((n) => ({
       key: n.key, props: n.props, has_file: false,
       topics: this.graph.edges.filter((e) => e.from === n.key && e.type === 'ABOUT').map((e) => byKey.get(e.to)).filter(Boolean).map((c) => c.props.name),
     }));
@@ -139,13 +151,17 @@ class Library {
     this.loading = true; this.error = null;
     try {
       if (this.mode === 'public') {
-        this.graph = await api('/api/public'); this.papers = this.derivePapers(); this.personal = {};
+        this.graph = await api('/api/public');
+        this.reading = Object.fromEntries(this.readerColls().map((c) => [c.name, this.deriveRows(c.label)]));
+        this.personal = {};
       } else {
-        const [g, p] = await Promise.all([api('/api/graph'), api('/api/papers')]);
-        this.graph = g; this.papers = p.papers;
+        const rc = this.readerColls();
+        const [g, ...lists] = await Promise.all([api('/api/graph'), ...rc.map((c) => api('/api/papers' + (c.name === 'paper' ? '' : '?collection=' + c.name)))]);
+        this.graph = g; this.reading = Object.fromEntries(rc.map((c, i) => [c.name, lists[i].papers]));
         this.personal = S.features.includes('personal') ? (await api('/api/personal')).items : {};
       }
-    } catch (e) { this.error = e.message; this.graph = { nodes: [], edges: [] }; this.papers = []; }
+    } catch (e) { this.error = e.message; this.graph = { nodes: [], edges: [] }; this.reading = {}; }
+    this.papers = this.reading.paper || [];
     this.loading = false;
   }
   statusOf(key) { return (this.personal[key] || {}).status; }
@@ -219,12 +235,12 @@ class Library {
     if (this.view === 'graph') return this.renderGraphView();
     if (this.section === 'review') return new ReviewView(this).mount(this.bodyEl);
     const c = this.coll(this.section);
-    if (c && c.name !== 'paper' && this.mode === 'private') { this.cview = new CollectionView(this, c); return this.cview.mount(this.bodyEl); }
+    if (c && !c.reader && this.mode === 'private') { this.cview = new CollectionView(this, c); return this.cview.mount(this.bodyEl); }
     return this.renderListView();
   }
   // Rows for the list view: papers from /api/papers (private) or the export; other sections from the graph nodes.
   rows() {
-    if (this.section === 'paper') return this.papers;
+    if (this.isReader(this.section)) return this.reading[this.section] || [];
     const c = this.coll(this.section);
     return this.graph.nodes.filter((n) => n.labels.includes('Artifact') && (!c || n.labels.includes(c.label)))
       .map((n) => ({ key: n.key, props: n.props, labels: n.labels, topics: [] }));
@@ -237,10 +253,10 @@ class Library {
     const rows = this.rows().filter((p) => {
       if (this.status && this.statusOf(p.key) !== this.status) return false;
       if (!q) return true;
-      return [p.props.title, (p.props.authors || []).join(' '), p.props.venue, p.props.year, (p.topics || []).join(' ')].join(' ').toLowerCase().includes(q);
+      return [p.props.title, (p.props.authors || []).join(' '), venueOf(p.props), yearOf(p.props), (p.topics || []).join(' ')].join(' ').toLowerCase().includes(q);
     });
     const t = (a, b) => a.props.title.localeCompare(b.props.title);
-    const by = { new: (a, b) => (b.props.year || 0) - (a.props.year || 0) || t(a, b), old: (a, b) => (a.props.year || 9999) - (b.props.year || 9999) || t(a, b),
+    const by = { new: (a, b) => (yearOf(b.props) || 0) - (yearOf(a.props) || 0) || t(a, b), old: (a, b) => (yearOf(a.props) || 9999) - (yearOf(b.props) || 9999) || t(a, b),
       title: t, status: (a, b) => (this.statusOf(a.key) || 'zzz').localeCompare(this.statusOf(b.key) || 'zzz') || t(a, b) };
     return rows.sort(by[this.sort]);
   }
@@ -256,10 +272,10 @@ class Library {
     this.countEl = h('span', { class: 'faint', style: { marginLeft: 'auto', fontSize: '12.5px' } });
     this.listEl = h('ul', { class: 'list', tabindex: '0' });
     this.detailEl = h('div', { class: 'detail' });
-    const canCreate = this.mode === 'private' && S.owner && this.section === 'paper';
+    const canCreate = this.mode === 'private' && S.owner && this.isReader(this.section);
     this.bodyEl.append(h('div', { class: 'split' },
       h('div', { class: 'pane' }, h('div', { class: 'pane-head' },
-        canCreate ? h('div', { class: 'row-flex' }, h('div', { class: 'grow' }, search), h('button', { class: 'btn btn-primary btn-sm', onclick: () => this.goSection('paper', { key: null, edit: true }) }, '+ New')) : search,
+        canCreate ? h('div', { class: 'row-flex' }, h('div', { class: 'grow' }, search), h('button', { class: 'btn btn-primary btn-sm', onclick: () => this.goSection(this.section, { key: null, edit: true }) }, '+ New')) : search,
         h('div', { class: 'row-flex' }, sort, status, this.countEl)), this.listEl),
       this.detailEl));
     this.renderList();
@@ -279,15 +295,16 @@ class Library {
       ul.replaceChildren(h('li', { class: 'empty', style: { height: 'auto', padding: '40px 16px' } },
         all ? `No ${this.sectionNoun()} match.`
           : this.mode === 'public' ? (S.owner ? 'Nothing is public yet. Set an item\'s Visibility to Public to show it here.' : 'Nothing is public yet. Sign in to see the library.')
-          : this.section === 'paper' ? 'No papers yet. Add one with + New, the CLI (hub add <doi>) or Claude.' : `Nothing here yet.`));
+          : this.section === 'paper' ? 'No papers yet. Add one with + New, the CLI (hub add <doi>) or Claude.'
+            : this.isReader(this.section) ? `No ${this.sectionNoun()} yet. Add one with + New or Claude.` : `Nothing here yet.`));
       return;
     }
     ul.replaceChildren(...rows.map((p) => {
       const st = this.statusOf(p.key);
       return h('li', null, h('button', { type: 'button', class: 'item' + (p.key === this.sel ? ' active' : ''), 'data-key': p.key, onclick: () => this.open(p.key) },
         h('div', { class: 't' }, p.props.title),
-        h('div', { class: 'a' }, [shortAuthors(p.props), p.props.year].filter(Boolean).join(' · ')),
-        h('div', { class: 'm' }, h('span', { class: 'grow' }, [this.section !== 'paper' && this.mainLabel(p.labels || []).label, statusText(st), p.props.venue].filter(Boolean).join(' · ')),
+        h('div', { class: 'a' }, [shortAuthors(p.props), yearOf(p.props)].filter(Boolean).join(' · ')),
+        h('div', { class: 'm' }, h('span', { class: 'grow' }, [!this.coll(this.section) && this.mainLabel(p.labels || []).label, statusText(st), venueOf(p.props)].filter(Boolean).join(' · ')),
           p.has_file && icon('pdf', 16, 'faint'))));
     }));
     const active = ul.querySelector('.item.active');
@@ -318,9 +335,9 @@ class Library {
     if (this.loading) { this.detailEl.replaceChildren(h('div', { class: 'center' }, h('span', { class: 'spinner' }))); return; }
     this.listEl.querySelectorAll('.item').forEach((b) => b.classList.toggle('active', b.dataset.key === this.sel));
     const active = this.listEl.querySelector('.item.active'); if (active) active.scrollIntoView({ block: 'nearest' });
-    if (this.edit && this.section === 'paper' && this.mode === 'private') this.renderPaperForm(this.sel);
+    if (this.edit && this.isReader(this.section) && this.mode === 'private') this.renderReadingForm(this.sel);
     else if (this.sel) this.renderDetail(this.detailEl, this.sel, 'library');
-    else this.detailEl.replaceChildren(h('div', { class: 'empty' }, this.section === 'paper' ? 'Select a paper from the list' : 'Select an item from the list'));
+    else this.detailEl.replaceChildren(h('div', { class: 'empty' }, this.isReader(this.section) ? `Select a ${this.coll(this.section).label.toLowerCase()} from the list` : 'Select an item from the list'));
   }
 
   /* ---------------------------------------------------------------- detail */
@@ -330,19 +347,19 @@ class Library {
       h('ul', null, items.map((r) => h('li', null, h('span', { class: 'muted small' }, relName(r.type)),
         h('a', { onclick: () => this.open(r.key) }, r.title || r.key)))));
   }
-  async renderPaperForm(key) {
-    const coll = this.coll('paper');
+  async renderReadingForm(key) {
+    const coll = this.coll(this.section);
     this.detailEl.replaceChildren(h('div', { class: 'center' }, h('span', { class: 'spinner' })));
     let item = null;
     if (key) { try { item = await api('/api/items/' + keyQuery(key)); } catch (e) { this.detailEl.replaceChildren(h('div', { class: 'alert' }, e.message)); return; } }
-    const done = async (res) => { toast(item ? 'Saved' : 'Added'); await this.loadData(); this.goSection('paper', { key: res.key }, true); this.renderList(); this.showSelection(); };
+    const done = async (res) => { toast(item ? 'Saved' : 'Added'); await this.loadData(); this.goSection(coll.name, { key: res.key }, true); this.renderList(); this.showSelection(); };
     this.detailEl.replaceChildren(h('div', { class: 'doc' }, itemForm(coll, item, this.formCtx(), { onDone: done, focus: this.focusField,
-      onCancel: () => this.goSection('paper', { key }, true) })));
+      onCancel: () => this.goSection(coll.name, { key }, true) })));
   }
   async renderDetail(container, key, where) {
     // a collection item (method, use case, case study) opened from All or the graph: the schema-driven page
     const c = this.mode === 'private' && this.collOfKey(key);
-    if (c && c.name !== 'paper') {
+    if (c && !c.reader) {
       container.replaceChildren(h('div', { class: 'center' }, h('span', { class: 'spinner' })));
       try {
         const item = await api('/api/items/' + keyQuery(key));
@@ -357,10 +374,11 @@ class Library {
     if (key !== this.sel) return; // selection moved on while loading
     const p = d.props;
     const lab = this.labels.find((l) => d.labels.includes(l.label)) || { label: 'Artifact', name: 'artifact' };
-    const isPaper = lab.label === 'Paper';
+    const rc = this.readerColls().find((x) => x.label === lab.label); // a paper, report or book
+    const isReading = Boolean(rc);
     const wrap = h('article', { class: 'doc' + (where === 'graph' ? ' compact' : '') });
     const info = h('div');
-    const eyebrow = [lab.label, isPaper && p.item_type && p.item_type.replace(/([A-Z])/g, ' $1').toLowerCase(), p.year].filter(Boolean).join(' · ');
+    const eyebrow = [lab.label, isReading && kindOf(p) && kindOf(p).replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').toLowerCase(), yearOf(p)].filter(Boolean).join(' · ');
     wrap.append(h('div', { class: 'eyebrow' }, h('span', { class: 'dot', style: { background: cssVar('--node-' + lab.name) || lab.color } }), eyebrow),
       h('h1', null, p.title || p.name || d.key));
     if (p.authors && p.authors.length) wrap.append(h('p', { class: 'byline', style: where === 'graph' ? { fontSize: '14px' } : null }, p.authors.join(', ')));
@@ -369,12 +387,12 @@ class Library {
     const st = this.statusOf(d.key);
     const canEdit = this.mode === 'private' && S.owner && S.features.includes('personal');
     const badges = h('div', { class: 'row-flex', style: { marginTop: '12px' } },
-      h('span', { class: 'muted', style: { fontSize: '14px' } }, [!canEdit && statusText(st), p.venue, p.visibility === 'public' && 'Public'].filter(Boolean).join(' · ')));
+      h('span', { class: 'muted', style: { fontSize: '14px' } }, [!canEdit && statusText(st), venueOf(p), p.visibility === 'public' && 'Public'].filter(Boolean).join(' · ')));
     if (canEdit) badges.prepend(this.statusSelect(d.key, st));
     wrap.append(badges);
 
     const actions = h('div', { class: 'actions' });
-    if (isPaper) {
+    if (isReading) {
       if (this.mode === 'private') {
         const f = d.file;
         const noun = f && f.kind === 'drive' ? 'PDF' : 'file';
@@ -388,20 +406,21 @@ class Library {
       const href = p.url || (p.doi ? 'https://doi.org/' + p.doi : null);
       if (href) actions.append(h('a', { class: 'btn btn-sm', href, target: '_blank', rel: 'noopener' }, icon('link', 15), p.doi ? 'DOI' : 'Source'));
     }
-    if (where === 'graph' && isPaper) actions.append(h('button', { class: 'btn btn-ghost btn-sm', onclick: () => this.goSection('paper', { key: d.key }) }, 'Open in library'));
-    if (isPaper && where === 'library' && this.mode === 'private' && S.owner) {
-      actions.append(h('button', { class: 'btn btn-sm', onclick: () => this.goSection('paper', { key: d.key, edit: true }) }, 'Edit'));
+    if (where === 'graph' && isReading) actions.append(h('button', { class: 'btn btn-ghost btn-sm', onclick: () => this.goSection(rc.name, { key: d.key }) }, 'Open in library'));
+    if (isReading && where === 'library' && this.mode === 'private' && S.owner) {
+      actions.append(h('button', { class: 'btn btn-sm', onclick: () => this.goSection(rc.name, { key: d.key, edit: true }) }, 'Edit'));
       const delBtn = h('button', { class: 'btn btn-sm btn-ghost', onclick: () => {
         if (actions.querySelector('.confirm')) return;
         delBtn.after(h('span', { class: 'confirm' }, 'Delete for good? ', h('button', { class: 'btn btn-sm danger', onclick: async () => {
-          try { await api('/api/items/' + keyQuery(d.key), { method: 'DELETE' }); toast('Deleted'); await this.afterDelete('paper'); } catch (e) { toast(e.message, 'error'); }
+          try { await api('/api/items/' + keyQuery(d.key), { method: 'DELETE' }); toast('Deleted'); await this.afterDelete(rc.name); } catch (e) { toast(e.message, 'error'); }
         } }, 'Delete')));
       } }, 'Delete');
       actions.append(delBtn);
     }
     if (actions.children.length) wrap.append(actions);
-    if (isPaper && key === this.uploadKey && where === 'library' && this.mode === 'private' && S.owner) wrap.append(this.dropZone(d));
+    if (isReading && key === this.uploadKey && where === 'library' && this.mode === 'private' && S.owner) wrap.append(this.dropZone(d));
 
+    if (p.tldr && isReading) info.append(h('p', { class: 'lead tldr' }, p.tldr));
     if (p.summary) info.append(h('p', { class: 'muted', style: { marginTop: '22px', lineHeight: '1.7' } }, p.summary));
     if (p.abstract) info.append(h('div', { class: 'abstract' }, h('div', { class: 'label' }, 'Abstract'), h('p', null, p.abstract)));
     const topics = (d.out || []).filter((r) => r.type === 'ABOUT');
@@ -412,12 +431,12 @@ class Library {
     const rel = (x) => x;
     if (this.mode === 'private' && S.owner && where === 'library') {
       // the owner manages links in Connections
-    } else if (isPaper) {
+    } else if (isReading) {
       [this.relSection('Cites', out.filter((r) => r.type === 'CITES')), this.relSection('Cited by', inc.filter((r) => r.type === 'CITES'))].map(rel).forEach((x) => x && info.append(x));
     } else {
       [this.relSection('Links to', out.filter((r) => r.type !== 'AUTHORED_BY')), this.relSection('Linked from', inc)].forEach((x) => x && info.append(x));
     }
-    if (isPaper && where === 'library' && this.mode === 'private' && S.owner) {
+    if (isReading && where === 'library' && this.mode === 'private' && S.owner) {
       info.append(this.fileEditor(d));
       info.append(thoughtsOn(this, d.key, (d.in || []).map((x) => ({ rel: x.type, key: x.key, name: x.title, labels: x.labels })),
         { onAdded: async () => { await this.loadData(); this.renderNav(); await this.renderDetail(this.detailEl, key, 'library'); } }));
@@ -432,13 +451,16 @@ class Library {
     wrap.append(info);
 
     let setTab = () => {};
-    if (isPaper && where === 'library' && this.mode === 'private') {
+    if (isReading && where === 'library' && this.mode === 'private') {
       const reader = h('div', { class: 'reader hidden' });
       const analysis = h('div', { class: 'analysis hidden' });
       const conns = h('div', { class: 'connpane hidden' });
       const tabs = h('div', { class: 'tabs', role: 'tablist' });
       const btn = (id, label) => h('button', { class: 'tab', role: 'tab', 'data-tab': id, onclick: () => setTab(id) }, label);
-      tabs.append(...[btn('info', 'Info'), btn('analysis', 'Analysis'), btn('connections', 'Connections'), d.file && btn('reader', 'Reader')].filter(Boolean));
+      const readerBtn = btn('reader', 'Reader');
+      // always there, so every paper, report and book reads the same; disabled while there is nothing to read
+      if (!d.file) { readerBtn.disabled = true; readerBtn.title = 'No file yet: add a link or upload a PDF under Info'; readerBtn.setAttribute('aria-disabled', 'true'); }
+      tabs.append(btn('info', 'Info'), btn('analysis', 'Analysis'), btn('connections', 'Connections'), readerBtn);
       setTab = (id) => {
         if (id === 'reader' && !d.file) id = 'info';
         this.tab = id;
@@ -446,8 +468,8 @@ class Library {
         info.classList.toggle('hidden', id !== 'info'); reader.classList.toggle('hidden', id !== 'reader'); analysis.classList.toggle('hidden', id !== 'analysis'); conns.classList.toggle('hidden', id !== 'connections');
         wrap.style.maxWidth = id === 'reader' ? '1100px' : '';
         if (id === 'reader' && !reader.firstChild) reader.append(...this.readerContent(d.file, p.title)); // created on first view so arrowing through the list does not load every file
-        if (id === 'analysis' && !analysis.firstChild) this.fillAnalysis(analysis, d.key);
-        if (id === 'connections' && !conns.firstChild) this.fillConnections(conns, d.key, tabs.querySelector('[data-tab=connections]'));
+        if (id === 'analysis' && !analysis.firstChild) this.fillAnalysis(analysis, d.key, rc);
+        if (id === 'connections' && !conns.firstChild) this.fillConnections(conns, d.key, tabs.querySelector('[data-tab=connections]'), rc);
       };
       wrap.insertBefore(tabs, info); wrap.append(analysis, conns, reader);
       setTab(this.tab);
@@ -464,12 +486,11 @@ class Library {
     } catch (e) { el.append(h('div', { class: 'alert' }, e.message)); }
   }
   // The paper's schema fields, grouped, with who wrote each (Claude / source / you), confidence and ungrounded flags.
-  async fillAnalysis(el, key) {
+  async fillAnalysis(el, key, coll = this.coll('paper')) {
     el.append(h('div', { class: 'center' }, h('span', { class: 'spinner' })));
     try {
       const item = await api('/api/items/' + keyQuery(key));
       if (key !== this.sel) return;
-      const coll = this.coll('paper');
       el.replaceChildren(
         h('div', { class: 'row-flex legendline' }, h('span', { class: 'faint small' }, 'Written by:'), h('span', { class: 'prov prov-claude' }, 'Claude'), h('span', { class: 'prov prov-source' }, 'source'), h('span', { class: 'prov prov-owner' }, 'you'),
           item.record_status && h('span', { class: 'faint small' }, '· ' + (item.record_status === 'reviewed' ? 'reviewed' : 'not reviewed'))),
@@ -477,12 +498,12 @@ class Library {
     } catch (e) { el.replaceChildren(h('div', { class: 'alert' }, e.message)); }
   }
   // A paper's Connections tab: every link, managed in one place (connections.js). The tab label shows the count.
-  async fillConnections(el, key, tabBtn) {
+  async fillConnections(el, key, tabBtn, coll = this.coll('paper')) {
     el.replaceChildren(h('div', { class: 'center' }, h('span', { class: 'spinner' })));
     try {
       const item = await api('/api/items/' + keyQuery(key));
       if (key !== this.sel) return;
-      const conn = new Connections(this, this.coll('paper'), item, { onChanged: async () => { await this.loadData(); this.renderNav(); return this.fillConnections(el, key, tabBtn); } });
+      const conn = new Connections(this, coll, item, { onChanged: async () => { await this.loadData(); this.renderNav(); return this.fillConnections(el, key, tabBtn, coll); } });
       el.replaceChildren(conn.render());
       if (tabBtn) tabBtn.textContent = `Connections · ${conn.count}`;
     } catch (e) { el.replaceChildren(h('div', { class: 'alert' }, e.message)); }
@@ -512,7 +533,7 @@ class Library {
       try {
         await api('/api/papers/file?key=' + keyQuery(key), { method: 'POST', raw: f, headers: { 'Content-Type': 'application/pdf' } });
         this.uploadKey = null; toast('Uploaded to Drive');
-        const row = this.papers.find((x) => x.key === key); if (row) row.has_file = true;
+        const row = this.rows().find((x) => x.key === key); if (row) row.has_file = true;
         await this.renderDetail(this.detailEl, key, 'library');
       } catch (e) { status.textContent = e.message; zone.classList.remove('busy'); toast(e.message, 'error'); }
     };
@@ -528,7 +549,7 @@ class Library {
     const key = d.key;
     const input = h('input', { class: 'input', type: 'url', placeholder: 'https://drive.google.com/file/d/…/view  or any https link', value: (d.file && d.file.url) || '', 'aria-label': 'File link' });
     const refresh = (hasFile) => {
-      const row = this.papers.find((x) => x.key === key); if (row) row.has_file = hasFile;
+      const row = this.rows().find((x) => x.key === key); if (row) row.has_file = hasFile;
       if (this.view === 'list') this.renderList();
       return this.renderDetail(this.detailEl, key, 'library');
     };

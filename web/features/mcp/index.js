@@ -11,7 +11,7 @@ const { requireOwner, isOwner, bearer } = require('../../core/auth');
 const oauth = require('../../core/oauth');
 const { BASE } = require('../../core/env');
 const { run } = require('../../core/db');
-const { schema, fieldsOf, relationsFrom } = require('../../core/schema');
+const { schema, fieldsOf, relationsFrom, readerLabels } = require('../../core/schema');
 const artifacts = require('../../core/artifacts');
 const { assertNotRetired } = require('../../core/schema');
 const query = require('../../core/query');
@@ -75,7 +75,7 @@ async function withUpload(result, uploadUrl) {
 
 function buildServer({ uploadUrl = null } = {}) {
   const s = new McpServer({ name: 'research-hub', version: pkg.version }, {
-    instructions: 'Tools for the owner\'s research hub: a Neo4j knowledge graph with collections (papers, reports, methods, use cases, case studies, frameworks, research questions, hypotheses, ontologies and standards, thoughts). '
+    instructions: 'Tools for the owner\'s research hub: a Neo4j knowledge graph with collections (papers, reports, books, methods, use cases, case studies, frameworks, research questions, hypotheses, ontologies and standards, thoughts). '
       + 'To analyse something, call get_schema for its collection, then save_analysis once with every field you are confident about: it saves directly. '
       + 'Use search_items and get_item to read collections; call describe_graph before writing Cypher. '
       + 'When the owner shares a paper (a PDF in the chat, a link, a DOI): find its DOI, call get_schema for papers, then save_analysis once (doi, your analysis). '
@@ -195,29 +195,29 @@ function buildServer({ uploadUrl = null } = {}) {
 
   if (files) {
     s.registerTool('set_file_link', {
-      description: 'Set the file link of an existing paper (any https URL, e.g. a Google Drive share link or an arXiv PDF). Nothing is downloaded. A Drive file the hub uploaded earlier is moved to the Drive trash.',
+      description: 'Set the file link of an existing paper, report or book (any https URL, e.g. a Google Drive share link or an arXiv PDF). Nothing is downloaded. A Drive file the hub uploaded earlier is moved to the Drive trash.',
       inputSchema: { key: z.string().describe('Paper key'), file_url: z.string() },
     }, safe(async ({ key, file_url }) => ({ key, ...(await files.setLink(key, file_url)) })));
 
     s.registerTool('copy_pdf_to_drive', {
-      description: "Download a PDF from an allow-listed https host (arXiv, UCL Discovery by default) and upload it to the owner's Google Drive, then store the Drive link on the paper. Needs Drive to be configured on the server.",
+      description: "Download a PDF from an allow-listed https host (arXiv, UCL Discovery by default) and upload it to the owner's Google Drive, then store the Drive link on the paper, report or book. Needs Drive to be configured on the server.",
       inputSchema: { key: z.string().describe('Paper key'), pdf_url: z.string() },
     }, safe(async ({ key, pdf_url }) => ({ key, ...(await files.uploadPdf(key, await files.fetchPdf(pdf_url))) })));
 
     if (uploadUrl) {
       s.registerTool('request_upload', {
-        description: 'A link where the owner drops a PDF for an existing paper; the file goes to their Google Drive and is linked to the paper. '
+        description: 'A link where the owner drops a PDF for an existing paper, report or book; the file goes to their Google Drive and is linked to it. '
           + 'Use it when the owner attached the PDF in the chat (attachments do not reach the hub) and there is no public PDF URL to copy with copy_pdf_to_drive. Give the owner the returned upload_url.',
         inputSchema: { key: z.string().describe('Paper key') },
       }, safe(async ({ key }) => {
-        const [p] = await run('MATCH (p:Paper {key:$key}) RETURN p.file_url AS file', { key });
-        if (!p) throw Object.assign(new Error('No such paper: ' + key), { status: 404 });
-        return { key, upload_url: uploadUrl(key), has_file: Boolean(p.file), note: p.file ? 'The paper already has a file; uploading replaces it (a hub-uploaded one goes to the Drive trash).' : undefined };
+        const [p] = await run('MATCH (p:Artifact {key:$key}) WHERE any(l IN labels(p) WHERE l IN $labels) RETURN p.file_url AS file', { key, labels: readerLabels });
+        if (!p) throw Object.assign(new Error('No such paper, report or book: ' + key), { status: 404 });
+        return { key, upload_url: uploadUrl(key), has_file: Boolean(p.file), note: p.file ? 'It already has a file; uploading replaces it (a hub-uploaded one goes to the Drive trash).' : undefined };
       }));
     }
 
     s.registerTool('remove_file_link', {
-      description: 'Remove the file link from a paper. A Drive file the hub uploaded is moved to the Drive trash.',
+      description: 'Remove the file link from a paper, report or book. A Drive file the hub uploaded is moved to the Drive trash.',
       inputSchema: { key: z.string().describe('Paper key') },
     }, safe(async ({ key }) => ({ key, ...(await files.removeLink(key)) })));
   }

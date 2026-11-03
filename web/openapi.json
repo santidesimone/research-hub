@@ -291,6 +291,7 @@
             "enum": [
               "paper",
               "report",
+              "book",
               "method",
               "use_case",
               "case_study",
@@ -506,6 +507,7 @@
             "enum": [
               "paper",
               "report",
+              "book",
               "method",
               "use_case",
               "case_study",
@@ -825,7 +827,23 @@
     "/api/papers": {
       "get": {
         "operationId": "listPapers",
-        "summary": "List papers in the graph",
+        "summary": "List papers in the graph (or, with collection, reports or books)",
+        "parameters": [
+          {
+            "name": "collection",
+            "in": "query",
+            "required": false,
+            "description": "A collection read from a file: paper (default), report or book. They share this reading list and the file endpoints.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "paper",
+                "report",
+                "book"
+              ]
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Papers with properties and topics"
@@ -1338,7 +1356,7 @@
     "/api/papers/file": {
       "put": {
         "operationId": "setFileLink",
-        "summary": "Set a paper's file link (any https URL)",
+        "summary": "Set a paper's, report's or book's file link (any https URL)",
         "security": [
           {
             "bearerAuth": []
@@ -1753,6 +1771,7 @@
               "enum": [
                 "paper",
                 "report",
+                "book",
                 "method",
                 "use_case",
                 "case_study",

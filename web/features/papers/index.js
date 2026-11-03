@@ -1,4 +1,5 @@
-// Everything specific to papers: list, add, delete, the file link (set, remove, upload to Drive), CSL export/import.
+// Papers: list, add, delete, CSL export/import; and for every reader collection (papers, reports, books): the reading
+// list (?collection=) and the file link (set, remove, upload to Drive).
 const express = require('express');
 const { run } = require('../../core/db');
 const { HttpError } = require('../../core/errors');
@@ -7,8 +8,9 @@ const artifacts = require('../../core/artifacts');
 const hooks = require('../../core/hooks');
 const { toCsl, fromCsl } = require('./csl');
 const files = require('./files');
+const { schema, safeLabel } = require('../../core/schema');
 
-const ROWS = `MATCH (p:Paper)
+const rowsOf = (label) => `MATCH (p:${safeLabel(label)})
   RETURN p.key AS key, properties(p) AS props, p.file_url IS NOT NULL AS has_file,
          [(p)-[:ABOUT]->(c:Topic|Concept) | c.name] AS topics // Topic; Concept from older imports
   ORDER BY coalesce(p.year, 0) DESC, p.title`;
@@ -22,7 +24,7 @@ module.exports = {
     // Deleting a paper also trashes the Drive file the hub uploaded for it (never one it did not upload).
     const pending = new Map();
     hooks.on('beforeRemove', async ({ key }) => {
-      const [row] = await run('MATCH (p:Paper {key:$key}) RETURN p.drive_file_id AS id', { key });
+      const [row] = await run('MATCH (p:Artifact {key:$key}) RETURN p.drive_file_id AS id', { key });
       if (row && row.id) pending.set(key, row.id);
     });
     hooks.on('afterRemove', async ({ key }) => {
@@ -31,8 +33,12 @@ module.exports = {
       if (id) { const warning = await files.trashQuietly(id); if (warning) throw new Error(warning); }
     });
 
-    app.get('/api/papers', requireOwner, wrap(async (_req, res) => {
-      const rows = await run(ROWS);
+    // ?collection=report (or book): the same reading list for another reader collection
+    app.get('/api/papers', requireOwner, wrap(async (req, res) => {
+      const c = String(req.query.collection || 'paper');
+      const t = schema.types[c];
+      if (!t || !t.reader) throw new HttpError(400, `collection must be one of ${Object.keys(schema.types).filter((n) => schema.types[n].reader).join(', ')}`);
+      const rows = await run(rowsOf(t.label));
       for (const r of rows) delete r.props.abstract; // the list does not need it; the detail view loads it
       res.json({ papers: rows });
     }));

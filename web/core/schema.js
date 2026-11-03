@@ -78,6 +78,7 @@ function check(s) {
     if (t.ui_count != null && !((t.fields || {})[t.ui_count.field] && ((t.fields[t.ui_count.field].enum || []).includes(t.ui_count.value)))) out.push(`${at}: ui_count needs an enum field of this type and one of its values`);
     if (t.retired != null && t.retired !== true && !(s.types || {})[t.retired]) out.push(`${at}: retired is true or names the type that replaces it`);
     if (t.retired && t.collection) out.push(`${at}: a retired type cannot be a collection`);
+    if (t.reader != null && (typeof t.reader !== 'boolean' || (t.reader && !t.collection))) out.push(`${at}: reader is true or false, and only for collections`);
     if (t.title_from != null && !['text', 'longtext'].includes(((t.fields || {})[t.title_from] || {}).type)) out.push(`${at}: title_from must name a text field of this type`);
     checkFields(at + '.fields', t.fields);
     const known = new Set([...Object.keys(s.common_fields || {}), ...Object.keys(t.fields || {})]);
@@ -136,6 +137,8 @@ const entityLabels = Object.keys(schema.entities);
 const typeLabels = Object.values(schema.types).map((t) => t.label);
 const publicEntityLabels = entityLabels.filter((l) => schema.entities[l].public);
 const orphanLabels = entityLabels.filter((l) => schema.entities[l].prune_orphans); // only these are deleted when nothing links to them
+// collections read from a file (papers, reports, books): a file link, a Reader tab, the reading-list view
+const readerLabels = Object.values(schema.types).filter((t) => t.reader).map((t) => t.label);
 const typeByLabel = Object.fromEntries(Object.entries(schema.types).map(([n, t]) => [t.label, n]));
 
 // Labels and relationship types cannot be Cypher parameters, so every one that reaches a query goes through here.
@@ -259,7 +262,7 @@ function publicView() {
   const collections = Object.entries(schema.types).filter(([, t]) => t.collection).map(([name, t]) => ({
     name, label: t.label, plural: t.label_plural || t.label, slug: slugOf(t.label_plural || t.label), schema_version: t.schema_version, managed: t.managed,
     list_columns: t.list_columns || [], filters: t.filters || [], detail_groups: t.detail_groups || [],
-    ui_section: t.ui_section, ui_count: t.ui_count || null, title_from: t.title_from || null,
+    ui_section: t.ui_section, ui_count: t.ui_count || null, title_from: t.title_from || null, reader: Boolean(t.reader),
     fields: Object.fromEntries(Object.entries(fieldsOf(name)).filter(([, f]) => !(f.by.length === 1 && f.by[0] === 'Sys'))
       .map(([f, spec]) => [f, Object.fromEntries(FIELD_KEYS.filter((k) => spec[k] !== undefined).map((k) => [k, spec[k]]))])),
     relations: relationsFrom(t.label),
@@ -276,6 +279,6 @@ function assertNotRetired(typeName) {
 
 module.exports = {
   assertNotRetired,
-  schema, check, load, safeLabel, safeRel, entityLabels, typeLabels, publicEntityLabels, orphanLabels, relationTypes,
+  schema, check, load, safeLabel, safeRel, entityLabels, typeLabels, readerLabels, publicEntityLabels, orphanLabels, relationTypes,
   fieldsOf, keyPrefix, managedBy, publicProps, validate, publicView, relTargets, relAllows, relationsFrom, partSpec,
 };

@@ -19,7 +19,8 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | Publishing settings (default visibility, full public detail) | done (2026-11-01), not deployed yet | See "Publishing settings" below. |
 | 10 Curation: reviewable change plans | done (2026-11-01), tested live from the claude.ai chat | See "Task 10" below. |
 | 11 Library redesign (`docs/UI_REDESIGN.md`) | done, all six steps (2026-11-02); not deployed | See "Task 11" below. |
-| Reports collection (schema v4) | done (2026-11-02); not deployed | See "Reports" below. |
+| Reports collection (schema v4) | done, deployed 2026-11-03 (ae8ed6b) | See "Reports" below. |
+| Books; papers, reports and books read alike (schema v5) | done (2026-11-03); not deployed | See "Books" below. |
 
 ## Task 0. Baseline against real services
 
@@ -743,4 +744,19 @@ Approved by the owner on 2026-11-02 after three rounds on a clickable mockup (sp
 **Not tested / open**
 - Not deployed; the record is not in production yet. After the deploy: `hub config --url <production>` (or HUB_URL), then `hub analyze report:ibm-ibv-blueprint-for-agentic-operations-2026 < report.json`.
 - The full browser suites were not re-run (owner.js updated for the new sidebar entry).
+
+## Books; papers, reports and books read alike (schema v5)
+
+**Changed**
+- `schema/schema.json`: `reader: true` on paper and report, and on the new `book` collection; Book relations; `version` 4 to 5. `core/schema.js` checks `reader` and exports `readerLabels`; `publicView` gives `reader` to the UI.
+- File link, Drive upload and trash-on-delete (`features/papers/files.js`, the papers feature's delete hook, MCP `request_upload`) work for any reader item; `GET /api/papers?collection=report|book` gives the same reading list.
+- Library (`apps/library/app.js`): reader collections use the papers' list and page (search, sort, status; Info, Analysis, Connections, Reader). The Reader tab is always shown and disabled while there is no file. An upload link (always `/library/papers?key=…&upload=1`) opens the item in its own section, after mount, so the drop zone stays.
+- `migrations/017_books.js`: the full-text index covers Book. CLI: `hub analyze book:<slug>` creates under that key. Skins: `--node-book`. Docs: CHANGELOG, SCHEMA_DESIGN, README, openapi.
+
+**Tested for real**
+- `npm test` with new tests (reader check and labels, Book relations and validation, reading list by collection, file link/remove/upload on a report, migration 017); 9 mutants, all killed after adding the remove/upload assertions.
+- A throwaway Neo4j and hub: migrations to 017, a paper without a file (Reader disabled, clicking it keeps Info), a paper with a file (Reader enabled), the IBM report and both books through `hub analyze` (re-run fills nothing); Chrome on desktop and phone width: same list and tabs for all three, no page errors, no horizontal scroll; the upload link for a book lands on Books with the drop zone.
+
+**Not tested / open**
+- Not deployed. The two books are not in production yet (after the deploy: `hub analyze book:<slug> < book.json`).
 

@@ -177,6 +177,27 @@ Grey literature: survey reports, market analyses, whitepapers, case collections,
 
 Connections: ABOUT Topic/Concept/Domain; PUBLISHED_BY Organisation; AUTHORED_BY Person; CITES Paper/Report; SUPPORTS, CRITIQUES, CONTRADICTS Paper/Report/Use case (interpretive: evidence and location); FRAMED_BY Framework; INFORMS questions and hypotheses. The personal layer (reading status) works as for any item; a new report gets no default status.
 
+## Book (book, managed: db; schema v5)
+
+Books are read like papers and reports (`reader: true`: a file link, the reading list, a Reader tab). There is no Crossref for books, so the bibliographic fields may be written by a source, Claude or the owner. Key `book:<slug>`. The owner usually uploads the file.
+
+| Field | Type | By | Tier |
+|---|---|---|---|
+| title, tldr, summary, topics | as every item | | |
+| authors | link to Person (AUTHORED_BY), ordered | S/C/Y | Core |
+| editors | text list | S/C/Y | Standard |
+| year, edition, isbn | integer, text, text | S/C/Y | Core |
+| publisher | link to Organisation (PUBLISHED_BY) | S/C/Y | Core |
+| url, language, abstract (the publisher's description) | | S/C/Y | Standard (language Deep) |
+| book_kind | textbook, monograph, handbook, edited_volume, practitioner_guide, trade_book, reference, other | C/Y | Core |
+| domain (Domain), main_claim | | C/Y | Standard |
+| chapters | list of {number, title, pages}, so findings and thoughts can point to a chapter | S/C/Y | Standard |
+| key_findings | list of {text, location}; location needed | C | Standard |
+| limitations_observed | text list | C/Y | Deep |
+| relevance, relevance_reason, reading_depth | as on papers | Y | Standard |
+
+Connections: ABOUT, AUTHORED_BY, PUBLISHED_BY, FRAMED_BY, INFORMS; SUPPORTS, CRITIQUES, CONTRADICTS papers, reports and books (interpretive).
+
 ## Shared vocabulary nodes
 
 Topic (hierarchical: BROADER), Concept, Domain (short owner-maintained list), Person (ORCID), Venue, Organisation, Dataset. Keys `topic:slug`, `concept:slug`, `domain:slug`, `person:...`, `venue:slug`, `org:slug`, `dataset:slug`. Each has `name`, `aliases[]`. Claude passes names; the server normalises (lowercase, strip punctuation, alias match, fulltext fallback) and links to an existing node, or creates one flagged `by=claude`.

@@ -144,6 +144,7 @@ h1, h2, h3 { font-family: var(--font-heading); font-weight: 500; margin: 0; line
 .tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--border); margin-top: 26px; }
 .tab { border: 0; background: transparent; padding: 8px 2px; cursor: pointer; color: var(--text-muted); font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .tab.on { color: var(--text); border-bottom-color: var(--accent); }
+.tab:disabled { color: var(--text-faint); cursor: not-allowed; }
 .abstract { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-m); padding: 18px 20px; margin-top: 22px; }
 .abstract p { margin: 6px 0 0; line-height: 1.7; }
 .label { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }

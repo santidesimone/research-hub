@@ -66,7 +66,7 @@ const seed = require('../../data/seed_papers.json');
 
   // migrations are discoverable and ordered
   const migrate = require('../core/migrate');
-  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', '010_record_status_from_provenance', '011_frameworks_questions_ontologies', '012_oauth', '013_curation', '014_informs', '015_thoughts', '016_reports', 'personal_001_layer']);
+  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', '010_record_status_from_provenance', '011_frameworks_questions_ontologies', '012_oauth', '013_curation', '014_informs', '015_thoughts', '016_reports', '017_books', 'personal_001_layer']);
   // personal layer: separate node, driven by hooks, core untouched
   calls.length = 0;
   require('../features/personal').mount({ get() {}, put() {}, delete() {}, post() {} });
@@ -206,6 +206,16 @@ const seed = require('../../data/seed_papers.json');
   assert.equal(out3.removed, true); assert.equal(out3.trashed_drive_file, undefined, 'files the hub did not upload are never touched');
   runImpl = async () => [];
   await assert.rejects(() => files.setLink('doi:nope', 'https://arxiv.org/pdf/1'), (e) => e.status === 404);
+  // reports and books have a file like papers: the lookup is by key among the reader labels
+  let fq = null;
+  runImpl = async (q, p) => { if (q.includes('p.drive_file_id AS drive_file_id')) { fq = [q, p]; return [{ key: 'report:r', title: 'R', file_url: null, drive_file_id: null }]; } return []; };
+  const mr = calls.length;
+  await files.setLink('report:r', 'https://example.org/r.pdf');
+  assert.ok(fq[0].startsWith('MATCH (p:Artifact {key:$key}) WHERE any(l IN labels(p) WHERE l IN $labels)') && fq[1].labels.join() === 'Paper,Report,Book', fq[0]);
+  assert.ok(calls.slice(mr).some(([q]) => q.startsWith('MATCH (p:Artifact {key:$key}) SET p.file_url')));
+  await files.removeLink('report:r'); await files.uploadPdf('report:r', PDF);
+  assert.ok(calls.slice(mr).some(([q]) => q === 'MATCH (p:Artifact {key:$key}) REMOVE p.file_url, p.drive_file_id') && calls.slice(mr).some(([q]) => q === 'MATCH (p:Artifact {key:$key}) SET p.file_url = $url, p.drive_file_id = $id'), 'remove and upload work on any reader item');
+  runImpl = async () => [];
   // add with a link: stored once the node exists; copy_to_drive from a host that is not allowed keeps the link and reports why
   runImpl = async (q) => (q.includes('p.drive_file_id AS drive_file_id') ? [{ key: 'doi:10.1/p', title: 'x', file_url: null, drive_file_id: null }] : []);
   const withLink = await artifacts.add('paper', { title: 'Linked paper', file_url: 'https://arxiv.org/pdf/2' });
@@ -321,7 +331,7 @@ const seed = require('../../data/seed_papers.json');
   const badFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hub-schema-')), 'schema.json');
   fs.writeFileSync(badFile, JSON.stringify({ ...schema, version: 'three' }));
   assert.throws(() => S.load(badFile), /schema\/schema\.json is invalid:[\s\S]*version must be an integer/);
-  assert.deepEqual(Object.keys(schema.types).filter((t) => schema.types[t].collection).sort(), ['case_study', 'framework', 'hypothesis', 'method', 'ontology', 'paper', 'report', 'research_question', 'thought', 'use_case']);
+  assert.deepEqual(Object.keys(schema.types).filter((t) => schema.types[t].collection).sort(), ['book', 'case_study', 'framework', 'hypothesis', 'method', 'ontology', 'paper', 'report', 'research_question', 'thought', 'use_case']);
   assert.deepEqual(['note', 'project'].map(S.managedBy), ['markdown', 'markdown']);
   assert.deepEqual(['method', 'use_case', 'case_study', 'paper'].map(S.managedBy), ['db', 'db', 'db', 'api']);
   assert.ok(['Topic', 'Concept', 'Domain', 'Person', 'Venue', 'Organisation', 'Dataset'].every((l) => S.entityLabels.includes(l)));
@@ -1149,7 +1159,7 @@ const seed = require('../../data/seed_papers.json');
   const M = await import('data:text/javascript,' + encodeURIComponent(fs.readFileSync(path.join(__dirname, '..', 'apps', 'library', 'model.js'), 'utf8')));
   const pubView = publicView();
   const colls = pubView.collections;
-  assert.deepEqual(colls.map((c) => [c.name, c.slug, c.plural]), [['paper', 'papers', 'Papers'], ['report', 'reports', 'Reports'], ['method', 'methods', 'Methods'], ['use_case', 'use-cases', 'Use cases'], ['case_study', 'case-studies', 'Case studies'],
+  assert.deepEqual(colls.map((c) => [c.name, c.slug, c.plural]), [['paper', 'papers', 'Papers'], ['report', 'reports', 'Reports'], ['book', 'books', 'Books'], ['method', 'methods', 'Methods'], ['use_case', 'use-cases', 'Use cases'], ['case_study', 'case-studies', 'Case studies'],
     ['framework', 'frameworks', 'Frameworks'], ['research_question', 'research-questions', 'Research questions'], ['hypothesis', 'hypotheses', 'Hypotheses'], ['ontology', 'ontologies-and-standards', 'Ontologies and standards'], ['thought', 'thoughts', 'Thoughts']]);
   const pc = colls.find((c) => c.name === 'paper');
   assert.ok(pc.fields.contribution_type.enum.includes('empirical') && pc.fields.authors.ref === 'Person' && !pc.fields.provenance && !pc.fields.key, 'hub-set fields are not offered to the UI');
@@ -1370,7 +1380,7 @@ const seed = require('../../data/seed_papers.json');
       reset({ 'GET /api/schema': [200, publicView()] });
       r = await hub(['schema', 'case-studies']);
       assert.ok(/case_type\s+enum\s+core\s+YC\s+deployment\|pilot/.test(r.stdout) && r.stdout.includes('organisations') && r.stdout.includes('Organisation'), r.stdout);
-      r = await hub(['schema', 'gadgets']); assert.equal(r.code, 1); assert.match(r.stderr, /no collection "gadgets" \(paper, report, method, use_case, case_study, framework, research_question, hypothesis, ontology, thought\)/);
+      r = await hub(['schema', 'gadgets']); assert.equal(r.code, 1); assert.match(r.stderr, /no collection "gadgets" \(paper, report, book, method, use_case, case_study, framework, research_question, hypothesis, ontology, thought\)/);
 
       // import-notes: Markdown notes become thoughts (kept) with their links; projects are skipped; sync-notes says it is retired
       const cdir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-notes-'));
@@ -1796,7 +1806,7 @@ const seed = require('../../data/seed_papers.json');
     const paperRels = S8.relationsFrom('Paper');
     assert.deepEqual(paperRels.find((r) => r.rel === 'TESTS'), { rel: 'TESTS', to: ['Hypothesis'], interpretive: true, props: { result: { type: 'enum', enum: ['supported', 'refuted', 'mixed', 'inconclusive'], required: true } } });
     const pv8 = S8.publicView().collections;
-    assert.deepEqual(Object.fromEntries(pv8.map((c) => [c.name, c.ui_section])), { paper: 'reading', report: 'reading', method: 'knowledge', use_case: 'knowledge', case_study: 'knowledge', framework: 'knowledge', research_question: 'inquiry', hypothesis: 'inquiry', ontology: 'knowledge', thought: 'capture' });
+    assert.deepEqual(Object.fromEntries(pv8.map((c) => [c.name, c.ui_section])), { paper: 'reading', report: 'reading', book: 'reading', method: 'knowledge', use_case: 'knowledge', case_study: 'knowledge', framework: 'knowledge', research_question: 'inquiry', hypothesis: 'inquiry', ontology: 'knowledge', thought: 'capture' });
     assert.deepEqual(S8.publicView().sections, [{ id: 'capture', label: '' }, { id: 'reading', label: 'Reading' }, { id: 'knowledge', label: 'Knowledge' }, { id: 'inquiry', label: 'Inquiry' }]);
     assert.equal(pv8.find((c) => c.name === 'hypothesis').title_from, 'statement');
     assert.deepEqual(S8.validate('ontology', { title: 'X', urls: [{ role: 'docs', url: 'http://x.org/d' }] }).errors, ['urls: url: must be an https link'], 'http links are refused for ontologies');
@@ -1949,17 +1959,17 @@ const seed = require('../../data/seed_papers.json');
     // the Library sidebar: the schema's sections in order, each with its collections in schema order
     const M8 = await import('data:text/javascript,' + encodeURIComponent(fs.readFileSync(path.join(__dirname, '..', 'apps', 'library', 'model.js'), 'utf8')));
     const side = M8.sidebarGroups(pv8, S8.publicView().sections);
-    assert.deepEqual(side.map((g) => [g.label, g.items.map((i) => i.id)]), [['', ['thought']], ['Reading', ['paper', 'report']], ['Knowledge', ['method', 'use_case', 'case_study', 'framework', 'ontology']], ['Inquiry', ['research_question', 'hypothesis']]]);
+    assert.deepEqual(side.map((g) => [g.label, g.items.map((i) => i.id)]), [['', ['thought']], ['Reading', ['paper', 'report', 'book']], ['Knowledge', ['method', 'use_case', 'case_study', 'framework', 'ontology']], ['Inquiry', ['research_question', 'hypothesis']]]);
     assert.deepEqual(side[3].items.map((i) => i.label), ['Research questions', 'Hypotheses']);
-    const side2 = M8.sidebarGroups([...pv8, { name: 'book', plural: 'Books', ui_section: 'reading' }, { name: 'gadget', plural: 'Gadgets', ui_section: 'nowhere' }], S8.publicView().sections);
-    assert.deepEqual([side2[1].items.map((i) => i.id), side2.at(-1).label, side2.at(-1).items.map((i) => i.id)], [['paper', 'report', 'book'], 'Other', ['gadget']], 'a new type lands in its group; an unknown group goes to Other');
+    const side2 = M8.sidebarGroups([...pv8, { name: 'zine', plural: 'Zines', ui_section: 'reading' }, { name: 'gadget', plural: 'Gadgets', ui_section: 'nowhere' }], S8.publicView().sections);
+    assert.deepEqual([side2[1].items.map((i) => i.id), side2.at(-1).label, side2.at(-1).items.map((i) => i.id)], [['paper', 'report', 'book', 'zine'], 'Other', ['gadget']], 'a new type lands in its group; an unknown group goes to Other');
     assert.deepEqual(M8.sidebarGroups(pv8, []).map((g) => g.label), ['Other'], 'no sections: everything is still listed');
     assert.deepEqual(M8.collectionCounts([{ labels: ['Artifact', 'Method'] }, { labels: ['Artifact', 'Method'] }, { labels: ['Artifact', 'Paper'] }, { labels: ['Concept'] }], pv8.filter((c) => ['paper', 'method', 'ontology'].includes(c.name)), [{}, {}, {}]),
       { paper: 3, method: 2, ontology: 0 }, 'counts per collection; papers from their own list');
     // the graph filter: sidebar groups, then Vocabulary, then other types; large vocabularies off by default
     const pubLabels = S8.publicView().labels;
     const fg = M8.graphFilterGroups(pubLabels, pv8, S8.publicView().sections, S8.publicView().entities.map((e) => e.label));
-    assert.deepEqual(fg.map((g) => [g.id, g.items.map((l) => l.label)]), [['capture', ['Thought']], ['reading', ['Paper', 'Report']], ['knowledge', ['Method', 'UseCase', 'CaseStudy', 'Framework', 'Ontology']], ['inquiry', ['ResearchQuestion', 'Hypothesis']],
+    assert.deepEqual(fg.map((g) => [g.id, g.items.map((l) => l.label)]), [['capture', ['Thought']], ['reading', ['Paper', 'Report', 'Book']], ['knowledge', ['Method', 'UseCase', 'CaseStudy', 'Framework', 'Ontology']], ['inquiry', ['ResearchQuestion', 'Hypothesis']],
       ['vocabulary', ['Person', 'Concept', 'Topic', 'Domain', 'Venue', 'Organisation', 'Dataset']], ['other', ['Note', 'Project']]]);
     assert.deepEqual(M8.GRAPH_OFF_BY_DEFAULT, ['Concept', 'Person', 'Organisation', 'Venue']);
     assert.ok(M8.GRAPH_OFF_BY_DEFAULT.every((l) => pubLabels.some((x) => x.label === l)), 'every default-off type exists');
@@ -2037,9 +2047,9 @@ const seed = require('../../data/seed_papers.json');
     // reports (schema v4): grey literature, saved like any analysis; existing types keep their links
     {
       runImpl = t8Run; txImpl = t8Tx; vocab.resolve = stubResolve;
-      assert.equal(schema.version, 4);
+      assert.equal(schema.version, 5);
       assert.deepEqual([S8.relTargets('CRITIQUES', 'Report'), S8.relTargets('CRITIQUES', 'Paper'), S8.relTargets('CRITIQUES', 'Thought'), S8.relTargets('CRITIQUES', 'Note')],
-        [['Paper', 'Report', 'UseCase'], ['Paper', 'Report'], ['Paper', 'Report'], ['Paper']], 'only a report critiques a use case');
+        [['Paper', 'Report', 'UseCase'], ['Paper', 'Report'], ['Paper', 'Report', 'Book'], ['Paper']], 'only a report critiques a use case');
       assert.deepEqual([S8.relTargets('CITES', 'Paper'), S8.relTargets('CITES', 'Report')], [['Paper'], ['Paper', 'Report']], 'paper citations stay paper to paper');
       assert.ok(['ABOUT', 'AUTHORED_BY', 'PUBLISHED_BY', 'FRAMED_BY', 'INFORMS', 'SUPPORTS', 'CONTRADICTS'].every((r) => S8.relTargets(r, 'Report').length), 'every report relation starts at a Report');
       assert.ok(S8.relAllows('SUPPORTS', 'Report', ['UseCase']) && S8.relAllows('PUBLISHED_BY', 'Ontology', ['Organisation']) && !S8.relAllows('AUTHORED_BY', 'Method', ['Person']));
@@ -2104,6 +2114,33 @@ const seed = require('../../data/seed_papers.json');
       const ps8 = pq8.filter(([q]) => q.includes('Personal')).map(([, p]) => p.props); // the layer is mounted more than once in this run
       assert.ok(ps8.length && ps8.every((x) => x.status === 'reading'), JSON.stringify(ps8));
       runImpl = t8Run; txImpl = t8Tx;
+      // reader collections: papers, reports, books share the reading view, the file link and the reading list
+      assert.deepEqual([S8.readerLabels, S8.publicView().collections.filter((c) => c.reader).map((c) => c.name)], [['Paper', 'Report', 'Book'], ['paper', 'report', 'book']]);
+      assert.match(bad8((c) => { c.types.method.reader = 'yes'; }), /method: reader is true or false, and only for collections/);
+      assert.match(bad8((c) => { c.types.note.reader = true; }), /note: reader is true or false, and only for collections/);
+      assert.deepEqual([S8.relTargets('CRITIQUES', 'Book'), S8.relTargets('PUBLISHED_BY', 'Book'), S8.relTargets('INFORMS', 'Book'), S8.relTargets('CITES', 'Book')],
+        [['Paper', 'Report', 'Book'], ['Organisation'], ['ResearchQuestion', 'Hypothesis'], []]);
+      assert.deepEqual(S8.validate('book', { title: 'B', year: 2016, edition: '6th', chapters: [{ number: '1', title: 'Checks', pages: '1-40' }], book_kind: 'textbook' }).warnings.filter((w) => !w.includes('(Core field)')), []);
+      const appL = require('express')();
+      require('../features/papers').mount(appL);
+      appL.use((err, _req, res, _next) => res.status(err.status || 500).json({ error: err.message }));
+      const srvL = await new Promise((ok) => { const x = appL.listen(0, '127.0.0.1', () => ok(x)); });
+      const lq9 = [];
+      runImpl = async (q) => { lq9.push(q); return q.includes('p.file_url IS NOT NULL AS has_file') ? [{ key: 'report:x', props: { title: 'X', abstract: 'long' }, has_file: false, topics: [] }] : []; };
+      try {
+        const LB = `http://127.0.0.1:${srvL.address().port}/api/papers`; const LH = { headers: { Authorization: 'Bearer abc' } };
+        const lr = await (await fetch(LB + '?collection=report', LH)).json();
+        assert.deepEqual([lr.papers[0].key, lr.papers[0].props.abstract], ['report:x', undefined]);
+        assert.ok(lq9.at(-1).startsWith('MATCH (p:Report)'));
+        await fetch(LB, LH); assert.ok(lq9.at(-1).startsWith('MATCH (p:Paper)'), 'papers by default');
+        await fetch(LB + '?collection=book', LH); assert.ok(lq9.at(-1).startsWith('MATCH (p:Book)'));
+        const bad = await fetch(LB + '?collection=method', LH);
+        assert.deepEqual([bad.status, (await bad.json()).error], [400, 'collection must be one of paper, report, book']);
+      } finally { srvL.close(); runImpl = t8Run; }
+      // migration 017: the same rebuild, now covering Book
+      const m17 = []; const db17 = { run: async (q) => { m17.push(q); return q.startsWith('SHOW FULLTEXT') ? [{ labelsOrTypes: S8.typeLabels.filter((l) => l !== 'Book'), properties: require('../migrations/016_reports').FULLTEXT_PROPS }] : []; } };
+      await require('../migrations/017_books').up(db17);
+      assert.ok(m17.some((q) => q.startsWith('CREATE FULLTEXT INDEX artifact_text') && /\bBook\b/.test(q)), 'rebuilt to cover books');
       // migration 016: the full-text index covers Report (and Thought), rebuilt once
       const m016 = require('../migrations/016_reports');
       const m16 = []; let ft16 = { labelsOrTypes: S8.typeLabels.filter((l) => l !== 'Report'), properties: require('../migrations/011_frameworks_questions_ontologies').FULLTEXT_PROPS };
@@ -2381,7 +2418,7 @@ const seed = require('../../data/seed_papers.json');
       try { Date.now = () => realNow() + 3601 * 1000; assert.equal(await oauth.verifyAccess(T1.access_token), false, 'expires after an hour'); } finally { Date.now = realNow; }
 
       // request_upload and upload_url
-      runImpl = async (q, p) => (q.includes('MATCH (p:Paper {key:$key}) RETURN p.file_url') ? (p.key === 'doi:10.1/none' ? [{ file: null }] : p.key === 'doi:10.1/has' ? [{ file: 'https://x/y.pdf' }] : []) : []);
+      runImpl = async (q, p) => (q.includes('MATCH (p:Paper {key:$key}) RETURN p.file_url') || (q.includes('WHERE any(l IN labels(p) WHERE l IN $labels) RETURN p.file_url') && p.labels.includes('Book')) ? (p.key === 'doi:10.1/none' ? [{ file: null }] : p.key === 'doi:10.1/has' ? [{ file: 'https://x/y.pdf' }] : []) : []);
       const ru = await c1.callTool({ name: 'request_upload', arguments: { key: 'doi:10.1/none' } });
       assert.deepEqual(JSON.parse(ru.content[0].text), { key: 'doi:10.1/none', upload_url: `${B9}/library/papers?key=doi%3A10.1%2Fnone&upload=1`, has_file: false });
       assert.match(JSON.parse((await c1.callTool({ name: 'request_upload', arguments: { key: 'doi:10.1/has' } })).content[0].text).note, /replaces it/);

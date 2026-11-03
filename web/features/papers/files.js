@@ -1,4 +1,4 @@
-// A paper's file is a link (file_url). The hub never stores file bytes itself:
+// The file of a paper, report or book (schema types with reader: true) is a link (file_url). The hub never stores file bytes itself:
 //   * setLink / removeLink   keep any https link the owner gives (Drive, arXiv, a publisher, ...);
 //   * uploadPdf              sends a PDF to the owner's Google Drive (core/drive.js) and stores the resulting link.
 // Files the hub uploaded are tracked by drive_file_id and moved to the Drive trash when they are replaced, unlinked
@@ -8,6 +8,7 @@ const { HttpError } = require('../../core/errors');
 const drive = require('../../core/drive');
 const links = require('../../core/links');
 const config = require('../../core/config');
+const { readerLabels } = require('../../core/schema');
 
 const maxBytes = () => config.get().maxUploadBytes;
 
@@ -42,10 +43,10 @@ async function fetchAllowed(url, { hosts, what = 'file', field = 'url', setting 
 
 async function paperRow(key) {
   const [row] = await run(
-    'MATCH (p:Paper {key:$key}) RETURN p.key AS key, p.title AS title, p.file_url AS file_url, p.drive_file_id AS drive_file_id',
-    { key: String(key || '') }
+    'MATCH (p:Artifact {key:$key}) WHERE any(l IN labels(p) WHERE l IN $labels) RETURN p.key AS key, p.title AS title, p.file_url AS file_url, p.drive_file_id AS drive_file_id',
+    { key: String(key || ''), labels: readerLabels }
   );
-  if (!row) throw new HttpError(404, 'No such paper in the library');
+  if (!row) throw new HttpError(404, 'No such paper, report or book in the library');
   return row;
 }
 
@@ -59,7 +60,7 @@ async function setLink(key, raw) {
   const row = await paperRow(key);
   const same = row.drive_file_id && links.driveId(url) === row.drive_file_id;
   await writeTx((tx) => tx.run(
-    `MATCH (p:Paper {key:$key}) SET p.file_url = $url${same ? '' : ' REMOVE p.drive_file_id'}`, { key: row.key, url }));
+    `MATCH (p:Artifact {key:$key}) SET p.file_url = $url${same ? '' : ' REMOVE p.drive_file_id'}`, { key: row.key, url }));
   const out = { file_url: url };
   if (row.drive_file_id && !same) {
     const warning = await trashQuietly(row.drive_file_id);
@@ -70,7 +71,7 @@ async function setLink(key, raw) {
 
 async function removeLink(key) {
   const row = await paperRow(key);
-  await writeTx((tx) => tx.run('MATCH (p:Paper {key:$key}) REMOVE p.file_url, p.drive_file_id', { key: row.key }));
+  await writeTx((tx) => tx.run('MATCH (p:Artifact {key:$key}) REMOVE p.file_url, p.drive_file_id', { key: row.key }));
   const out = { removed: Boolean(row.file_url) };
   if (row.drive_file_id) {
     const warning = await trashQuietly(row.drive_file_id);
@@ -86,7 +87,7 @@ async function uploadPdf(key, buf) {
   const row = await paperRow(key);
   const up = await drive.upload(row.title, buf);
   try {
-    await writeTx((tx) => tx.run('MATCH (p:Paper {key:$key}) SET p.file_url = $url, p.drive_file_id = $id', { key: row.key, url: up.url, id: up.id }));
+    await writeTx((tx) => tx.run('MATCH (p:Artifact {key:$key}) SET p.file_url = $url, p.drive_file_id = $id', { key: row.key, url: up.url, id: up.id }));
   } catch (e) {
     await trashQuietly(up.id); // do not leave a public file the graph does not know about
     throw e;

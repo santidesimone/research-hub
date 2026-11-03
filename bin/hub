@@ -46,7 +46,7 @@ const HELP = `hub: research hub client   (${url})
   Claude's analysis and the audit
     hub analyze <doi | url | key | file.pdf> [--deep] [--force] [--model m] [--collection c]  < analysis.json
                                                   save an analysis in one call: stdin is {fields, links, confidence};
-                                                  a new report:/method:/usecase:/case: key is created under that key;
+                                                  a new report:/book:/method:/usecase:/case: key is created under that key;
                                                   a PDF needs the paper's doi or url in that JSON and is uploaded to Drive
     hub audit [--json]                            what is worth reviewing, with counts
     hub audit --accept-all-unchanged [--dry-run]  accept Claude's values that nobody changed (not low-confidence or ungrounded)
@@ -145,7 +145,7 @@ function parseSets(list) {
 // list cells: links read as their names
 const flat = (v) => (Array.isArray(v) ? v.map(flat).join(', ') : v && typeof v === 'object' && 'name' in v ? v.name : v);
 const LIST_FLAGS = new Set(['q', 'sort', 'limit', 'cursor', 'all', 'json', 'csv']);
-const KEY_COLLECTION = { 'method:': 'method', 'usecase:': 'use_case', 'case:': 'case_study', 'report:': 'report' };
+const KEY_COLLECTION = { 'method:': 'method', 'usecase:': 'use_case', 'case:': 'case_study', 'report:': 'report', 'book:': 'book' };
 
 // What `hub analyze <thing>` was given -> { doi | url | key | pdf }
 function identify(thing) {

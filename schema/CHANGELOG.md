@@ -2,6 +2,15 @@
 
 Every change to `schema/schema.json`, with the reason. The spec is `docs/SCHEMA_DESIGN.md`. A per-type `schema_version` is raised when that type's fields change. Items below the current version form the audit worklist, so a change is never silently applied to old items.
 
+## v5, books; papers, reports and books read alike (2026-11-03)
+
+Why: books are the other kind of reading the owner does, and reports, papers and books should read the same way in the Library: one list, one page, a Reader tab.
+- Types may set `reader: true` (checked: a boolean, collections only): `paper`, `report` and the new `book`. A reader item has a file link (`file_url`, `drive_file_id` when the hub uploaded it); the file endpoints (`/api/papers/file`, MCP `set_file_link`, `copy_pdf_to_drive`, `request_upload`, `remove_file_link`) work for any of them, and `GET /api/papers?collection=report|book` lists them as the papers list does. The Library shows them with the papers' list and page (Info, Analysis, Connections, Reader; Reader is disabled while there is no file).
+- New collection **book** (`book:`, database-managed, sidebar group `reading`): `authors` (Person, AUTHORED_BY), `editors`, `year`, `edition`, `publisher` (Organisation, PUBLISHED_BY), `isbn`, `url`, `language`, `abstract` (the publisher's description), `book_kind` (textbook, monograph, handbook, edited_volume, practitioner_guide, trade_book, reference, other), `domain`, `main_claim`, `chapters` ({number, title, pages}), `key_findings` ({text, location}), `limitations_observed`, and the owner's `relevance`, `relevance_reason`, `reading_depth`. Bibliographic fields may be written by a source, Claude or the owner (no Crossref for books).
+- Relations: a book may be ABOUT, AUTHORED_BY, PUBLISHED_BY, FRAMED_BY, INFORMS, SUPPORTS, CRITIQUES and CONTRADICTS (papers, reports, books); papers, reports and thoughts may support a book, reports and thoughts may critique or contradict one; a thought may ANNOTATE a book and be TURNED_INTO one.
+- Migration `017_books` rebuilds the `artifact_text` full-text index to cover the Book label.
+- Global `version` 4 to 5.
+
 ## v4, reports (2026-11-02)
 
 Why: grey literature (vendor and consultancy surveys, whitepapers, policy briefs) is not a paper: it has a publisher with an interest, a sample instead of a venue, and claims that are often expectations rather than measurements. It needs its own fields to be appraised.
