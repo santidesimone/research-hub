@@ -75,7 +75,7 @@ async function withUpload(result, uploadUrl) {
 
 function buildServer({ uploadUrl = null } = {}) {
   const s = new McpServer({ name: 'research-hub', version: pkg.version }, {
-    instructions: 'Tools for the owner\'s research hub: a Neo4j knowledge graph with collections (papers, methods, use cases, case studies, frameworks, research questions, hypotheses, ontologies and standards, thoughts). '
+    instructions: 'Tools for the owner\'s research hub: a Neo4j knowledge graph with collections (papers, reports, methods, use cases, case studies, frameworks, research questions, hypotheses, ontologies and standards, thoughts). '
       + 'To analyse something, call get_schema for its collection, then save_analysis once with every field you are confident about: it saves directly. '
       + 'Use search_items and get_item to read collections; call describe_graph before writing Cypher. '
       + 'When the owner shares a paper (a PDF in the chat, a link, a DOI): find its DOI, call get_schema for papers, then save_analysis once (doi, your analysis). '
@@ -156,11 +156,12 @@ function buildServer({ uploadUrl = null } = {}) {
     }, safe(async ({ collection }) => schemaFor(collection)));
 
     s.registerTool('save_analysis', {
-      description: 'Save your analysis of a paper, method, use case or case study in ONE call. It is saved immediately (no approval step) with provenance (you, the model, a confidence) and can be audited later. '
-        + 'Identify the item by key, or a paper by doi or url, or a new method/use case/case study by fields.title. For papers the hub fills the source facts itself (Crossref, OpenAlex). '
-        + 'Only empty fields are filled; the owner\'s values are never overwritten. Leave a field out rather than guess. Every key finding needs a location. Returns what was filled, skipped, still empty and flagged.',
+      description: 'Save your analysis of an item (paper, report, method, use case, case study ...) in ONE call. It is saved immediately (no approval step) with provenance (you, the model, a confidence) and can be audited later. '
+        + 'Identify the item by key, or a paper by doi or url, or a new item of another collection by fields.title (its key is <prefix><slug of the title>, or pass slug). For papers the hub fills the source facts itself (Crossref, OpenAlex). '
+        + 'Only empty fields are filled; the owner\'s values are never overwritten. Leave a field out rather than guess. Every key finding (and a report\'s every recommendation) needs a location. Returns what was filled, skipped, still empty and flagged.',
       inputSchema: {
         collection: z.enum(COLLECTIONS), key: z.string().optional(), doi: z.string().optional(), url: z.string().optional(),
+        slug: z.string().optional().describe('a new non-paper item only: its key becomes <prefix><slug> (e.g. report:ibm-ibv-agentic-ops-2026); a re-run with the same slug updates it'),
         fields: z.record(z.any()).describe('Field name -> value, from get_schema. Objects as JSON objects; vocabulary as names.'),
         links: z.array(z.object({
           rel: z.string().describe('e.g. INTRODUCES, USES, ADDRESSES, BUILDS_ON, CRITIQUES, ABOUT'), target: z.string().describe('a key, or a name'),

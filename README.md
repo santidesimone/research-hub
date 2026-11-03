@@ -226,7 +226,7 @@ Browser checks for all of this (Playwright against a real hub; not part of `npm 
 
 ## Collections API (`/api/items`)
 
-Papers, methods, use cases and case studies, driven by the fields in `schema/schema.json`. Owner only; keys are URL-encoded (`encodeURIComponent`), because DOI keys contain `/`.
+Papers, reports, methods, use cases, case studies and the other collections, driven by the fields in `schema/schema.json`. Owner only; keys are URL-encoded (`encodeURIComponent`), because DOI keys contain `/`.
 
 ```bash
 H="Authorization: Bearer $HUB_API_TOKEN"

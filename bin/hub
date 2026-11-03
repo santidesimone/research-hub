@@ -30,7 +30,7 @@ const HELP = `hub: research hub client   (${url})
     hub status <key> <value|none>                 set your personal status
     hub drive                                     check the Google Drive connection
 
-  Collections (paper, method, use_case, case_study)
+  Collections (paper, report, method, use_case, case_study, ...)
     hub item list <collection> [--q text] [--sort f|-f] [--limit n] [--all] [--<filter> value]   e.g. --kind technique
     hub item get <key>                            every field, with who wrote it (you, Claude, source)
     hub item add <collection> [file.json | -]     create from {"title": ...} (a JSON object of fields)
@@ -46,6 +46,7 @@ const HELP = `hub: research hub client   (${url})
   Claude's analysis and the audit
     hub analyze <doi | url | key | file.pdf> [--deep] [--force] [--model m] [--collection c]  < analysis.json
                                                   save an analysis in one call: stdin is {fields, links, confidence};
+                                                  a new report:/method:/usecase:/case: key is created under that key;
                                                   a PDF needs the paper's doi or url in that JSON and is uploaded to Drive
     hub audit [--json]                            what is worth reviewing, with counts
     hub audit --accept-all-unchanged [--dry-run]  accept Claude's values that nobody changed (not low-confidence or ungrounded)
@@ -79,6 +80,7 @@ async function call(method, p, body, extra = {}) {
   }
   const textBody = await res.text();
   let data; try { data = JSON.parse(textBody); } catch { data = textBody; }
+  if (res.status === 404 && extra.missing) return null; // the caller handles a missing item
   if (!res.ok) fail(`${res.status} ${(data && data.error) || textBody.slice(0, 200)}`);
   return data;
 }
@@ -143,7 +145,7 @@ function parseSets(list) {
 // list cells: links read as their names
 const flat = (v) => (Array.isArray(v) ? v.map(flat).join(', ') : v && typeof v === 'object' && 'name' in v ? v.name : v);
 const LIST_FLAGS = new Set(['q', 'sort', 'limit', 'cursor', 'all', 'json', 'csv']);
-const KEY_COLLECTION = { 'method:': 'method', 'usecase:': 'use_case', 'case:': 'case_study' };
+const KEY_COLLECTION = { 'method:': 'method', 'usecase:': 'use_case', 'case:': 'case_study', 'report:': 'report' };
 
 // What `hub analyze <thing>` was given -> { doi | url | key | pdf }
 function identify(thing) {
@@ -225,7 +227,10 @@ async function analyzeCommand(args, flags) {
     if (!input.doi && !input.url && !input.key) fail('a PDF needs the paper\'s "doi" or "url" (or "key") in the analysis JSON');
     Object.assign(body, input.doi ? { doi: input.doi } : input.url ? { url: input.url } : { key: input.key });
   } else Object.assign(body, id);
-  const out = await call('POST', '/api/analysis', body);
+  // a report:, method:, ... key that does not exist yet is created under that key, so running it again updates it
+  const keyed = id.key && Object.keys(KEY_COLLECTION).some((p) => id.key.startsWith(p));
+  let out = await call('POST', '/api/analysis', body, { missing: keyed });
+  if (!out) { const { key, ...rest } = body; out = await call('POST', '/api/analysis', { ...rest, slug: key.slice(key.indexOf(':') + 1) }); }
   if (id.pdf) {
     try { out.file = await call('POST', '/api/papers/file?key=' + enc(out.key), undefined, { raw: fs.readFileSync(id.pdf), headers: { 'Content-Type': 'application/pdf' } }); }
     catch (e) { out.file_error = e.message; }

@@ -151,6 +151,32 @@ Connections: addressed by Methods, evidenced by Case studies/Papers, related Use
 
 Connections: USES Method, INSTANCE_OF Use case, analysed in Paper.
 
+## Report (report, managed: db; schema v4)
+
+Grey literature: survey reports, market analyses, whitepapers, case collections, policy briefs, benchmarks. Kept apart from papers because the questions differ: who published it and what they sell, who answered, and whether a number was measured or merely expected. Key `report:<slug>`.
+
+| Field | Type | By | Tier |
+|---|---|---|---|
+| title, tldr, summary, topics | as every item | | |
+| authors | link to Person (AUTHORED_BY), ordered | C/Y | Standard |
+| publisher | link to Organisation (PUBLISHED_BY) | C/Y | Core |
+| publisher_type | vendor, consultancy, analyst_firm, government, ngo_thinktank, industry_body, other | C/Y | Core |
+| report_kind | survey_report, market_analysis, whitepaper, case_collection, policy_brief, benchmark, other | C/Y | Core |
+| published_date | date (YYYY, YYYY-MM or YYYY-MM-DD) | C/Y | Standard |
+| url, intended_audience (list), domain (Domain) | | C/Y | Standard |
+| peer_review | peer_reviewed, preprint, grey (default grey) | C/Y | Standard |
+| commercial_interest | text: what the publisher gains | C/Y | Standard |
+| sample | {n, respondent_profile, countries, industries, field_period} | C | Standard |
+| methodology | text | C | Standard |
+| claim_basis | list of measured, self_reported, expectation, modeled, unspecified | C/Y | Standard |
+| key_findings, recommendations | list of {text, location}; location needed (flagged without) | C | Standard |
+| limitations_stated, limitations_observed | text lists | C (observed: C/Y) | Standard |
+| conflicts_funding | text | C | Deep |
+| credibility_tier | usable_source, use_with_caveats, directional_only | C/Y | Core |
+| credibility_reason | text | C/Y | Core |
+
+Connections: ABOUT Topic/Concept/Domain; PUBLISHED_BY Organisation; AUTHORED_BY Person; CITES Paper/Report; SUPPORTS, CRITIQUES, CONTRADICTS Paper/Report/Use case (interpretive: evidence and location); FRAMED_BY Framework; INFORMS questions and hypotheses. The personal layer (reading status) works as for any item; a new report gets no default status.
+
 ## Shared vocabulary nodes
 
 Topic (hierarchical: BROADER), Concept, Domain (short owner-maintained list), Person (ORCID), Venue, Organisation, Dataset. Keys `topic:slug`, `concept:slug`, `domain:slug`, `person:...`, `venue:slug`, `org:slug`, `dataset:slug`. Each has `name`, `aliases[]`. Claude passes names; the server normalises (lowercase, strip punctuation, alias match, fulltext fallback) and links to an existing node, or creates one flagged `by=claude`.

@@ -19,6 +19,7 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | Publishing settings (default visibility, full public detail) | done (2026-11-01), not deployed yet | See "Publishing settings" below. |
 | 10 Curation: reviewable change plans | done (2026-11-01), tested live from the claude.ai chat | See "Task 10" below. |
 | 11 Library redesign (`docs/UI_REDESIGN.md`) | done, all six steps (2026-11-02); not deployed | See "Task 11" below. |
+| Reports collection (schema v4) | done (2026-11-02); not deployed | See "Reports" below. |
 
 ## Task 0. Baseline against real services
 
@@ -723,3 +724,23 @@ Approved by the owner on 2026-11-02 after three rounds on a clickable mockup (sp
 - Not deployed. Migrations 014 and 015 will run on production at the next start; then Review › Proposed fixes holds the hub's plans (old extracted questions; old notes and projects) for the owner to apply or reject.
 - `add_thought` was not called from the claude.ai chat yet (offline: listed and described; the core it uses is tested).
 - The "finding" turn was not clicked in the browser (it appends to `key_findings` through the ordinary PATCH, which the owner may always write).
+
+## Reports (schema v4)
+
+**Changed**
+- `schema/schema.json`: new collection `report` (`report:`, Reading group), its relations, `common_fields.collection` brought up to date, `version` 3 to 4. `schema/CHANGELOG.md`, `docs/SCHEMA_DESIGN.md`.
+- `web/core/analysis.js`: optional `slug` for a new non-paper item; recommendations without a location are flagged like findings. MCP `save_analysis` takes `slug`; descriptions name reports. `web/openapi.json` (stale collection enums fixed too).
+- `web/core/query.js`: describe_graph's type and key-prefix notes come from the schema (`overviewNotes`), plus a note on reports.
+- `web/migrations/016_reports.js`: full-text index over every type label (Report, and Thought, which 015 missed) plus `methodology`, `credibility_reason`; `report_kind` and `credibility_tier` indexes.
+- `bin/hub analyze report:<slug>`: a new non-paper key is created under that key (retry with `slug` on 404), so re-runs update it.
+- Skins: `--node-report`.
+
+**Tested for real**
+- `npm test` (new tests: schema relations and pairs, validation, save with slug, re-run without duplicates, flags, read-back, list filters, personal layer, migration 016, CLI); 10 mutants, all killed.
+- Integration on a throwaway Neo4j 5: all migrations including 016, suite passes. A hub on that database: CLI insert, re-run (nothing filled), filters, full-text search, personal status set and removed; the Library page in Chrome (desktop and phone), no console or CSP errors, no horizontal scroll.
+- Local hub (:3000): migration 016 applied; `report:ibm-ibv-blueprint-for-agentic-operations-2026` saved through `hub analyze` (by claude, auto, private, peer_review grey), re-run unchanged.
+
+**Not tested / open**
+- Not deployed; the record is not in production yet. After the deploy: `hub config --url <production>` (or HUB_URL), then `hub analyze report:ibm-ibv-blueprint-for-agentic-operations-2026 < report.json`.
+- The full browser suites were not re-run (owner.js updated for the new sidebar entry).
+

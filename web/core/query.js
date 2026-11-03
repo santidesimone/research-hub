@@ -7,7 +7,10 @@ const db = require('./db');
 const { driver } = db;
 const { HttpError } = require('./errors');
 const log = require('./log');
+const { schema, entityLabels, keyPrefix } = require('./schema');
 
+// the item types the overview names (retired ones stay readable but are not described)
+const liveTypes = () => Object.entries(schema.types).filter(([, t]) => !t.retired).map(([name, t]) => ({ name, label: t.label }));
 const MAX_ROWS = 500;
 const TIMEOUT_MS = 15000;
 
@@ -48,6 +51,20 @@ async function readOnly(cypher, params = {}) {
   }
 }
 
+// The conventions part of the overview, from schema.json, so a new type is described without editing this.
+function overviewNotes() {
+  return [
+    `Every item has label :Artifact and its type (${liveTypes().map((t) => ':' + t.label).join(', ')}). Collection items carry collection, managed, schema_version and record_status. Vocabulary nodes are separate labels: ${entityLabels.join(', ')}.`,
+    `Keys: papers 'doi:<lowercase doi>' or 'paper:<hash>'; ${liveTypes().filter((t) => t.name !== 'paper').map((t) => `${t.label} '${keyPrefix(t.name)}<slug>'`).join(', ')}; vocabulary '<prefix>:<slug>' (${entityLabels.map((l) => schema.entities[l].key_prefix.slice(0, -1)).join(', ')}). Fields per type: get_schema or schema/schema.json.`,
+    'Reports (:Report) are grey literature (vendor, consultancy, government ...): PUBLISHED_BY an Organisation, AUTHORED_BY people, ABOUT topics, CITES papers and reports; their SUPPORTS, CRITIQUES and CONTRADICTS links carry r.evidence and r.location. credibility_tier says how far to rely on them.',
+    "Your personal layer (status such as to-read/reading/read/canonical/critique-target) is NOT on the paper: it is (:Personal {key:'personal:<artifact key>', status})-[:FOR]->(:Artifact).",
+    'Papers have: title, year, doi, venue, url, abstract, authors[], author_lasts[], item_type, visibility, file_url (link to the PDF, usually Google Drive), drive_file_id (set only when the hub uploaded the file), openalex_id, cited_by_count. Relationships: AUTHORED_BY, ABOUT, CITES, ANNOTATES, USES, EXTENDS, SUPPORTS, CONTRADICTS, CRITIQUES, INSPIRED.',
+    'Collection items store objects as JSON text in <field>_json and per-field provenance in provenance_json ({field: {by: owner|claude|source, at, model, confidence, status: auto|reviewed}}). Link fields are edges with r.field. Typed links Claude saved carry r.evidence, r.location, r.confidence, r.by, r.status.',
+    'Vocabulary nodes have name, aliases and derived matching fields (norm, letters); n.by is claude for nodes Claude created. Use get_item / search_items for collections rather than Cypher where you can.',
+    'Queries are read-only, return at most 500 rows, and must be a single statement without procedure calls.',
+  ];
+}
+
 // What a model (or you) needs to write correct Cypher for this graph.
 async function overview() {
   const q = async (c) => (await readOnly(c)).rows;
@@ -59,15 +76,7 @@ async function overview() {
   ]);
   return {
     labels, relationship_types: rels, properties_by_label: props, patterns,
-    notes: [
-      'Every item has label :Artifact and its type (:Paper, :Method, :UseCase, :CaseStudy, :Note, :Project). Collection items carry collection, managed, schema_version and record_status. Vocabulary nodes are separate labels: Person, Concept, Topic, Domain, Venue, Organisation, Dataset.',
-      "Keys: papers 'doi:<lowercase doi>' or 'paper:<hash>'; methods 'method:<slug>', use cases 'usecase:<slug>', case studies 'case:<slug>', notes 'note:<slug>', projects 'project:<slug>'; vocabulary '<prefix>:<slug>' (person, concept, topic, domain, venue, org, dataset). Fields per type: schema/schema.json.",
-      "Your personal layer (status such as to-read/reading/read/canonical/critique-target) is NOT on the paper: it is (:Personal {key:'personal:<artifact key>', status})-[:FOR]->(:Artifact).",
-      'Papers have: title, year, doi, venue, url, abstract, authors[], author_lasts[], item_type, visibility, file_url (link to the PDF, usually Google Drive), drive_file_id (set only when the hub uploaded the file), openalex_id, cited_by_count. Relationships: AUTHORED_BY, ABOUT, CITES, ANNOTATES, USES, EXTENDS, SUPPORTS, CONTRADICTS, CRITIQUES, INSPIRED.',
-      'Collection items store objects as JSON text in <field>_json and per-field provenance in provenance_json ({field: {by: owner|claude|source, at, model, confidence, status: auto|reviewed}}). Link fields are edges with r.field. Typed links Claude saved carry r.evidence, r.location, r.confidence, r.by, r.status.',
-      'Vocabulary nodes have name, aliases and derived matching fields (norm, letters); n.by is claude for nodes Claude created. Use get_item / search_items for collections rather than Cypher where you can.',
-      'Queries are read-only, return at most 500 rows, and must be a single statement without procedure calls.',
-    ],
+    notes: overviewNotes(),
     examples: [
       'MATCH (p:Paper)-[:AUTHORED_BY]->(x:Person) RETURN x.name, count(p) AS papers ORDER BY papers DESC',
       "MATCH (s:Personal {status:'to-read'})-[:FOR]->(p:Paper) RETURN p.title, p.year ORDER BY p.year DESC",
@@ -121,4 +130,4 @@ async function searchPapers(text, limit = 20) {
     { q, topic, limit: n });
 }
 
-module.exports = { readOnly, overview, searchPapers, guard, luceneQuery, SEARCH_RETURN, MAX_ROWS };
+module.exports = { readOnly, overview, overviewNotes, searchPapers, guard, luceneQuery, SEARCH_RETURN, MAX_ROWS };

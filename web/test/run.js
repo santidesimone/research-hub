@@ -66,7 +66,7 @@ const seed = require('../../data/seed_papers.json');
 
   // migrations are discoverable and ordered
   const migrate = require('../core/migrate');
-  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', '010_record_status_from_provenance', '011_frameworks_questions_ontologies', '012_oauth', '013_curation', '014_informs', '015_thoughts', 'personal_001_layer']);
+  assert.deepEqual(migrate.available().map((m) => m.id), ['001_constraints', '002_papers_owned_by_hub', '003_files_are_links', '004_fulltext_search', '005_collections', '006_vocab_matching', '007_items_json_fields', '008_vocab_letters_plain', '009_object_parts', '010_record_status_from_provenance', '011_frameworks_questions_ontologies', '012_oauth', '013_curation', '014_informs', '015_thoughts', '016_reports', 'personal_001_layer']);
   // personal layer: separate node, driven by hooks, core untouched
   calls.length = 0;
   require('../features/personal').mount({ get() {}, put() {}, delete() {}, post() {} });
@@ -321,7 +321,7 @@ const seed = require('../../data/seed_papers.json');
   const badFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hub-schema-')), 'schema.json');
   fs.writeFileSync(badFile, JSON.stringify({ ...schema, version: 'three' }));
   assert.throws(() => S.load(badFile), /schema\/schema\.json is invalid:[\s\S]*version must be an integer/);
-  assert.deepEqual(Object.keys(schema.types).filter((t) => schema.types[t].collection).sort(), ['case_study', 'framework', 'hypothesis', 'method', 'ontology', 'paper', 'research_question', 'thought', 'use_case']);
+  assert.deepEqual(Object.keys(schema.types).filter((t) => schema.types[t].collection).sort(), ['case_study', 'framework', 'hypothesis', 'method', 'ontology', 'paper', 'report', 'research_question', 'thought', 'use_case']);
   assert.deepEqual(['note', 'project'].map(S.managedBy), ['markdown', 'markdown']);
   assert.deepEqual(['method', 'use_case', 'case_study', 'paper'].map(S.managedBy), ['db', 'db', 'db', 'api']);
   assert.ok(['Topic', 'Concept', 'Domain', 'Person', 'Venue', 'Organisation', 'Dataset'].every((l) => S.entityLabels.includes(l)));
@@ -1149,7 +1149,7 @@ const seed = require('../../data/seed_papers.json');
   const M = await import('data:text/javascript,' + encodeURIComponent(fs.readFileSync(path.join(__dirname, '..', 'apps', 'library', 'model.js'), 'utf8')));
   const pubView = publicView();
   const colls = pubView.collections;
-  assert.deepEqual(colls.map((c) => [c.name, c.slug, c.plural]), [['paper', 'papers', 'Papers'], ['method', 'methods', 'Methods'], ['use_case', 'use-cases', 'Use cases'], ['case_study', 'case-studies', 'Case studies'],
+  assert.deepEqual(colls.map((c) => [c.name, c.slug, c.plural]), [['paper', 'papers', 'Papers'], ['report', 'reports', 'Reports'], ['method', 'methods', 'Methods'], ['use_case', 'use-cases', 'Use cases'], ['case_study', 'case-studies', 'Case studies'],
     ['framework', 'frameworks', 'Frameworks'], ['research_question', 'research-questions', 'Research questions'], ['hypothesis', 'hypotheses', 'Hypotheses'], ['ontology', 'ontologies-and-standards', 'Ontologies and standards'], ['thought', 'thoughts', 'Thoughts']]);
   const pc = colls.find((c) => c.name === 'paper');
   assert.ok(pc.fields.contribution_type.enum.includes('empirical') && pc.fields.authors.ref === 'Person' && !pc.fields.provenance && !pc.fields.key, 'hub-set fields are not offered to the UI');
@@ -1323,7 +1323,12 @@ const seed = require('../../data/seed_papers.json');
       assert.deepEqual([seen[1].body.url, seen[1].body.model, seen[1].body.collection], ['https://example.org/p.html', 'env-model', 'paper']);
       await hub(['analyze', 'usecase:offline'], { input: '{"model":"json-model","fields":{"goal":"g"}}' });
       assert.deepEqual([seen[2].body.key, seen[2].body.collection, seen[2].body.model], ['usecase:offline', 'use_case', 'json-model'], 'the collection follows the key');
-      r = await hub(['analyze', '10.1/y'], { input: '{}' }); assert.equal(r.code, 1); assert.match(r.stderr, /which model/); assert.equal(seen.length, 3);
+      reset({ 'POST /api/analysis': (q) => (q.body.key ? [404, { error: 'No such item' }] : [201, { key: 'report:' + q.body.slug, created: true }]) });
+      r = await hub(['analyze', 'report:ibm-2026'], { input: '{"model":"m","fields":{"title":"T"}}' });
+      assert.deepEqual([r.code, seen.length, seen[1].body.slug, seen[1].body.key, seen[1].body.collection], [0, 2, 'ibm-2026', undefined, 'report'], 'a new key is created under that key');
+      r = await hub(['analyze', 'paper:nope'], { input: '{"model":"m"}' }); assert.equal(r.code, 1); assert.match(r.stderr, /404 No such item/, 'a paper is never created from a key');
+      reset({ 'POST /api/analysis': (q) => [201, { key: q.body.doi ? 'doi:' + q.body.doi : q.body.key || 'paper:u', created: true }], 'POST /api/papers/file': [200, { file_url: 'https://drive' }] });
+      r = await hub(['analyze', '10.1/y'], { input: '{}' }); assert.equal(r.code, 1); assert.match(r.stderr, /which model/); assert.equal(seen.length, 0, 'refused before any request');
       r = await hub(['analyze', 'just words'], { input: '{}' }); assert.equal(r.code, 1); assert.match(r.stderr, /not a DOI, URL, key or PDF/);
       const pdf = path.join(home, 'paper.pdf'); fs.writeFileSync(pdf, '%PDF-1.4 test');
       r = await hub(['analyze', pdf, '--model', 'm'], { input: '{}' }); assert.equal(r.code, 1); assert.match(r.stderr, /needs the paper's "doi" or "url"/);
@@ -1365,7 +1370,7 @@ const seed = require('../../data/seed_papers.json');
       reset({ 'GET /api/schema': [200, publicView()] });
       r = await hub(['schema', 'case-studies']);
       assert.ok(/case_type\s+enum\s+core\s+YC\s+deployment\|pilot/.test(r.stdout) && r.stdout.includes('organisations') && r.stdout.includes('Organisation'), r.stdout);
-      r = await hub(['schema', 'gadgets']); assert.equal(r.code, 1); assert.match(r.stderr, /no collection "gadgets" \(paper, method, use_case, case_study, framework, research_question, hypothesis, ontology, thought\)/);
+      r = await hub(['schema', 'gadgets']); assert.equal(r.code, 1); assert.match(r.stderr, /no collection "gadgets" \(paper, report, method, use_case, case_study, framework, research_question, hypothesis, ontology, thought\)/);
 
       // import-notes: Markdown notes become thoughts (kept) with their links; projects are skipped; sync-notes says it is retired
       const cdir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-notes-'));
@@ -1791,7 +1796,7 @@ const seed = require('../../data/seed_papers.json');
     const paperRels = S8.relationsFrom('Paper');
     assert.deepEqual(paperRels.find((r) => r.rel === 'TESTS'), { rel: 'TESTS', to: ['Hypothesis'], interpretive: true, props: { result: { type: 'enum', enum: ['supported', 'refuted', 'mixed', 'inconclusive'], required: true } } });
     const pv8 = S8.publicView().collections;
-    assert.deepEqual(Object.fromEntries(pv8.map((c) => [c.name, c.ui_section])), { paper: 'reading', method: 'knowledge', use_case: 'knowledge', case_study: 'knowledge', framework: 'knowledge', research_question: 'inquiry', hypothesis: 'inquiry', ontology: 'knowledge', thought: 'capture' });
+    assert.deepEqual(Object.fromEntries(pv8.map((c) => [c.name, c.ui_section])), { paper: 'reading', report: 'reading', method: 'knowledge', use_case: 'knowledge', case_study: 'knowledge', framework: 'knowledge', research_question: 'inquiry', hypothesis: 'inquiry', ontology: 'knowledge', thought: 'capture' });
     assert.deepEqual(S8.publicView().sections, [{ id: 'capture', label: '' }, { id: 'reading', label: 'Reading' }, { id: 'knowledge', label: 'Knowledge' }, { id: 'inquiry', label: 'Inquiry' }]);
     assert.equal(pv8.find((c) => c.name === 'hypothesis').title_from, 'statement');
     assert.deepEqual(S8.validate('ontology', { title: 'X', urls: [{ role: 'docs', url: 'http://x.org/d' }] }).errors, ['urls: url: must be an https link'], 'http links are refused for ontologies');
@@ -1944,17 +1949,17 @@ const seed = require('../../data/seed_papers.json');
     // the Library sidebar: the schema's sections in order, each with its collections in schema order
     const M8 = await import('data:text/javascript,' + encodeURIComponent(fs.readFileSync(path.join(__dirname, '..', 'apps', 'library', 'model.js'), 'utf8')));
     const side = M8.sidebarGroups(pv8, S8.publicView().sections);
-    assert.deepEqual(side.map((g) => [g.label, g.items.map((i) => i.id)]), [['', ['thought']], ['Reading', ['paper']], ['Knowledge', ['method', 'use_case', 'case_study', 'framework', 'ontology']], ['Inquiry', ['research_question', 'hypothesis']]]);
+    assert.deepEqual(side.map((g) => [g.label, g.items.map((i) => i.id)]), [['', ['thought']], ['Reading', ['paper', 'report']], ['Knowledge', ['method', 'use_case', 'case_study', 'framework', 'ontology']], ['Inquiry', ['research_question', 'hypothesis']]]);
     assert.deepEqual(side[3].items.map((i) => i.label), ['Research questions', 'Hypotheses']);
     const side2 = M8.sidebarGroups([...pv8, { name: 'book', plural: 'Books', ui_section: 'reading' }, { name: 'gadget', plural: 'Gadgets', ui_section: 'nowhere' }], S8.publicView().sections);
-    assert.deepEqual([side2[1].items.map((i) => i.id), side2.at(-1).label, side2.at(-1).items.map((i) => i.id)], [['paper', 'book'], 'Other', ['gadget']], 'a new type lands in its group; an unknown group goes to Other');
+    assert.deepEqual([side2[1].items.map((i) => i.id), side2.at(-1).label, side2.at(-1).items.map((i) => i.id)], [['paper', 'report', 'book'], 'Other', ['gadget']], 'a new type lands in its group; an unknown group goes to Other');
     assert.deepEqual(M8.sidebarGroups(pv8, []).map((g) => g.label), ['Other'], 'no sections: everything is still listed');
     assert.deepEqual(M8.collectionCounts([{ labels: ['Artifact', 'Method'] }, { labels: ['Artifact', 'Method'] }, { labels: ['Artifact', 'Paper'] }, { labels: ['Concept'] }], pv8.filter((c) => ['paper', 'method', 'ontology'].includes(c.name)), [{}, {}, {}]),
       { paper: 3, method: 2, ontology: 0 }, 'counts per collection; papers from their own list');
     // the graph filter: sidebar groups, then Vocabulary, then other types; large vocabularies off by default
     const pubLabels = S8.publicView().labels;
     const fg = M8.graphFilterGroups(pubLabels, pv8, S8.publicView().sections, S8.publicView().entities.map((e) => e.label));
-    assert.deepEqual(fg.map((g) => [g.id, g.items.map((l) => l.label)]), [['capture', ['Thought']], ['reading', ['Paper']], ['knowledge', ['Method', 'UseCase', 'CaseStudy', 'Framework', 'Ontology']], ['inquiry', ['ResearchQuestion', 'Hypothesis']],
+    assert.deepEqual(fg.map((g) => [g.id, g.items.map((l) => l.label)]), [['capture', ['Thought']], ['reading', ['Paper', 'Report']], ['knowledge', ['Method', 'UseCase', 'CaseStudy', 'Framework', 'Ontology']], ['inquiry', ['ResearchQuestion', 'Hypothesis']],
       ['vocabulary', ['Person', 'Concept', 'Topic', 'Domain', 'Venue', 'Organisation', 'Dataset']], ['other', ['Note', 'Project']]]);
     assert.deepEqual(M8.GRAPH_OFF_BY_DEFAULT, ['Concept', 'Person', 'Organisation', 'Venue']);
     assert.ok(M8.GRAPH_OFF_BY_DEFAULT.every((l) => pubLabels.some((x) => x.label === l)), 'every default-off type exists');
@@ -2028,6 +2033,88 @@ const seed = require('../../data/seed_papers.json');
     assert.deepEqual(M8.createFields(hf, { statement: 'S', status: 'untested', direction: null, title: null }), { statement: 'S' }, 'hub-managed defaults are not sent as owner values');
     assert.deepEqual(M8.createFields(hf, { statement: 'S', status: 'refuted' }), { statement: 'S', status: 'refuted' }, 'a changed one is the owner\'s choice');
     assert.ok(!hf.origin && !pv8.find((c) => c.name === 'research_question').fields.origin, 'origin is provenance only: never offered to the UI');
+
+    // reports (schema v4): grey literature, saved like any analysis; existing types keep their links
+    {
+      runImpl = t8Run; txImpl = t8Tx; vocab.resolve = stubResolve;
+      assert.equal(schema.version, 4);
+      assert.deepEqual([S8.relTargets('CRITIQUES', 'Report'), S8.relTargets('CRITIQUES', 'Paper'), S8.relTargets('CRITIQUES', 'Thought'), S8.relTargets('CRITIQUES', 'Note')],
+        [['Paper', 'Report', 'UseCase'], ['Paper', 'Report'], ['Paper', 'Report'], ['Paper']], 'only a report critiques a use case');
+      assert.deepEqual([S8.relTargets('CITES', 'Paper'), S8.relTargets('CITES', 'Report')], [['Paper'], ['Paper', 'Report']], 'paper citations stay paper to paper');
+      assert.ok(['ABOUT', 'AUTHORED_BY', 'PUBLISHED_BY', 'FRAMED_BY', 'INFORMS', 'SUPPORTS', 'CONTRADICTS'].every((r) => S8.relTargets(r, 'Report').length), 'every report relation starts at a Report');
+      assert.ok(S8.relAllows('SUPPORTS', 'Report', ['UseCase']) && S8.relAllows('PUBLISHED_BY', 'Ontology', ['Organisation']) && !S8.relAllows('AUTHORED_BY', 'Method', ['Person']));
+      assert.ok(S8.relationsFrom('Report').find((r) => r.rel === 'CRITIQUES').interpretive, 'SUPPORTS, CRITIQUES, CONTRADICTS need evidence (and are flagged without a location)');
+      // validate: enums, list enums, partial dates, the sample object
+      assert.deepEqual(S8.validate('report', { title: 'R', credibility_tier: 'directional_only', claim_basis: ['measured', 'modeled'], published_date: '2026-05', sample: { n: 2000 } }).warnings.filter((w) => !w.includes('(Core field)')), []);
+      assert.ok(S8.validate('report', { title: 'R' }).warnings.includes('credibility_reason is empty (Core field)'), 'core fields are named when empty');
+      const vw = S8.validate('report', { title: 'R', credibility_tier: 'great', claim_basis: ['vibes'], published_date: 'May 2026', sample: { n: 'many' }, publisher_type: 'bank' }).warnings.join('\n');
+      for (const f of ['credibility_tier', 'claim_basis', 'published_date', 'sample', 'publisher_type']) assert.ok(vw.includes(f + ':'), `${f} is checked: ${vw}`);
+      assert.deepEqual(S8.validate('report', { tldr: 'no title' }).errors, ['title is required']);
+      assert.ok(require('../core/query').overviewNotes().some((n) => n.includes("Report 'report:<slug>'") && n.includes("UseCase 'usecase:<slug>'") && !n.includes('Note ')), 'describe_graph names each live type\'s key prefix');
+
+      const before = new Set(G.keys());
+      const RA = {
+        collection: 'report', slug: 'ibm-ibv-agentic-ops-2026', model: 'claude-test',
+        fields: { title: 'The blueprint for agentic operations', tldr: 'Silos out, agents in.', publisher: 'IBM Institute for Business Value', publisher_type: 'vendor', report_kind: 'survey_report',
+          published_date: '2026-05', authors: ['Yogi Goyal', 'Karen Butner'], topics: ['agentic AI'], domain: 'Enterprise operations', intended_audience: ['CFO', 'COO'],
+          sample: { n: 2000, respondent_profile: 'Senior executives', countries: '16', industries: '17', field_period: null }, claim_basis: ['self_reported', 'expectation'],
+          key_findings: [{ text: '55% are deploying', location: 'pp. 1-2' }, { text: 'no page' }], recommendations: [{ text: 'Pilot for 90 days', location: 'p. 25' }, { text: 'Rewire', location: ' ' }],
+          credibility_tier: 'use_with_caveats', credibility_reason: 'Vendor survey.' },
+        links: [{ rel: 'SUPPORTS', target: 'doi:10.1/other', evidence: 'p. 12 agrees', location: 'p. 12' }, { rel: 'CRITIQUES', target: 'usecase:offline-payments', evidence: 'x' }, { rel: 'CRITIQUES', target: 'doi:10.8/p2' }],
+      };
+      const rr = await analysis.save(RA);
+      assert.deepEqual([rr.key, rr.created], ['report:ibm-ibv-agentic-ops-2026', true], 'slug sets the key');
+      const R = G.get(rr.key);
+      assert.ok(R.labels.includes('Report') && R.labels.includes('Artifact'));
+      assert.deepEqual([R.props.peer_review, R.props.report_kind, R.props.credibility_tier, R.props.sample__n, R.props.published_date], ['grey', 'survey_report', 'use_with_caveats', 2000, '2026-05'], 'peer_review defaults to grey; object parts are queryable');
+      assert.deepEqual(R.props.claim_basis, ['self_reported', 'expectation']);
+      const pr = JSON.parse(R.props.provenance_json);
+      assert.deepEqual([pr.credibility_tier.by, pr.credibility_tier.status, pr.credibility_tier.model, R.props.record_status], ['claude', 'auto', 'claude-test', 'auto'], 'Claude\'s values stay auto until reviewed');
+      assert.deepEqual(R.out.filter((e) => e.rel === 'PUBLISHED_BY').map((e) => e.to), ['org:ibm-institute-for-business-value']);
+      assert.deepEqual(R.out.filter((e) => e.rel === 'AUTHORED_BY').map((e) => e.to).sort(), ['person:karen-butner', 'person:yogi-goyal']);
+      assert.ok(R.out.some((e) => e.rel === 'ABOUT' && e.to.startsWith('domain:')) && R.out.some((e) => e.rel === 'ABOUT' && e.to.startsWith('topic:')));
+      assert.deepEqual(rr.flagged.map((f) => [f.field || f.rel, f.index ?? f.target]), [['key_findings', 1], ['recommendations', 1], ['CRITIQUES', 'usecase:offline-payments']], 'findings and recommendations need a location');
+      assert.deepEqual(rr.links, [{ rel: 'SUPPORTS', target: 'doi:10.1/other' }, { rel: 'CRITIQUES', target: 'usecase:offline-payments' }]);
+      assert.match(rr.links_skipped[0].reason, /CRITIQUES is interpretive/);
+      assert.deepEqual(R.out.find((e) => e.rel === 'SUPPORTS').r.location, 'p. 12');
+      const got = await items.get(rr.key);
+      assert.deepEqual([got.collection, got.fields.sample.n, got.fields.recommendations[0].location, got.fields.publisher.name], ['report', 2000, 'p. 25', 'IBM Institute for Business Value'], 'reads back');
+      // a re-run finds the same item: nothing new, nothing duplicated
+      const nodes = G.size; const edges = R.out.length;
+      const rr2 = await analysis.save(RA);
+      assert.deepEqual([rr2.key, rr2.created, rr2.filled, rr2.links, G.size, R.out.length], [rr.key, false, [], [], nodes, edges]);
+      assert.deepEqual([...G.keys()].filter((k) => !before.has(k)).filter((k) => k.startsWith('report:')), [rr.key], 'one report');
+      await assert.rejects(() => analysis.save({ ...RA, key: rr.key }), /slug names a new item/);
+      await assert.rejects(() => analysis.save({ collection: 'paper', slug: 'x', model: 'm', doi: '10.1/x' }), /not for papers/);
+      await assert.rejects(() => analysis.save({ ...RA, slug: '---' }), /slug must be text/);
+      // listing filters by its enums and its publisher link
+      const rq8 = [];
+      runImpl = async (q, p) => { rq8.push([q, p]); return q.includes('count(n) AS total') ? [{ total: 0 }] : []; };
+      await items.list({ collection: 'report', report_kind: 'survey_report', credibility_tier: 'use_with_caveats,directional_only', publisher: 'org:ibm-institute-for-business-value' });
+      const [lq8, lp8] = rq8.find(([q]) => q.includes('ORDER BY s'));
+      assert.ok(lq8.startsWith('MATCH (n:Report)') && lq8.includes('n.`report_kind` IN $f_report_kind') && lq8.includes('EXISTS { MATCH (n)-[:PUBLISHED_BY]->(t:Organisation) WHERE t.key IN $f_publisher }'));
+      assert.deepEqual([lp8.f_report_kind, lp8.f_credibility_tier, lp8.f_publisher], [['survey_report'], ['use_with_caveats', 'directional_only'], ['org:ibm-institute-for-business-value']]);
+      await assert.rejects(() => items.list({ collection: 'report', kind: 'x' }), (e) => e.status === 400 && /filters for report: publisher_type, report_kind, credibility_tier, publisher, domain, topics/.test(e.message));
+      // the personal layer: a new report gets no reading status by default, but takes one like any artifact
+      const pq8 = [];
+      txImpl = async (q, p) => { pq8.push([q, p]); return gRecs(q.includes('MATCH (a:Artifact {key:$key}) RETURN') ? [{ 'a.key': p.key }] : []); };
+      await require('../core/hooks').emit('afterWrite', { key: rr.key, type: 'report', input: {}, created: true });
+      assert.equal(pq8.filter(([q]) => q.includes('Personal')).length, 0);
+      await require('../core/hooks').emit('afterWrite', { key: rr.key, type: 'report', input: { status: 'reading' }, created: false });
+      const ps8 = pq8.filter(([q]) => q.includes('Personal')).map(([, p]) => p.props); // the layer is mounted more than once in this run
+      assert.ok(ps8.length && ps8.every((x) => x.status === 'reading'), JSON.stringify(ps8));
+      runImpl = t8Run; txImpl = t8Tx;
+      // migration 016: the full-text index covers Report (and Thought), rebuilt once
+      const m016 = require('../migrations/016_reports');
+      const m16 = []; let ft16 = { labelsOrTypes: S8.typeLabels.filter((l) => l !== 'Report'), properties: require('../migrations/011_frameworks_questions_ontologies').FULLTEXT_PROPS };
+      const db16 = { run: async (q) => { m16.push(q); return q.startsWith('SHOW FULLTEXT') ? (ft16 ? [ft16] : []) : []; } };
+      await m016.up(db16);
+      assert.ok(m16.includes('DROP INDEX artifact_text IF EXISTS') && m16.some((q) => q.startsWith('CREATE FULLTEXT INDEX artifact_text') && /\bReport\b/.test(q) && /\bThought\b/.test(q) && q.includes('n.methodology, n.credibility_reason')));
+      assert.ok(m16.some((q) => q.includes('FOR (n:Report) ON (n.report_kind)')) && m16.some((q) => q.includes('FOR (n:Report) ON (n.credibility_tier)')));
+      m16.length = 0; ft16 = { labelsOrTypes: S8.typeLabels, properties: m016.FULLTEXT_PROPS };
+      await m016.up(db16);
+      assert.ok(!m16.some((q) => /DROP INDEX|CREATE FULLTEXT/.test(q)), 'an up-to-date index is left alone');
+    }
 
     // migration 011
     const m011 = require('../migrations/011_frameworks_questions_ontologies');

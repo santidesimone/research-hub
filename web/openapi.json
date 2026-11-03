@@ -290,9 +290,15 @@
             "type": "string",
             "enum": [
               "paper",
+              "report",
               "method",
               "use_case",
-              "case_study"
+              "case_study",
+              "framework",
+              "research_question",
+              "hypothesis",
+              "ontology",
+              "thought"
             ]
           },
           "fields": {
@@ -499,9 +505,15 @@
             "type": "string",
             "enum": [
               "paper",
+              "report",
               "method",
               "use_case",
-              "case_study"
+              "case_study",
+              "framework",
+              "research_question",
+              "hypothesis",
+              "ontology",
+              "thought"
             ]
           },
           "key": {
@@ -512,6 +524,10 @@
           },
           "url": {
             "type": "string"
+          },
+          "slug": {
+            "type": "string",
+            "description": "A new non-paper item only: its key becomes <prefix><slug> (default: from the title). A re-run with the same slug finds the item. Not with key."
           },
           "fields": {
             "type": "object",
@@ -1736,9 +1752,15 @@
               "type": "string",
               "enum": [
                 "paper",
+                "report",
                 "method",
                 "use_case",
-                "case_study"
+                "case_study",
+                "framework",
+                "research_question",
+                "hypothesis",
+                "ontology",
+                "thought"
               ]
             }
           },
@@ -2079,7 +2101,7 @@
             "bearerAuth": []
           }
         ],
-        "description": "Finds the item (key, or a paper by doi or url, or a new method/use case/case study by fields.title) or creates it. For papers, source facts come from Crossref and OpenAlex server-side (authors as Person nodes, venue as a Venue node, citation count, open access, language). Claude's fields are saved with provenance (by=claude, model, confidence, status=auto) and fill empty fields only: the owner's values and reviewed values are never overwritten, and force replaces only Claude's own. Links: vocabulary targets by name, items by key or exact title (never created from a name); interpretive links need evidence. Key findings without a location are saved but flagged ungrounded.",
+        "description": "Finds the item (key, or a paper by doi or url, or a new item of another collection by slug or fields.title) or creates it. For papers, source facts come from Crossref and OpenAlex server-side (authors as Person nodes, venue as a Venue node, citation count, open access, language). Claude's fields are saved with provenance (by=claude, model, confidence, status=auto) and fill empty fields only: the owner's values and reviewed values are never overwritten, and force replaces only Claude's own. Links: vocabulary targets by name, items by key or exact title (never created from a name); interpretive links need evidence. Key findings (and a report's recommendations) without a location are saved but flagged ungrounded.",
         "requestBody": {
           "required": true,
           "content": {

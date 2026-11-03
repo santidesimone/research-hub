@@ -6,7 +6,7 @@
   --ok: #15803d; --ok-soft: #dcfce7; --warn: #b45309; --warn-soft: #fef3c7; --info: #0369a1; --info-soft: #e0f2fe; --danger: #b91c1c; --danger-soft: #fee2e2;
   --node-paper: #2563eb; --node-method: #d97706; --node-note: #059669; --node-thought: #059669; --node-project: #db2777; --node-person: #94a3b8; --node-concept: #0891b2;
   --node-use_case: #7c3aed; --node-case_study: #dc2626; --node-topic: #0d9488; --node-domain: #16a34a; --node-venue: #64748b; --node-organisation: #a16207; --node-dataset: #65a30d;
-  --node-framework: #0f766e; --node-research_question: #1d4ed8; --node-hypothesis: #9333ea; --node-ontology: #b45309;
+  --node-framework: #0f766e; --node-research_question: #1d4ed8; --node-hypothesis: #9333ea; --node-ontology: #b45309; --node-report: #57534e;
   --edge: #cbd5e1; --edge-hi: #2563eb; --graph-bg: #ffffff;
   --font-body: "Inter", system-ui, sans-serif; --font-heading: "Inter", system-ui, sans-serif; --font-mono: ui-monospace, Menlo, monospace;
   --radius-s: 6px; --radius-m: 8px; --radius-l: 12px;
@@ -20,7 +20,7 @@
   --ok: #86efac; --ok-soft: #14301f; --warn: #fcd34d; --warn-soft: #3a2f10; --info: #7dd3fc; --info-soft: #11304a; --danger: #fca5a5; --danger-soft: #3f1d1d;
   --node-paper: #60a5fa; --node-method: #fbbf24; --node-note: #34d399; --node-thought: #34d399; --node-project: #f472b6; --node-person: #64748b; --node-concept: #22d3ee;
   --node-use_case: #a78bfa; --node-case_study: #f87171; --node-topic: #2dd4bf; --node-domain: #4ade80; --node-venue: #94a3b8; --node-organisation: #fbbf24; --node-dataset: #a3e635;
-  --node-framework: #2dd4bf; --node-research_question: #93c5fd; --node-hypothesis: #d8b4fe; --node-ontology: #fcd34d;
+  --node-framework: #2dd4bf; --node-research_question: #93c5fd; --node-hypothesis: #d8b4fe; --node-ontology: #fcd34d; --node-report: #d6d3d1;
   --edge: #35435f; --edge-hi: #60a5fa; --graph-bg: #0b1220;
   --shadow-s: 0 1px 2px rgba(0,0,0,.4); --shadow-m: 0 8px 28px rgba(0,0,0,.55);
 }

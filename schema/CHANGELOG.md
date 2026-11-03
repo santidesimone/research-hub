@@ -2,6 +2,16 @@
 
 Every change to `schema/schema.json`, with the reason. The spec is `docs/SCHEMA_DESIGN.md`. A per-type `schema_version` is raised when that type's fields change. Items below the current version form the audit worklist, so a change is never silently applied to old items.
 
+## v4, reports (2026-11-02)
+
+Why: grey literature (vendor and consultancy surveys, whitepapers, policy briefs) is not a paper: it has a publisher with an interest, a sample instead of a venue, and claims that are often expectations rather than measurements. It needs its own fields to be appraised.
+- New collection **report** (`report:`, database-managed, sidebar group `reading`). Shared with paper: title, tldr, summary, topics, `domain`, `key_findings` ({text, location}, location needed), `limitations_stated`, `limitations_observed`, `conflicts_funding`, `peer_review` (default `grey`). Its own: `authors` (Person, AUTHORED_BY), `publisher` (Organisation, PUBLISHED_BY; core), `publisher_type`, `report_kind`, `published_date` (date: YYYY, YYYY-MM or YYYY-MM-DD), `url`, `intended_audience`, `commercial_interest`, `sample` ({n, respondent_profile, countries, industries, field_period}), `methodology`, `claim_basis` (list of measured, self_reported, expectation, modeled, unspecified), `recommendations` ({text, location}), `credibility_tier` (usable_source, use_with_caveats, directional_only; core) and `credibility_reason` (core).
+- Relations: Report may be ABOUT, AUTHORED_BY, PUBLISHED_BY, FRAMED_BY, INFORMS, CITES (Paper, Report), SUPPORTS, CRITIQUES, CONTRADICTS (Paper, Report, UseCase; interpretive: evidence required, flagged without a location). A paper or a thought may now SUPPORT, CRITIQUE or CONTRADICT a report; `pairs` keep the old combinations otherwise (a paper still cites only papers and critiques no use case). A thought may ANNOTATE a report and be TURNED_INTO one.
+- `common_fields.collection` lists every collection (it had fallen behind at the first four).
+- Analyses (`save_analysis`, `POST /api/analysis`) take an optional `slug` for a new non-paper item (its key becomes `<prefix><slug>`), and flag recommendations without a location as they do findings.
+- Migration `016_reports` rebuilds the `artifact_text` full-text index over every type label (Report, and Thought, which 015 did not add) plus `methodology` and `credibility_reason`, and indexes `report_kind` and `credibility_tier`.
+- Global `version` 3 to 4.
+
 ## v3, thoughts replace notes; projects retired (2026-11-02)
 
 Why: Task 11 step 6 (`docs/UI_REDESIGN.md` sections 4 and 7). Notes as Markdown files in git were clumsy, and projects organise work, which the hub is not for.

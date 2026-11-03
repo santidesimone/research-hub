@@ -25,6 +25,8 @@ const slugify = items.slugify;
 // What a paper analysis may extract (Task 8): the collection each list creates or reuses.
 const EXTRACT = { frameworks: 'framework', research_questions: 'research_question', hypotheses: 'hypothesis' };
 const MAX_EXTRACT = 50;
+// list fields whose entries each need a location ({text, location}): a paper's or report's findings, a report's recommendations
+const GROUNDED = ['key_findings', 'recommendations'];
 const today = () => new Date().toISOString().slice(0, 10);
 
 function check(body) {
@@ -42,6 +44,8 @@ function check(body) {
       if (v.length > MAX_EXTRACT) throw new HttpError(400, `at most ${MAX_EXTRACT} entries in extract.${k}`);
     }
   }
+  if (body.slug != null && (typeof body.slug !== 'string' || !items.slugify(body.slug))) throw new HttpError(400, 'slug must be text with letters or digits');
+  if (body.slug != null && (body.key || body.collection === 'paper')) throw new HttpError(400, 'slug names a new item: not with key, and not for papers (their key comes from the DOI)');
   if (body.tier != null && !TIERS[body.tier]) throw new HttpError(400, 'tier must be standard or deep');
   if ((body.links || []).length > MAX_LINKS) throw new HttpError(400, `at most ${MAX_LINKS} links per analysis`);
   if (Object.keys(body.fields || {}).length > MAX_FIELDS) throw new HttpError(400, `at most ${MAX_FIELDS} fields per analysis`);
@@ -239,7 +243,7 @@ async function extractFromPaper(paperKey, extract, opts) {
 
 /* ------------------------------------------------------------------ save */
 
-// body: { collection, key? | doi? | url?, fields, links, model, tier?, confidence? (level or {field: level}), force?, file_url?, copy_to_drive? }
+// body: { collection, key? | doi? | url? | slug?, fields, links, model, tier?, confidence? (level or {field: level}), force?, file_url?, copy_to_drive? }
 async function save(body) {
   check(body);
   const c = body.collection;
@@ -266,7 +270,7 @@ async function save(body) {
   } else {
     Object.assign(fields, items.deriveTitle(c, fields)); // questions and hypotheses: from their text or statement
     if (typeof fields.title !== 'string' || !fields.title.trim()) throw new HttpError(400, `a new ${c} needs a ${schema.types[c].title_from || 'title'} (or pass key)`);
-    key = keyPrefix(c) + slugify(fields.title);
+    key = keyPrefix(c) + slugify(body.slug || fields.title); // a re-run with the same slug or title finds the item
     if (!(await exists(key))) {
       result = await items.write(key, fields, { ...opts, create: { collection: c } });
       created = true;
@@ -297,9 +301,10 @@ async function save(body) {
   warnings.push(...result.warnings);
 
   const flagged = [];
-  if (Array.isArray(fields.key_findings) && result.filled.includes('key_findings')) {
-    fields.key_findings.forEach((k, index) => {
-      if (!k || typeof k !== 'object' || typeof k.location !== 'string' || !k.location.trim()) flagged.push({ field: 'key_findings', index, text: k && k.text, reason: 'ungrounded: no location' });
+  for (const f of GROUNDED) {
+    if (!Array.isArray(fields[f]) || !result.filled.includes(f)) continue;
+    fields[f].forEach((k, index) => {
+      if (!k || typeof k !== 'object' || typeof k.location !== 'string' || !k.location.trim()) flagged.push({ field: f, index, text: k && k.text, reason: 'ungrounded: no location' });
     });
   }
   const fromLabel = schema.types[c].label;
