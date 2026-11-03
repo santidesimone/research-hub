@@ -315,8 +315,11 @@ pre.json { background: var(--bg-sunken); border: 1px solid var(--border); border
 .iconbtn.small { width: 26px; height: 26px; }
 .btn.danger { background: var(--danger); border-color: var(--danger); color: var(--surface); }
 .confirm { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--danger); }
-.filters { display: flex; flex-wrap: wrap; gap: 6px; }
-.filter { flex: 1; min-width: 150px; }
+.popover.listfilter { left: 0; right: auto; width: min(360px, calc(100vw - 32px)); }
+.filterhead { margin-bottom: 4px; }
+.filterline { display: grid; gap: 6px; padding: 10px 0; border-top: 1px solid var(--border); }
+.filterhead + .filterline { border-top: 0; }
+.filterline .select, .filterline .filter { width: 100%; }
 .itemform h2 { font-size: 26px; margin-bottom: 8px; }
 .formgroup { border: 1px solid var(--border); border-radius: var(--radius-m); padding: 10px 16px 16px; margin: 18px 0 0; }
 .formgroup legend { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; padding: 0 6px; }
@@ -364,6 +367,7 @@ pre.json { background: var(--bg-sunken); border: 1px solid var(--border); border
   .connselfcard { width: auto; }
   .conncard .role { flex-basis: 96px; }
   .popover.linkpicker, .popover.rowmenu, .popover.turnmenu { position: fixed; top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 75vh; border-radius: var(--radius-l) var(--radius-l) 0 0; }
+  .popover.listfilter { position: fixed; top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 75vh; border-radius: var(--radius-l) var(--radius-l) 0 0; }
   .popover.graphfilter { position: fixed; top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 70vh; border-radius: var(--radius-l) var(--radius-l) 0 0; }
   .detail { padding: 24px 16px 60px; }
   .page { padding: 32px 16px; }

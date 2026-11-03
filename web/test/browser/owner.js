@@ -73,15 +73,24 @@ const until = async (check, ms = 10000) => { const end = Date.now() + ms; for (;
     expect(await page.$('select[aria-label="Your status"]'), 'status select');
     expect(await page.$('input[aria-label="File link"]'), 'file link editor');
   });
-  await step('methods: list with columns and filter by kind', async () => {
+  await step('methods: list with columns; filters in a popover behind one button, as on every collection', async () => {
     await page.click('.sidebar .nav[data-section=method]');
     await page.waitForURL(/\/library\/methods/);
     await page.waitForSelector('.list .item');
     expect((await page.$$('.list .item')).length === 2, 'two methods');
-    await page.selectOption('select[aria-label=Kind]', 'tool');
+    expect(!(await page.$('.pane-head select[aria-label=Kind]')), 'no row of filter controls in the list head');
+    await page.click('[data-action=filter]');
+    await page.waitForSelector('.popover.listfilter [data-filter=kind]');
+    await page.selectOption('.listfilter select[aria-label=Kind]', 'tool');
     await page.waitForSelector('.list .empty');
-    await page.selectOption('select[aria-label=Kind]', 'technique');
+    expect((await page.textContent('[data-action=filter]')).includes('Filter · 1'), 'the button says a filter is on');
+    await page.mouse.click(5, 880); // a tap outside closes it
+    expect(!(await page.$('.popover.listfilter')), 'closed by a tap outside');
+    await page.click('[data-action=filter]');
+    expect(await page.$eval('.listfilter select[aria-label=Kind]', (x) => x.value) === 'tool', 'the choice is kept');
+    await page.click('.listfilter [data-action=clear-filters]');
     await until(async () => (await page.$$('.list .item')).length === 2);
+    await page.keyboard.press('Escape');
   });
   await step('create a method from the generated form (list, enum, vocabulary picker)', async () => {
     await page.click('button:has-text("+ New")');

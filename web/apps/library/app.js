@@ -96,7 +96,8 @@ class Library {
     if (r.section === 'review' && !(S.owner && this.mode === 'private')) r.section = 'paper';
     // the old Audit and Curation addresses show the Review tab under its own address
     const old = (this.ctx.route.rest || [])[0];
-    if (r.section === 'review' && ['audit', 'curation'].includes(old)) this.ctx.navigate(routePath(r, this.collections), { replace: true });
+    // after mount() returns: navigating while the app mounts makes the shell mount a second copy
+    if (r.section === 'review' && ['audit', 'curation'].includes(old)) setTimeout(() => this.ctx.navigate(routePath(r, this.collections), { replace: true }), 0);
     this.section = r.section; this.sel = r.key; this.edit = r.edit; this.reviewTab = r.tab || 'check';
     this.view = r.section === 'graph' ? 'graph' : 'list';
   }

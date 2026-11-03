@@ -20,7 +20,8 @@ Update at the end of every task. For each: what changed, what was tested for rea
 | 10 Curation: reviewable change plans | done (2026-11-01), tested live from the claude.ai chat | See "Task 10" below. |
 | 11 Library redesign (`docs/UI_REDESIGN.md`) | done, all six steps (2026-11-02); not deployed | See "Task 11" below. |
 | Reports collection (schema v4) | done, deployed 2026-11-03 (ae8ed6b) | See "Reports" below. |
-| Books; papers, reports and books read alike (schema v5) | done (2026-11-03); not deployed | See "Books" below. |
+| Books; papers, reports and books read alike (schema v5) | done, deployed 2026-11-03 (1c2fe85) | See "Books" below. |
+| Filters: one consistent list head | done (2026-11-03); not deployed | See "Filters" below. |
 
 ## Task 0. Baseline against real services
 
@@ -758,5 +759,19 @@ Approved by the owner on 2026-11-02 after three rounds on a clickable mockup (sp
 - A throwaway Neo4j and hub: migrations to 017, a paper without a file (Reader disabled, clicking it keeps Info), a paper with a file (Reader enabled), the IBM report and both books through `hub analyze` (re-run fills nothing); Chrome on desktop and phone width: same list and tabs for all three, no page errors, no horizontal scroll; the upload link for a book lands on Books with the drop zone.
 
 **Not tested / open**
-- Not deployed. The two books are not in production yet (after the deploy: `hub analyze book:<slug> < book.json`).
+- Deployed 2026-11-03 (revision 00015); both books loaded in production.
+
+## Filters: one consistent list head
+
+**Changed**
+- `apps/library/collections.js`: every non-reading collection's list head now reads like Papers and Books: search and + New, then sort, a Filter button and the count. The schema filters moved from a row of controls into a popover (one filter per line, Clear all, closed by a tap outside or Escape, a bottom sheet on phones); the button shows how many filters are on, and the choices are kept between openings. CSS in `public/shell/base.css` (`.listfilter`, `.filterline`).
+- `apps/library/curation.js`: Review › Proposed fixes chooses plans with one dropdown instead of a row of three buttons; the choice is kept on the Library, because the page is rebuilt when the Library's data arrives (a choice made in between was lost; this was the cause of a flaky browser test).
+- `apps/library/app.js`: the redirect from the old /library/audit and /library/curation addresses waits until the app has mounted (navigating during mount made the shell mount a second copy).
+- Browser tests updated (`owner.js` filters through the popover, checks the outside tap and the kept choice; `curation.js` uses the dropdown).
+
+**Tested for real**
+- `npm test`; all browser suites (68 checks) and cli-e2e on a throwaway hub; screenshots of the popover on desktop and phone (no horizontal scroll).
+
+**Not tested / open**
+- Not deployed.
 

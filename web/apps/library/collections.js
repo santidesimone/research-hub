@@ -1,5 +1,7 @@
 // Generic list + detail for a collection (methods, use cases, case studies), built from the schema: list columns,
 // filters, sorting, grouped fields with provenance, typed links, and create / edit / delete. Owner, private library.
+// The list head reads like the papers' list: search and + New, then sort and the count. The collection's filters sit
+// behind one Filter button (a popover, one filter per line), never as a row of controls.
 import { h, icon, api, toast } from '../../shell/ui.js';
 import { isEmpty, noun, plainValue } from './model.js';
 import { renderFields } from './view.js';
@@ -24,15 +26,18 @@ export class CollectionView {
     const sortable = ['title', 'created_at', 'updated_at', ...c.list_columns.filter((f) => c.fields[f] && c.fields[f].type !== 'ref' && !c.fields[f].list && f !== 'title')];
     const sort = h('select', { class: 'select', 'aria-label': 'Sort', onchange: (e) => { this.sort = e.target.value; this.reload(); } },
       sortable.flatMap((f) => [[f, `${this.name(f)} ↑`], [`-${f}`, `${this.name(f)} ↓`]]).map(([v, l]) => h('option', { value: v, selected: v === this.sort }, l)));
-    this.filterEl = h('div', { class: 'filters' }, c.filters.map((f) => this.filterControl(f)));
-    this.countEl = h('span', { class: 'faint small', style: { marginLeft: 'auto' } });
+    this.buildFilters();
+    this.filterBtn = this.filterControls.length ? h('button', { type: 'button', class: 'btn btn-sm', 'aria-haspopup': 'dialog', 'data-action': 'filter',
+      onclick: (e) => this.openFilters(e.currentTarget.parentNode) }) : null;
+    this.labelFilterBtn();
+    this.countEl = h('span', { class: 'faint', style: { marginLeft: 'auto', fontSize: '12.5px' } });
     this.listEl = h('ul', { class: 'list' });
     this.detailEl = h('div', { class: 'detail' });
     bodyEl.append(h('div', { class: 'split' },
       h('div', { class: 'pane' }, h('div', { class: 'pane-head' },
         h('div', { class: 'row-flex' }, h('div', { class: 'searchbox grow' }, icon('search', 16), this.searchEl),
           h('button', { class: 'btn btn-primary btn-sm', onclick: () => this.lib.goSection(c.name, { key: null, edit: true }) }, '+ New')),
-        this.filterEl, h('div', { class: 'row-flex' }, sort, this.countEl)), this.listEl),
+        h('div', { class: 'row-flex' }, sort, this.filterBtn && h('div', { class: 'popanchor' }, this.filterBtn), this.countEl)), this.listEl),
       this.detailEl));
     this.reload();
     this.show();
@@ -50,7 +55,23 @@ export class CollectionView {
     return h('select', { class: 'select', 'aria-label': this.name(f), onchange: (e) => this.setFilter(f, e.target.value) },
       h('option', { value: '' }, `Any ${this.name(f).toLowerCase()}`), (spec.enum || []).map((v) => h('option', { value: v }, v.replace(/_/g, ' '))));
   }
-  setFilter(f, v) { if ((this.filters[f] || '') === v) return; if (v) this.filters[f] = v; else delete this.filters[f]; this.reload(); }
+  setFilter(f, v) { if ((this.filters[f] || '') === v) return; if (v) this.filters[f] = v; else delete this.filters[f]; this.labelFilterBtn(); this.reload(); }
+  // the controls are built once and kept, so a closed and reopened popover shows the choices still made
+  buildFilters() { this.filterControls = this.coll.filters.map((f) => [f, this.filterControl(f)]).filter(([, el]) => el); }
+  labelFilterBtn() {
+    if (!this.filterBtn) return;
+    const n = Object.keys(this.filters).length;
+    this.filterBtn.replaceChildren(icon('filter', 15), n ? `Filter · ${n}` : 'Filter');
+  }
+  openFilters(host) {
+    const body = () => h('div', { class: 'filterbox' },
+      h('div', { class: 'row-flex filterhead' }, h('strong', { class: 'grow' }, `Filter ${this.coll.plural.toLowerCase()}`),
+        h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'clear-filters', onclick: () => {
+          this.filters = {}; this.buildFilters(); this.labelFilterBtn(); this.reload(); menu.pop.replaceChildren(body());
+        } }, 'Clear all')),
+      this.filterControls.map(([f, el]) => h('div', { class: 'filterline', 'data-filter': f }, h('div', { class: 'label' }, this.name(f)), el)));
+    const menu = popover(host, body(), { cls: 'listfilter' });
+  }
 
   reloadSoon() { clearTimeout(this.t); this.t = setTimeout(() => this.reload(), 250); }
   query(cursor) {

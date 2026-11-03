@@ -56,13 +56,13 @@ const A = 'method:snowballing', B = 'method:difference-in-differences';
     expect(!(await exists(B)) && await exists(A), 'B merged into A');
   });
   await step('owner: Undo restores', async () => {
-    await page.click('.curation [data-filter="applied"]');
+    await page.selectOption('.curation select.planfilter', 'applied');
     const btn = `[data-plan="${merge.id}"] [data-action="revert"]`;
     await page.waitForSelector(btn);
     await page.click(btn); await page.click(btn);
     await page.waitForSelector(`[data-plan="${merge.id}"]`, { state: 'detached' });
     expect(await exists(B), 'B is back');
-    await page.click('.curation [data-filter=""]');
+    await page.selectOption('.curation select.planfilter', '');
     await page.waitForSelector(`[data-plan="${merge.id}"] .planstatus[data-status=reverted]`);
     await page.waitForSelector(`[data-plan="${junk.id}"] .planstatus[data-status=rejected]`);
   });
@@ -70,7 +70,7 @@ const A = 'method:snowballing', B = 'method:difference-in-differences';
     await page.goto(U + '/library/curation');
     await page.waitForURL(/\/library\/review\?tab=fixes/);
     await page.waitForSelector('.review .tab.on[data-tab=fixes]');
-    await page.click('.curation [data-filter=""]');
+    await page.selectOption('.curation select.planfilter', '');
     await page.waitForSelector(`[data-plan="${merge.id}"]`);
   });
   await step('a key in a plan opens the item', async () => {
